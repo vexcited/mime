@@ -221,7 +221,7 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_HOSTMOVESIZE: {
         WND *w = WndLookup((HWND)param1);
-        r = w && WndIsTopLevel(w) && HostMoveSize(w, (ULONG)param2);
+        r = w && WndIsTopLevel(w) && HostMoveSize(w, (ULONG)param2, FALSE);
         break;
     }
     case MIME_TWOPARAM_CBTSYSCOMMAND:

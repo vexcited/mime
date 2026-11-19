@@ -1408,7 +1408,10 @@ enum {
     MIME_INPUT_IME = 26,
     /* the compositor shows a window on another monitor: x is its index in MIME_HC_MONITORS' list. */
     MIME_INPUT_WINDOW_DISPLAY = 27,
-    /* the compositor gave the window another size: width and height are those of the host window, the part of the window it covers, in guest pixels. */
+    /*
+     * the compositor gave the window another size: width and height are those of the host window, the part of the
+     * window it covers, in guest pixels. flags 1 tells instead that the drag of a border the host took over ended.
+     */
     MIME_INPUT_WINDOW_SIZE = 28,
     /*
      * notification area event: pad is the guest icon id, flags the MIME_TRAY_EVENT_*, x and y the screen

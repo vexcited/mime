@@ -40,6 +40,7 @@ static const struct wl_interface order_interface = {"kde_output_order_v1", 1, 1,
 
 typedef struct Buffer {
     struct wl_buffer *buffer;
+    struct wl_shm_pool *pool; /* the memory the buffer is of, which a buffer of another size that fits takes over. */
     MimeWlWindow *window; /* null once its window let go of it. */
     uint8_t *pixels;
     size_t size;
@@ -73,6 +74,12 @@ struct MimeWlWindow {
     MimeWlWindow *parent;
     int x, y;
     int width, height;         /* in surface coordinates. */
+    /*
+     * the size of what is drawn while the pointer drags a border, 0 otherwise. the compositor tells a size for each
+     * move, which the guest takes a moment later: a frame is of the size the guest has, so the window, its pixels
+     * and what it presents are always of one size, and the edge that is not dragged stays where it is.
+     */
+    int content_w, content_h;
     int floating_w, floating_h; /* the size it has when the compositor leaves it free. */
     double scale;
     bool scale_told; /* by the compositor, for this surface. */
@@ -85,6 +92,15 @@ struct MimeWlWindow {
     char title[1024], app_id[200];
     int pending_w, pending_h;
     bool pending_maximized, pending_fullscreen, pending_active, pending_tiled, pending_resizing;
+    bool resizing; /* the compositor sizes the window with the pointer, as of its last configure. */
+    /*
+     * a configure that gives a size is answered by the commit of the buffer of that size. answered before, a commit
+     * that comes in between, of the state of a layer, tells the compositor that the buffer of the size before is the
+     * answer: kwin then moves the window by half the difference when the buffer of the right size comes.
+     */
+    bool frame_owed, ack_owed;
+    uint32_t ack_serial;
+    uint64_t ack_ms;
     uint32_t entered[MAX_ENTERED];
     uint32_t entered_count;
     uint32_t output;
@@ -445,6 +461,8 @@ static void buffer_free(Buffer *b)
 {
     if (b->buffer)
         wl_buffer_destroy(b->buffer);
+    if (b->pool)
+        wl_shm_pool_destroy(b->pool);
     if (b->pixels)
         munmap(b->pixels, b->size);
     free(b);
@@ -474,24 +492,28 @@ static void buffer_release(void *data, struct wl_buffer *buffer)
 
 static const struct wl_buffer_listener buffer_listener = {buffer_release};
 
-static struct wl_buffer *shm_buffer(int width, int height, uint8_t **pixels, size_t *size)
+/* with room for a quarter more: a window that is dragged to a size takes a size for each move of the pointer. */
+static struct wl_buffer *shm_buffer(int width, int height, uint8_t **pixels, size_t *size, struct wl_shm_pool **kept)
 {
     size_t bytes = (size_t)width * (size_t)height * 4;
+    bytes += bytes / 4;
     int fd = memfd_create("mime-window", MFD_CLOEXEC);
     if (fd < 0)
         return nullptr;
-    void *map = ftruncate(fd, (off_t)bytes) == 0 ? mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
-                                                  : MAP_FAILED;
+    /* its pages come at once: one fault a page costs a frame of a window ten times what the pixels do. */
+    void *map = ftruncate(fd, (off_t)bytes) == 0
+                    ? mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd, 0)
+                    : MAP_FAILED;
     if (map == MAP_FAILED) {
         close(fd);
         return nullptr;
     }
     struct wl_shm_pool *pool = wl_shm_create_pool(g.shm, fd, (int32_t)bytes);
     struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
-    wl_shm_pool_destroy(pool);
     close(fd);
     *pixels = map;
     *size = bytes;
+    *kept = pool;
     return buffer;
 }
 
@@ -500,7 +522,7 @@ static Buffer *buffer_new(MimeWlWindow *w, int width, int height)
     Buffer *b = calloc(1, sizeof(*b));
     if (!b)
         return nullptr;
-    b->buffer = shm_buffer(width, height, &b->pixels, &b->size);
+    b->buffer = shm_buffer(width, height, &b->pixels, &b->size, &b->pool);
     if (!b->buffer) {
         free(b);
         return nullptr;
@@ -511,6 +533,25 @@ static Buffer *buffer_new(MimeWlWindow *w, int width, int height)
     b->whole = true;
     wl_buffer_add_listener(b->buffer, &buffer_listener, b);
     return b;
+}
+
+/* gives a buffer the compositor let go of another size, in the memory it has. false when that does not fit. */
+static bool buffer_resize(Buffer *b, int width, int height)
+{
+    size_t bytes = (size_t)width * (size_t)height * 4;
+    if (b->busy || !b->pool || bytes > b->size || bytes < b->size / 4)
+        return false;
+    struct wl_buffer *buffer = wl_shm_pool_create_buffer(b->pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
+    if (!buffer)
+        return false;
+    wl_buffer_destroy(b->buffer);
+    b->buffer = buffer;
+    b->width = width;
+    b->height = height;
+    b->whole = true;
+    b->stale = (MimeRect){};
+    wl_buffer_add_listener(b->buffer, &buffer_listener, b);
+    return true;
 }
 
 /* a buffer the compositor still holds goes when it lets go of it. */
@@ -533,10 +574,31 @@ static void drop_buffers(MimeWlWindow *w)
     w->attached_w = w->attached_h = 0;
 }
 
+static int drawn_w(const MimeWlWindow *w)
+{
+    return w->content_w > 0 ? w->content_w : w->width;
+}
+
+static int drawn_h(const MimeWlWindow *w)
+{
+    return w->content_h > 0 ? w->content_h : w->height;
+}
+
 void mime_wl_window_get_pixels(const MimeWlWindow *w, int *width, int *height)
 {
-    *width = MIME_MAX(1, (int)lround(w->width * w->scale));
-    *height = MIME_MAX(1, (int)lround(w->height * w->scale));
+    *width = MIME_MAX(1, (int)lround(drawn_w(w) * w->scale));
+    *height = MIME_MAX(1, (int)lround(drawn_h(w) * w->scale));
+}
+
+bool mime_wl_window_resizing(const MimeWlWindow *w)
+{
+    return w->resizing;
+}
+
+void mime_wl_window_content(MimeWlWindow *w, int width, int height)
+{
+    w->content_w = width;
+    w->content_h = height;
 }
 
 static void map(MimeWlWindow *w);
@@ -549,6 +611,33 @@ static MimeRect rect_or(MimeRect a, MimeRect b)
         return a;
     return (MimeRect){MIME_MIN(a.left, b.left), MIME_MIN(a.top, b.top), MIME_MAX(a.right, b.right),
                       MIME_MAX(a.bottom, b.bottom)};
+}
+
+/*
+ * makes the buffer the next frame of the window is drawn in. one of a size the window had no buffer of takes its
+ * time, which the one who draws does not spend with the lock of the pixels it draws.
+ */
+void mime_wl_window_ready(MimeWlWindow *w)
+{
+    if (!w->shown || !w->configured || !w->surface)
+        return;
+    int width, height;
+    mime_wl_window_get_pixels(w, &width, &height);
+    int room = -1;
+    bool has = false;
+    for (int i = 0; i < MAX_BUFFERS; i++) {
+        Buffer *b = w->buffers[i];
+        if (b && (b->width != width || b->height != height) && !buffer_resize(b, width, height)) {
+            buffer_drop(b);
+            b = w->buffers[i] = nullptr;
+        }
+        if (!b)
+            room = i;
+        else if (!b->busy)
+            has = true;
+    }
+    if (!has && room >= 0)
+        w->buffers[room] = buffer_new(w, width, height);
 }
 
 bool mime_wl_window_frame(MimeWlWindow *w, const MimeRect *damage, MimeWlFrame *frame)
@@ -565,7 +654,7 @@ bool mime_wl_window_frame(MimeWlWindow *w, const MimeRect *damage, MimeWlFrame *
     int room = -1;
     for (int i = 0; i < MAX_BUFFERS; i++) {
         Buffer *b = w->buffers[i];
-        if (b && (b->width != width || b->height != height)) {
+        if (b && (b->width != width || b->height != height) && !buffer_resize(b, width, height)) {
             buffer_drop(b);
             b = w->buffers[i] = nullptr;
         }
@@ -597,10 +686,10 @@ bool mime_wl_window_frame(MimeWlWindow *w, const MimeRect *damage, MimeWlFrame *
 static void apply_viewport(MimeWlWindow *w, int width)
 {
     if (w->viewport) {
-        wp_viewport_set_destination(w->viewport, w->width, w->height);
+        wp_viewport_set_destination(w->viewport, drawn_w(w), drawn_h(w));
     } else {
         /* whole scales alone without a viewport. */
-        int scale = MIME_MAX(1, width / MIME_MAX(w->width, 1));
+        int scale = MIME_MAX(1, width / MIME_MAX(drawn_w(w), 1));
         wl_surface_set_buffer_scale(w->surface, scale);
     }
 }
@@ -620,6 +709,9 @@ void mime_wl_window_commit(MimeWlWindow *w, const MimeWlFrame *frame, const Mime
     else
         wl_surface_damage_buffer(w->surface, 0, 0, frame->width, frame->height);
     apply_viewport(w, frame->width);
+    if (w->ack_owed && w->xdg)
+        xdg_surface_ack_configure(w->xdg, w->ack_serial);
+    w->ack_owed = w->frame_owed = false;
     wl_surface_commit(w->surface);
     wl_display_flush(g.display);
 }
@@ -642,6 +734,11 @@ void mime_wl_window_commit_state(MimeWlWindow *w)
 {
     if (!w->surface)
         return;
+    /* no frame came for the size: the configure is answered as it is. */
+    if (w->ack_owed && w->xdg && now_ms() - w->ack_ms > 250) {
+        xdg_surface_ack_configure(w->xdg, w->ack_serial);
+        w->ack_owed = w->frame_owed = false;
+    }
     wl_surface_commit(w->surface);
     wl_display_flush(g.display);
 }
@@ -808,6 +905,13 @@ struct wl_surface *mime_wl_window_surface(const MimeWlWindow *w)
 
 void mime_wl_window_get_size(const MimeWlWindow *w, int *width, int *height)
 {
+    *width = drawn_w(w);
+    *height = drawn_h(w);
+}
+
+/* the size the compositor told, which is the one of what is drawn but while a border is dragged. */
+void mime_wl_window_get_told(const MimeWlWindow *w, int *width, int *height)
+{
     *width = w->width;
     *height = w->height;
 }
@@ -902,9 +1006,10 @@ static void state_event(MimeWlWindow *w, MimeWlState state)
 static void xdg_configure(void *data, struct xdg_surface *xdg, uint32_t serial)
 {
     MimeWlWindow *w = data;
-    xdg_surface_ack_configure(xdg, serial);
     bool first = !w->configured, sized = false;
     w->configured = true;
+    if (!w->toplevel || first)
+        xdg_surface_ack_configure(xdg, serial);
     if (w->toplevel) {
         bool held = w->pending_maximized || w->pending_fullscreen || w->pending_tiled;
         int width = w->floating_w, height = w->floating_h;
@@ -920,30 +1025,60 @@ static void xdg_configure(void *data, struct xdg_surface *xdg, uint32_t serial)
         sized = width != w->width || height != w->height;
         w->width = width;
         w->height = height;
+        if (sized && !first)
+            w->frame_owed = true;
+        if (first) {
+            w->frame_owed = w->ack_owed = false;
+        } else if (w->frame_owed) {
+            w->ack_owed = true;
+            w->ack_serial = serial;
+            w->ack_ms = now_ms();
+        } else {
+            xdg_surface_ack_configure(xdg, serial);
+        }
+        if (!w->pending_resizing)
+            w->content_w = w->content_h = 0;
         bool was_maximized = w->maximized, was_fullscreen = w->fullscreen, was_minimized = w->minimized;
         w->maximized = w->pending_maximized;
         w->fullscreen = w->pending_fullscreen;
         w->tiled = w->pending_tiled;
+        bool was_resizing = w->resizing;
+        w->resizing = w->pending_resizing;
         /* nothing tells of a window that left its icon but that it is the active one again. */
         if (w->minimized && w->pending_active)
             w->minimized = false;
-        if (first || sized) {
-            if (g.h.resized)
-                g.h.resized(w, sized);
+        bool same = was_maximized == w->maximized && was_fullscreen == w->fullscreen && was_minimized == w->minimized;
+        /*
+         * a drag of the border sends a size for each move of the pointer, faster than a frame is drawn. the sizes
+         * read together are answered with one frame, of the last one.
+         */
+        if (!first && sized && same && w->pending_resizing) {
+            post_resized(w);
+            return;
         }
+        /*
+         * the state is told before the size that comes with it: a size of the whole screen told first would be taken
+         * for the size of the window as it is, and kept as the one to restore to.
+         */
         if (was_minimized && !w->minimized)
             state_event(w, MIME_WL_RESTORED);
         if (!was_maximized && w->maximized)
             state_event(w, MIME_WL_MAXIMIZED);
         else if (was_maximized && !w->maximized)
             state_event(w, MIME_WL_RESTORED);
+        if ((first || sized) && window_alive(w)) {
+            if (g.h.resized)
+                g.h.resized(w, sized);
+        }
+        if (was_resizing && !w->resizing)
+            state_event(w, MIME_WL_RESIZE_ENDED);
         if (was_fullscreen != w->fullscreen)
             state_event(w, w->fullscreen ? MIME_WL_FULLSCREEN_ENTERED : MIME_WL_FULLSCREEN_LEFT);
         /*
          * the answer goes with the next commit, which a size that changed brings with its frame. a state alone, as a
          * window that goes fullscreen at the size it has, draws nothing: the compositor would wait for ever.
          */
-        if (!first && !sized && window_alive(w))
+        if (!first && !sized && !w->frame_owed && window_alive(w))
             wl_surface_commit(w->surface);
         return;
     }
@@ -1161,6 +1296,7 @@ void mime_wl_window_size(MimeWlWindow *w, int width, int height)
     w->floating_h = height;
     if (!w->resizable)
         apply_limits(w);
+    w->content_w = w->content_h = 0;
     if (w->maximized || w->fullscreen || w->tiled || (w->width == width && w->height == height))
         return;
     w->width = width;
@@ -1289,7 +1425,10 @@ void mime_wl_window_icon(MimeWlWindow *w, const uint8_t *pixels, int width, int 
     int side = MIME_MAX(width, height);
     uint8_t *map;
     size_t size;
-    struct wl_buffer *buffer = shm_buffer(side, side, &map, &size);
+    struct wl_shm_pool *pool = nullptr;
+    struct wl_buffer *buffer = shm_buffer(side, side, &map, &size, &pool);
+    if (pool)
+        wl_shm_pool_destroy(pool);
     if (!buffer)
         return;
     memset(map, 0, size);
@@ -1555,7 +1694,10 @@ MimeWlCursor *mime_wl_cursor_create(const uint8_t *pixels, int width, int height
     }
     uint8_t *map;
     size_t size;
-    c->buffer = shm_buffer(c->width, c->height, &map, &size);
+    struct wl_shm_pool *pool = nullptr;
+    c->buffer = shm_buffer(c->width, c->height, &map, &size, &pool);
+    if (pool)
+        wl_shm_pool_destroy(pool);
     if (!c->buffer) {
         free(straight);
         free(c);
@@ -2143,6 +2285,21 @@ struct wp_viewport *mime_wl_viewport(struct wl_surface *surface)
 
 void mime_wl_viewport_size(struct wp_viewport *viewport, int width, int height)
 {
+    wp_viewport_set_destination(viewport, width, height);
+}
+
+/* shows the whole buffer at a size. */
+void mime_wl_viewport_whole(struct wp_viewport *viewport, int width, int height)
+{
+    wp_viewport_set_source(viewport, wl_fixed_from_int(-1), wl_fixed_from_int(-1), wl_fixed_from_int(-1),
+                           wl_fixed_from_int(-1));
+    wp_viewport_set_destination(viewport, width, height);
+}
+
+/* shows the top left part of the buffer, of the given size in its pixels, at a size. */
+void mime_wl_viewport_part(struct wp_viewport *viewport, double part_width, double part_height, int width, int height)
+{
+    wp_viewport_set_source(viewport, 0, 0, wl_fixed_from_double(part_width), wl_fixed_from_double(part_height));
     wp_viewport_set_destination(viewport, width, height);
 }
 

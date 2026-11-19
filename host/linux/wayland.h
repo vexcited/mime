@@ -26,6 +26,7 @@ typedef enum MimeWlKind {
 typedef enum MimeWlState {
     MIME_WL_MINIMIZED,
     MIME_WL_RESTORED,
+    MIME_WL_RESIZE_ENDED, /* the compositor let go of the border it dragged. */
     MIME_WL_MAXIMIZED,
     MIME_WL_FULLSCREEN_ENTERED,
     MIME_WL_FULLSCREEN_LEFT,
@@ -85,6 +86,8 @@ struct wl_seat *mime_wl_seat(void);
 /* a viewport for a surface of the caller, null without the protocol. */
 struct wp_viewport *mime_wl_viewport(struct wl_surface *surface);
 void mime_wl_viewport_size(struct wp_viewport *viewport, int width, int height);
+void mime_wl_viewport_whole(struct wp_viewport *viewport, int width, int height);
+void mime_wl_viewport_part(struct wp_viewport *viewport, double part_width, double part_height, int width, int height);
 void mime_wl_viewport_destroy(struct wp_viewport *viewport);
 /* the serial of the last key or button press, 0 before one. */
 uint32_t mime_wl_serial(void);
@@ -176,6 +179,10 @@ typedef struct MimeWlFrame {
  * takes a buffer for the next frame. damage is what the frame changes from the one before, null for the whole. false
  * when the window cannot be drawn yet, or when no buffer is free: redraw then tells when one is.
  */
+void mime_wl_window_ready(MimeWlWindow *w);
+bool mime_wl_window_resizing(const MimeWlWindow *w);
+void mime_wl_window_content(MimeWlWindow *w, int width, int height);
+void mime_wl_window_get_told(const MimeWlWindow *w, int *width, int *height);
 bool mime_wl_window_frame(MimeWlWindow *w, const MimeRect *damage, MimeWlFrame *frame);
 void mime_wl_window_commit(MimeWlWindow *w, const MimeWlFrame *frame, const MimeRect *damage);
 /* whether the surface holds a buffer of the size the window has now. */

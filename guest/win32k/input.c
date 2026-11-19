@@ -65,6 +65,17 @@ HWND NTAPI NtUserSetCapture(HWND hwnd)
     return old;
 }
 
+/* ReleaseCapture of user32 26300, which SetCapture of no window was before. */
+BOOL NTAPI NtUserReleaseCapture(void)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t)
+        InputSetCapture(t, nullptr, 0);
+    UserLeave();
+    return t != nullptr;
+}
+
 /*
  * a thread that keyboard messages do not reach reads the live key state, as on windows: only the thread taking the
  * keys sees them change message by message. games poll keys from threads of their own this way.
@@ -502,6 +513,27 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         }
     }
     QueuePostInput(t, ev, mouse_state, injected ? IMO_INJECTED : IMO_HARDWARE, extra);
+}
+
+/*
+ * the host drags a border of a window itself and keeps the pointer for as long as it does, so the size the window
+ * takes is all that tells of the pointer. windows moves the cursor and delivers the mouse to hooks and to raw input
+ * all through its own drag loop: the motion is made from the step, the cursor following where the guest's edge does.
+ */
+void InputHostDragStep(WND *w, LONG dx, LONG dy, LONG cursor_dx, LONG cursor_dy)
+{
+    if (!dx && !dy)
+        return;
+    MimeInputEvent ev = {};
+    ev.type = MIME_INPUT_MOUSE_MOVE;
+    ev.window_id = (uint32_t)(ULONG_PTR)WndHandle(w);
+    ev.x = InputCursorPos.x + cursor_dx;
+    ev.y = InputCursorPos.y + cursor_dy;
+    ev.dx = dx;
+    ev.dy = dy;
+    ev.flags = 8;
+    ev.time_ms = W32TickCount();
+    dispatch_event(&ev, FALSE, 0);
 }
 
 /*
@@ -1188,6 +1220,21 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
     return emit(out, WndHandle(target), msg, vk, lparam, ev, filter, min, max);
 }
 
+/*
+ * a later size of the host window that is still waiting in the thread's queue. the sizes of a drag come faster than a
+ * program lays itself out, and windows only ever gives a window the size of where the pointer is now.
+ */
+static BOOLEAN newer_size_queued(W32THREAD *t, const QUEUED_MESSAGE *from)
+{
+    for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink) {
+        QUEUED_MESSAGE *q = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
+        if (q != from && q->Kind == QM_INPUT && q->Input.type == MIME_INPUT_WINDOW_SIZE &&
+            q->Input.window_id == from->Input.window_id && !(q->Input.flags & 1))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 /* a host focus event for a window of the thread that is still waiting in its queue. */
 static BOOLEAN focus_gain_queued(W32THREAD *t)
 {
@@ -1269,7 +1316,10 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         WndHostDisplay(w, (ULONG)ev->x);
         break;
     case MIME_INPUT_WINDOW_SIZE:
-        WndHostSize(w, ev->width, ev->height);
+        if (ev->flags & 1)
+            MoveSizeHostEnd(w);
+        else if (!newer_size_queued(t, qm))
+            WndHostSize(w, ev->width, ev->height);
         break;
     case MIME_INPUT_WINDOW_FOCUS:
         if (ev->x) {

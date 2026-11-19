@@ -308,14 +308,18 @@ void HostConfigure(WND *w, BOOLEAN activate)
         w->HostIcon = nullptr;
 }
 
-/* the compositor takes over the button during a move or resize; release it in the guest. */
-BOOLEAN HostMoveSize(WND *w, ULONG edge)
+/*
+ * the compositor takes over the button during a move or resize; release it in the guest. held keeps it down for a
+ * caller that is told when the drag ends, as the button is down all through a drag on windows.
+ */
+BOOLEAN HostMoveSize(WND *w, ULONG edge, BOOLEAN held)
 {
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
         return FALSE;
     if (HalMimeHypercall(MIME_HC_WIN_MOVESIZE, window_id(w), edge, 0, 0, 0, 0, nullptr) != MIME_HC_STATUS_OK)
         return FALSE;
-    InputReleaseLeftButton();
+    if (!held)
+        InputReleaseLeftButton();
     return TRUE;
 }
 
@@ -876,7 +880,8 @@ BOOL NTAPI NtUserInvalidateRect(HWND hwnd, const RECT *rect, BOOL erase)
 
 BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect)
 {
-    return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE | RDW_NOCHILDREN);
+    /* as on windows, the children of a window that does not clip them are validated with it: see upd.c. */
+    return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE);
 }
 
 static void erase_update(WND *w)
@@ -949,13 +954,34 @@ void PaintSync(WND *w)
     UserDereference(&w->Header);
 }
 
+void PaintUpdateNow(WND *w)
+{
+    if (w->Thread == W32GetThread())
+        update_now(w, TRUE);
+}
+
 /* paints what the window and its children have to paint now, as RedrawWindow with RDW_UPDATENOW does. */
 BOOL NTAPI NtUserUpdateWindow(HWND hwnd)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
-    if (w && w->Thread == W32GetThread())
+    if (w && w->Thread == W32GetThread()) {
+        /*
+         * measured on windows 11 26300 with upd.c of the research repository: what a child is about to paint is
+         * taken out of the update regions of its parents that do not clip their children, so a parent that erases
+         * later leaves what the child drew. a child that is only validated is drawn over.
+         */
+        if (!RgnIsEmpty(&w->Update))
+            for (WND *c = w; (c->Style & WS_CHILD) && c->Parent && c->Parent != WndDesktop(); c = c->Parent) {
+                WND *p = c->Parent;
+                if ((p->Style & WS_CLIPCHILDREN) || RgnIsEmpty(&p->Update))
+                    continue;
+                RgnCombine(&p->Update, &p->Update, &w->Update, RGN_DIFF);
+                if (RgnIsEmpty(&p->Update))
+                    p->Flags &= ~(WNDF_NEEDS_ERASE | WNDF_ERASE_PENDING);
+            }
         update_now(w, TRUE);
+    }
     UserLeave();
     return w != nullptr;
 }
