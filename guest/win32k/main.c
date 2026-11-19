@@ -494,9 +494,12 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
 {
     if (initialize) {
         UserEnter();
-        W32GetThread();
+        W32THREAD *made = W32GetThread();
         UserLeave();
-        ClientThreadSetup();
+        if (made && !made->ClientSetup) {
+            made->ClientSetup = TRUE;
+            ClientThreadSetup();
+        }
         return STATUS_SUCCESS;
     }
     W32THREAD *t = PsGetThreadWin32Thread(thread);
@@ -792,6 +795,21 @@ ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL rem
 
 ULONG Win32kServiceCount = 2048;
 
+/*
+ * runs before every service of a thread of the window manager. a thread that connected through csr is one before its
+ * first service, and windows converts it at that service: user32 has set its table of callbacks by then, which it
+ * has not when it connects.
+ */
+static void NTAPI service_enter(void)
+{
+    W32THREAD *t = PsGetCurrentThreadWin32Thread();
+    if (t && !t->ClientSetup) {
+        t->ClientSetup = TRUE;
+        ClientThreadSetup();
+    }
+    GdiFlushUserBatch();
+}
+
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     KeInitializeEvent(&g_lock_event, SynchronizationEvent, FALSE);
@@ -802,7 +820,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
         return STATUS_UNSUCCESSFUL;
     }
     static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange, W32FastService,
-                                      GdiFlushUserBatch};
+                                      service_enter};
     PsEstablishWin32Callouts(&callouts);
     UserSharedInitialize();
 

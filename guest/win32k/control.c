@@ -598,6 +598,54 @@ HBRUSH NTAPI NtUserGetControlBrush(HWND hwnd, HDC hdc, UINT msg)
     return b;
 }
 
+/* ------------------------------------------------------------------ combo boxes */
+
+/*
+ * GetComboBoxInfo, which the combo box of user32 26300 also answers CB_GETCOMBOBOXINFO with. the control keeps its
+ * state in a tagCBox of its own memory, named by the first of its extra bytes: the box and its parent as their
+ * mirrors in the desktop heap, the rectangles of the field at 0x10 and of the button at 0x20, the edit at 0x40 and
+ * the list at 0x48, then the flags at 0x50, of which the two low bits are the kind of box, 1 a simple one, and 0x20
+ * the button held down.
+ */
+BOOL NTAPI NtUserGetComboBoxInfo(HWND hwnd, COMBOBOXINFO *user_info)
+{
+    COMBOBOXINFO info;
+    if (!NT_SUCCESS(MimeCopyFromUser(&info, user_info, sizeof(info))) || info.cbSize != sizeof(info)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOLEAN combo = w && (w->Fnid & 0x3FFF) == FNID_COMBOBOX && w->Thread && w->Thread->Process == W32GetProcess();
+    PUCHAR extra = combo ? w->UserExtra : nullptr;
+    BOOLEAN narrow = combo && w->Thread->Process->Wow;
+    UserLeave();
+    ULONG64 box = 0;
+    UCHAR state[0x54] = {};
+    /* a 32 bit program keeps the same tagCBox, its windows in 64 bits: only the extra bytes that name it are its own. */
+    if (!extra || !NT_SUCCESS(MimeCopyFromUser(&box, extra, narrow ? 4 : 8)) || !box ||
+        !NT_SUCCESS(MimeCopyFromUser(state, (PVOID)(ULONG_PTR)box, sizeof(state)))) {
+        W32SetLastError(1423); /* ERROR_WINDOW_NOT_COMBOBOX */
+        return FALSE;
+    }
+    ULONG64 mirrors[3] = {*(PULONG64)state, *(PULONG64)(state + 0x40), *(PULONG64)(state + 0x48)};
+    ULONG flags = *(PULONG)(state + 0x50);
+    HWND handles[3] = {};
+    for (ULONG i = 0; i < 3; i++) {
+        ULONG64 handle = 0;
+        if (mirrors[i] && NT_SUCCESS(MimeCopyFromUser(&handle, (PVOID)(ULONG_PTR)mirrors[i], sizeof(handle))))
+            handles[i] = (HWND)(ULONG_PTR)handle;
+    }
+    memcpy(&info.rcItem, state + 0x10, sizeof(RECT));
+    memcpy(&info.rcButton, state + 0x20, sizeof(RECT));
+    info.stateButton = (flags & 3) == 1 ? STATE_SYSTEM_INVISIBLE : (flags & 0x20) ? STATE_SYSTEM_PRESSED : 0;
+    info.hwndCombo = handles[0];
+    /* a box with no edit names itself as its edit, which is none to the caller. */
+    info.hwndItem = handles[1] == handles[0] ? nullptr : handles[1];
+    info.hwndList = handles[2];
+    return NT_SUCCESS(MimeCopyToUser(user_info, &info, sizeof(info)));
+}
+
 /* ------------------------------------------------------------------ dialogs and message boxes */
 
 /* the system menu of a dialog is made when it is first asked for, as for any window with a system menu. */
