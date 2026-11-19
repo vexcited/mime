@@ -1,3 +1,0 @@
-// the message table of the NTSTATUS values, made by the build from data/messages/ntstatus.txt.
-LANGUAGE 9, 1
-1 11 "@MIME_ASSETS@/messages/ntdll.bin"
