@@ -742,6 +742,84 @@ static NTSTATUS query_processes(BOOLEAN extended, PVOID info, ULONG length, PULO
     return status;
 }
 
+/*
+ * SystemBasicProcessInformation, which EnumProcesses reads since windows 11 24h2: the identifiers, the sequence
+ * number and the name of every process. measured on windows 11 26300: a record is 0x30 bytes and its name follows in a
+ * room rounded up to 8 bytes, the idle process opens the list with no name, the four bytes after the offset and after
+ * the two lengths are not written, nor is the room past the end of the name. a room too small gets the records that
+ * fit whole and the size of the list.
+ */
+#define BASIC_PROCESS_SIZE 0x30
+
+static NTSTATUS query_basic_processes(PVOID info, ULONG length, PULONG returned)
+{
+    ULONG capacity = length < 0x100000 ? length : 0x100000;
+    PUCHAR buffer = capacity ? ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity, KI_TAG('P', 's', 'I', 'n')) : nullptr;
+    if (capacity && !buffer)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    static const WCHAR system_name[] = L"System";
+    ULONG need = BASIC_PROCESS_SIZE, fit = 0;
+    PUCHAR last = nullptr;
+    if (need <= capacity) {
+        memset(buffer, 0, BASIC_PROCESS_SIZE);
+        last = buffer;
+        fit = need;
+    }
+    ULONG64 lock = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (p->Exited)
+            continue;
+        ULONG chars;
+        PCWSTR leaf = process_leaf(p, &chars);
+        if (!chars && (ULONG_PTR)p->UniqueProcessId == 4) {
+            leaf = system_name;
+            chars = RTL_NUMBER_OF(system_name) - 1;
+        }
+        USHORT room = chars ? (USHORT)(((chars + 1) * sizeof(WCHAR) + 7) & ~7u) : 0;
+        ULONG size = BASIC_PROCESS_SIZE + room;
+        if (fit == need && need + size <= capacity) {
+            PUCHAR record = buffer + need;
+            memset(record, 0, size);
+            *(HANDLE *)(record + 0x8) = p->UniqueProcessId;
+            *(HANDLE *)(record + 0x10) = p->InheritedFromUniqueProcessId;
+            *(PULONG64)(record + 0x18) = p->SequenceNumber;
+            if (chars) {
+                *(PUSHORT)(record + 0x20) = (USHORT)(chars * sizeof(WCHAR));
+                *(PUSHORT)(record + 0x22) = room;
+                *(PVOID *)(record + 0x28) = (PUCHAR)info + need + BASIC_PROCESS_SIZE;
+                memcpy(record + BASIC_PROCESS_SIZE, leaf, chars * sizeof(WCHAR));
+            }
+            if (last)
+                *(PULONG)last = (ULONG)(record - last);
+            last = record;
+            fit = need + size;
+        }
+        need += size;
+    }
+    KiReleaseDispatcherLock(lock);
+    NTSTATUS status = STATUS_SUCCESS;
+    for (ULONG at = 0; at < fit && NT_SUCCESS(status);) {
+        PUCHAR record = buffer + at;
+        ULONG next = *(PULONG)record, name = *(PUSHORT)(record + 0x20);
+        status = KiCopyToUser((PUCHAR)info + at, record, 4);
+        if (NT_SUCCESS(status))
+            status = KiCopyToUser((PUCHAR)info + at + 0x8, record + 0x8, 0x1c);
+        if (NT_SUCCESS(status))
+            status = KiCopyToUser((PUCHAR)info + at + 0x28, record + 0x28, 0x8 + (name ? name + sizeof(WCHAR) : 0));
+        if (!next)
+            break;
+        at += next;
+    }
+    if (buffer)
+        ExFreePool(buffer);
+    if (returned && NT_SUCCESS(status))
+        status = KiCopyToUser(returned, &need, sizeof(need));
+    if (NT_SUCCESS(status) && fit < need)
+        status = STATUS_INFO_LENGTH_MISMATCH;
+    return status;
+}
+
 /* ------------------------------------------------------------------ handles */
 
 #define SYSTEM_HANDLE_PROCESSES_MAX 1024
@@ -2213,6 +2291,8 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
         return query_processes(FALSE, info, length, returned);
     case 57: /* SystemExtendedProcessInformation */
         return query_processes(TRUE, info, length, returned);
+    case 0xfc: /* SystemBasicProcessInformation */
+        return query_basic_processes(info, length, returned);
     case SystemModuleInformation:
         return query_modules(FALSE, info, length, returned);
     case 77: /* SystemModuleInformationEx */
@@ -2817,7 +2897,6 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
 {0xf9, 0xc0000003, 0x0},
 {0xfa, 0xc0000004, 0x10},
 {0xfb, 0xc0000003, 0x0},
-{0xfc, 0xc0000004, 0x25c0},
 {0xfd, 0xc0000004, 0xc},
 {0xfe, 0xc0000003, 0x0},
 {0xff, 0xc0000003, 0x0},
