@@ -156,9 +156,13 @@ MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
 #define KI_TRAP_FROM_USER(f) (((f)->Cs & RPL_USER) == RPL_USER)
 #define KI_TRAP_INTERRUPTS_ENABLED(f) (((f)->Rflags & 0x200) != 0)
 
-/* system calls: eax = number, r10 rdx r8 r9 then the stack past the home area, result in rax. */
+/*
+ * system calls: eax = number, r10 rdx r8 r9 then the stack past the home area, result in rax. like KiSystemCall64,
+ * the number is its low 12 bits and bit 12 picks the win32k table: windows 11 ignores every bit above, and a
+ * program can leave anything there.
+ */
 #define KI_SERVICE_REGISTER_ARGS 4
-#define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Rax & 0xFFFF)
+#define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Rax & 0x1FFF)
 #define KI_SERVICE_STACK_ARGS(f) ((f)->Rsp + 0x28)
 #define KI_SERVICE_RESULT(f) ((f)->Rax)
 #define KI_TRAP_IN_SERVICE(f) ((f)->Vector == KTRAP_VECTOR_SYSCALL)
@@ -173,9 +177,9 @@ static inline void KiInstrumentReturn(PKTRAP_FRAME f, PVOID callback)
 }
 
 /*
- * like KiSystemServiceExit after KiRestoreSetContextState: a thread whose context another thread set while it was in a
- * system call gets the nonvolatile registers of that context, and the volatile ones sysret leaves: rcx the return
- * address, r11 the flags, rdx r9 r10 zero, r8 the stack and xmm0 to xmm5 zero.
+ * like KiSystemServiceExit: every system call of windows 11 returns with rcx the return address, r11 the flags,
+ * rdx r9 r10 zero, r8 the stack and xmm0 to xmm5 zero, whatever the caller had there. a thread whose context
+ * another thread set while it was in a system call gets the nonvolatile registers of that context and these.
  */
 static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
 {
@@ -187,14 +191,28 @@ static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
     f->R10 = 0;
     memset(f->Xmm, 0, 6 * sizeof(f->Xmm[0]));
 }
+/*
+ * the return of a system service through the instrumentation callback, measured on windows 11 26300 with
+ * scratch/dlls/probe/icb.c of the research repository: the callback is what sysret returns to, so rcx holds it too,
+ * and r10 where the service was going.
+ */
+static inline void KiInstrumentServiceReturn(PKTRAP_FRAME f, PVOID callback)
+{
+    if (callback && f->Cs == (KGDT64_R3_CODE | RPL_USER)) {
+        f->R10 = f->Rip;
+        f->Rip = (ULONG64)callback;
+        f->Rcx = f->Rip;
+    }
+}
 #define KI_SERVICE_REGISTER_ARG(f, i) ((i) == 0 ? (f)->R10 : (i) == 1 ? (f)->Rdx : (i) == 2 ? (f)->R8 : (f)->R9)
 
-#define EFLAGS_USER_MASK 0x00010DD5ull /* cf pf af zf sf tf df of, and rf to step past a breakpoint: what user mode may set. */
+#define EFLAGS_USER_MASK 0x00210DD5ull /* cf pf af zf sf tf df of, rf to step past a breakpoint and id: what user mode may set. */
 #define EFLAGS_IF 0x200ull
 
 typedef struct _KJUMP_BUFFER {
     ULONG64 Rbx, Rbp, Rdi, Rsi, R12, R13, R14, R15, Rsp, Rip;
     M128A Xmm6_15[10];
+    struct _KJUMP_BUFFER *Outer; /* the recovery of a copy this one runs within, such as a fault's own. */
 } KJUMP_BUFFER;
 
 /*

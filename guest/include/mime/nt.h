@@ -130,6 +130,7 @@ typedef struct _GUID {
 #define STATUS_PROCESS_NOT_IN_JOB ((NTSTATUS)0x00000123L)
 #define STATUS_PROCESS_IN_JOB ((NTSTATUS)0x00000124L)
 #define STATUS_IMAGE_NOT_AT_BASE ((NTSTATUS)0x40000003L)
+#define STATUS_IMAGE_AT_DIFFERENT_BASE ((NTSTATUS)0x40000036L)
 #define STATUS_OBJECT_NAME_EXISTS ((NTSTATUS)0x40000000L)
 #define STATUS_BUFFER_OVERFLOW ((NTSTATUS)0x80000005L)
 #define STATUS_NO_MORE_FILES ((NTSTATUS)0x80000006L)
@@ -171,6 +172,8 @@ typedef struct _GUID {
 #define STATUS_INVALID_VIEW_SIZE ((NTSTATUS)0xC000001FL)
 #define STATUS_PORT_ALREADY_SET ((NTSTATUS)0xC0000048L)
 #define STATUS_PORT_NOT_SET ((NTSTATUS)0xC0000353L)
+#define STATUS_DEBUGGER_INACTIVE ((NTSTATUS)0xC0000354L)
+#define STATUS_INVALID_IMAGE_HASH ((NTSTATUS)0xC0000428L)
 #define STATUS_IMAGE_ALREADY_LOADED ((NTSTATUS)0xC000010EL)
 #define STATUS_ALREADY_COMMITTED ((NTSTATUS)0xC0000021L)
 #define STATUS_ACCESS_DENIED ((NTSTATUS)0xC0000022L)
@@ -964,6 +967,7 @@ typedef struct MIME_CODE_LOG {
     ULONG64 Pages[MIME_CODE_LOG_PAGES];
 } MIME_CODE_LOG;
 
+#define SEC_NO_CHANGE 0x00400000
 #define SEC_FILE 0x00800000
 #define SEC_IMAGE 0x01000000
 #define SEC_RESERVE 0x04000000
@@ -1116,6 +1120,7 @@ typedef enum _MODE {
 #define IMAGE_SUBSYSTEM_WINDOWS_GUI 2
 #define IMAGE_SUBSYSTEM_WINDOWS_CUI 3
 
+#define IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA 0x0020
 #define IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE 0x0040
 #define IMAGE_DLLCHARACTERISTICS_NX_COMPAT 0x0100
 
@@ -1452,6 +1457,26 @@ MIME_STATIC_ASSERT(sizeof(ARM64_NT_CONTEXT) == 0x390, "ARM64_NT_CONTEXT size");
 #define CONTEXT_AMD64_FLOATING_POINT (CONTEXT_AMD64 | 0x8L)
 #define CONTEXT_AMD64_DEBUG_REGISTERS (CONTEXT_AMD64 | 0x10L)
 #define CONTEXT_AMD64_FULL (CONTEXT_AMD64_CONTROL | CONTEXT_AMD64_INTEGER | CONTEXT_AMD64_FLOATING_POINT)
+#define CONTEXT_AMD64_XSTATE (CONTEXT_AMD64 | 0x40L)
+
+/* what follows a context that carries extended state: where the whole, the legacy part and the state lie from here. */
+typedef struct _CONTEXT_CHUNK {
+    LONG Offset;
+    ULONG Length;
+} CONTEXT_CHUNK;
+
+typedef struct _CONTEXT_EX {
+    CONTEXT_CHUNK All;
+    CONTEXT_CHUNK Legacy;
+    CONTEXT_CHUNK XState;
+} CONTEXT_EX, *PCONTEXT_EX;
+
+/* the head of an extended state area: the features it holds, and its layout when it is compacted. */
+typedef struct _XSAVE_AREA_HEADER {
+    ULONG64 Mask;
+    ULONG64 CompactionMask;
+    ULONG64 Reserved2[6];
+} XSAVE_AREA_HEADER, *PXSAVE_AREA_HEADER;
 
 typedef struct DECLSPEC_ALIGN(16) _M128A {
     ULONGLONG Low;
@@ -1665,6 +1690,14 @@ typedef struct _RTL_USER_PROCESS_PARAMETERS {
     PVOID PackageDependencyData;
     ULONG ProcessGroupId;
     ULONG LoaderThreads;
+    UNICODE_STRING RedirectionDllName;
+    UNICODE_STRING HeapPartitionName;
+    ULONG64 *DefaultThreadpoolCpuSetMasks;
+    ULONG DefaultThreadpoolCpuSetMaskCount;
+    ULONG DefaultThreadpoolThreadMaximum;
+    ULONG HeapMemoryTypeMask;
+    /* the PS_ATTRIBUTE_LIST the process was made with; the 26300 loader reads and validates it. */
+    PVOID AttributeList;
 } RTL_USER_PROCESS_PARAMETERS, *PRTL_USER_PROCESS_PARAMETERS;
 #ifdef __i386__
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CurrentDirectory, 0x24);
@@ -1680,6 +1713,11 @@ MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, CommandLine, 0x70);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, Environment, 0x80);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, WindowTitle, 0xB0);
 MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, EnvironmentSize, 0x3F0);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, RedirectionDllName, 0x410);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, HeapPartitionName, 0x420);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, DefaultThreadpoolCpuSetMasks, 0x430);
+MIME_FIELD_AT(RTL_USER_PROCESS_PARAMETERS, AttributeList, 0x448);
+MIME_STATIC_ASSERT(sizeof(RTL_USER_PROCESS_PARAMETERS) == 0x450, "RTL_USER_PROCESS_PARAMETERS size");
 #endif
 
 typedef struct _PEB_LDR_DATA {
@@ -1755,6 +1793,8 @@ MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, BaseDllName, 0x58);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, HashLinks, 0x70);
 MIME_FIELD_AT(LDR_DATA_TABLE_ENTRY, OriginalBase, 0xF8);
 #endif
+
+#define PEB_IMAGE_DYNAMICALLY_RELOCATED 0x04
 
 typedef struct _PEB {
     BOOLEAN InheritedAddressSpace;
@@ -1865,6 +1905,18 @@ typedef struct _PEB {
     ULONG_PTR TppWorkerpListLock;
     LIST_ENTRY TppWorkerpList;
     PVOID WaitOnAddressHashTable[128];
+#ifndef __i386__
+    PVOID TelemetryCoverageHeader;
+    ULONG CloudFileFlags;
+    ULONG CloudFileDiagFlags;
+    CHAR PlaceholderCompatibilityMode;
+    CHAR PlaceholderCompatibilityModeReserved[7];
+    PVOID LeapSecondData;
+    ULONG LeapSecondFlags;
+    ULONG NtGlobalFlag2;
+    ULONGLONG ExtendedFeatureDisableMask;
+    PVOID Win32ClientProcInfo;
+#endif
 } PEB, *PPEB;
 #ifdef __i386__
 MIME_FIELD_AT(PEB, ImageBaseAddress, 0x8);
@@ -1894,6 +1946,10 @@ MIME_FIELD_AT(PEB, OSMajorVersion, 0x118);
 MIME_FIELD_AT(PEB, ImageSubsystem, 0x128);
 MIME_FIELD_AT(PEB, GdiHandleBuffer, 0x140);
 MIME_FIELD_AT(PEB, SessionId, 0x2C0);
+MIME_FIELD_AT(PEB, UseCaseMapping, 0x350);
+MIME_FIELD_AT(PEB, TppWorkerpList, 0x390);
+MIME_FIELD_AT(PEB, LeapSecondData, 0x7B8);
+_Static_assert(sizeof(PEB) == 0x7D8, "the peb of 26300");
 #endif
 
 typedef struct _GDI_TEB_BATCH {
@@ -2002,7 +2058,9 @@ typedef struct _TEB {
     LCID CurrentLocale;
     ULONG FpSoftwareStatusRegister;
     PVOID ReservedForDebuggerInstrumentation[16];
-    PVOID SystemReserved1[30];
+    PVOID SystemReserved1[25];
+    PVOID HeapFlsData;
+    ULONG_PTR RngState[4];
     CHAR PlaceholderCompatibilityMode;
     BOOLEAN PlaceholderHydrationAlwaysExplicit;
     CHAR PlaceholderReserved[10];
@@ -2130,7 +2188,7 @@ MIME_FIELD_AT(TEB, Rcu, 0x1870);
 #endif
 
 #define MIME_TEB_SIZE 0x2000
-#define MIME_TEB32_SIZE 0x1000 /* follows the 64-bit teb of a wow64 thread. */
+#define MIME_TEB32_SIZE 0x2000 /* follows the 64-bit teb of a wow64 thread; the 32-bit teb of 26300 is longer than a page. */
 
 typedef struct _KSYSTEM_TIME {
     ULONG LowPart;
@@ -2146,6 +2204,29 @@ typedef enum _NT_PRODUCT_TYPE {
 
 #define PROCESSOR_ARCHITECTURE_AMD64 9
 #define PROCESSOR_ARCHITECTURE_ARM64 12
+
+/* the extended processor state the system saves for threads, as the shared page describes it to user mode. */
+typedef struct _XSTATE_FEATURE {
+    ULONG Offset;
+    ULONG Size;
+} XSTATE_FEATURE;
+
+typedef struct _XSTATE_CONFIGURATION {
+    ULONG64 EnabledFeatures;
+    ULONG64 EnabledVolatileFeatures;
+    ULONG Size;
+    ULONG ControlFlags; /* bit 0 optimized save, bit 1 compaction */
+    XSTATE_FEATURE Features[64];
+    ULONG64 EnabledSupervisorFeatures;
+    ULONG64 AlignedFeatures;
+    ULONG AllFeatureSize;
+    ULONG AllFeatures[64];
+    ULONG64 EnabledUserVisibleSupervisorFeatures;
+    ULONG64 ExtendedFeatureDisableFeatures;
+    ULONG AllNonLargeFeatureSize;
+    ULONG Spare;
+} XSTATE_CONFIGURATION, *PXSTATE_CONFIGURATION;
+MIME_STATIC_ASSERT(sizeof(XSTATE_CONFIGURATION) == 0x348, "XSTATE_CONFIGURATION size");
 
 typedef struct _KUSER_SHARED_DATA {
     ULONG TickCountLowDeprecated;
@@ -2235,7 +2316,9 @@ typedef struct _KUSER_SHARED_DATA {
     };
     LARGE_INTEGER TimeZoneBiasEffectiveStart;
     LARGE_INTEGER TimeZoneBiasEffectiveEnd;
+    XSTATE_CONFIGURATION XState;
 } KUSER_SHARED_DATA, *PKUSER_SHARED_DATA;
+MIME_STATIC_ASSERT(offsetof(KUSER_SHARED_DATA, XState) == 0x3D8, "KUSER_SHARED_DATA XState offset");
 #define USER_SHARED_DATA ((volatile KUSER_SHARED_DATA *const)0x7FFE0000)
 
 /* an arm64 machine, whose hardware the x64 and x86 programs it translates see as well, as windows shows them. */
@@ -2495,6 +2578,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessPriorityClass = 18,
     ProcessHandleCount = 20,
     ProcessWorkingSetWatch = 15,
+    ProcessEnableAlignmentFaultFixup = 17,
     ProcessAffinityMask = 21,
     ProcessPriorityBoost = 22,
     ProcessSessionInformation = 24,

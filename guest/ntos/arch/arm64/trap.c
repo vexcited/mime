@@ -224,7 +224,7 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
         }
         if (far <= MIME_USER_ADDRESS_LIMIT && thread && thread->FaultRecovery) {
             KJUMP_BUFFER *recovery = thread->FaultRecovery;
-            thread->FaultRecovery = nullptr;
+            thread->FaultRecovery = recovery->Outer;
             KeGetPcr()->Irql = PASSIVE_LEVEL;
             KiEnableInterrupts();
             KiLongJump(recovery, 1);
@@ -244,7 +244,7 @@ DECLSPEC_NORETURN void NTAPI ExRaiseStatus(NTSTATUS status)
     PKTHREAD thread = KiCurrentThread();
     if (thread && thread->FaultRecovery) {
         KJUMP_BUFFER *recovery = thread->FaultRecovery;
-        thread->FaultRecovery = nullptr;
+        thread->FaultRecovery = recovery->Outer;
         KiLongJump(recovery, 1);
     }
     KeBugCheckEx(0x0000001E, (ULONG_PTR)status, (ULONG_PTR)__builtin_return_address(0), 0, 0); /* KMODE_EXCEPTION_NOT_HANDLED */
