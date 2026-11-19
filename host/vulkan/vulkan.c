@@ -21,8 +21,6 @@
 #include <time.h>
 #include <unistd.h>
 
-static void dump_hook(MvkConnection *c);
-
 #define MAX_CONNECTIONS 64
 #define MAX_PHYSICAL_DEVICES 16
 #define MAX_IDS (64u << 20)
@@ -1140,7 +1138,6 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
             mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, c->device);
             mvk_budget_hook(c);
-            dump_hook(c);
             if (c->host_import && c->fn.vkCreateBuffer) {
                 g_create_buffer = c->fn.vkCreateBuffer;
                 c->fn.vkCreateBuffer = create_importable_buffer;
@@ -1460,7 +1457,6 @@ static uint64_t realtime_ns(void)
     return (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
 }
 
-static bool g_no_spare;
 static pthread_mutex_t g_maker_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_maker_wake = PTHREAD_COND_INITIALIZER;
 static uint64_t g_maker_at; /* when the next device is due, in realtime nanoseconds, 0 for none. */
@@ -1473,7 +1469,6 @@ static uint64_t g_vk_busy; /* when a connection last ran a call of the guest, in
  * browser waited 70 ms instead of 6 for its device.
  */
 #define QUIET_NS 10000000000ull
-static uint64_t g_quiet_ns = QUIET_NS; /* overridden by MIME_VK_SPARE_QUIET_MS. */
 
 static void maker_request(uint64_t delay, bool quiet)
 {
@@ -1693,7 +1688,7 @@ static void create_device(MvkCall *call)
     if (!d->error && physical && !c->device) {
         Request key = {};
         HostInstance *hi = c->host_instance;
-        bool known = !g_no_spare && device_request(&key, d, queues);
+        bool known = device_request(&key, d, queues);
         uint64_t began = mime_now_ns();
         MvkConnection *spare = known && hi ? spare_take(hi, &key, physical, queues) : nullptr;
         if (spare) {
@@ -2478,105 +2473,11 @@ static pthread_cond_t g_pool_work = PTHREAD_COND_INITIALIZER;
 static MvkJob *g_pool_first, *g_pool_last;
 static uint32_t g_pool_threads;
 
-/*
- * MIME_VK_DUMP_SPIRV=<dir> keeps every shader module a guest makes, named by its handle, and writes the modules of each
- * pipeline to jobs.log before the driver compiles it, so a driver crash names its shaders.
- */
-static const char *g_spirv_dump;
-static PFN_vkCreateShaderModule g_create_module;
-static uint32_t g_dump_serial;
-
-static void dump_words(const char *name, const void *code, size_t size)
-{
-    char path[512];
-    snprintf(path, sizeof(path), "%s/%s.spv", g_spirv_dump, name);
-    FILE *f = fopen(path, "wb");
-    if (f) {
-        fwrite(code, 1, size, f);
-        fclose(f);
-    }
-}
-
-static VkResult VKAPI_CALL dump_create_module(VkDevice device, const VkShaderModuleCreateInfo *info,
-                                              const VkAllocationCallbacks *allocator, VkShaderModule *module)
-{
-    VkResult result = g_create_module(device, info, allocator, module);
-    if (result == VK_SUCCESS) {
-        char name[32];
-        snprintf(name, sizeof(name), "m%016llx", (unsigned long long)*module);
-        dump_words(name, info->pCode, info->codeSize);
-    }
-    return result;
-}
-
-static void dump_hook(MvkConnection *c)
-{
-    if (!g_spirv_dump)
-        g_spirv_dump = getenv("MIME_VK_DUMP_SPIRV");
-    if (!g_spirv_dump || !c->fn.vkCreateShaderModule || c->fn.vkCreateShaderModule == dump_create_module)
-        return;
-    g_create_module = c->fn.vkCreateShaderModule;
-    c->fn.vkCreateShaderModule = dump_create_module;
-}
-
-static void dump_stage(FILE *log, uint32_t job, uint32_t index, const VkPipelineShaderStageCreateInfo *stage)
-{
-    if (stage->module) {
-        fprintf(log, " stage %#x m%016llx", stage->stage, (unsigned long long)stage->module);
-        return;
-    }
-    for (const VkBaseInStructure *next = stage->pNext; next; next = next->pNext)
-        if (next->sType == VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO) {
-            const VkShaderModuleCreateInfo *inline_module = (const VkShaderModuleCreateInfo *)next;
-            char name[32];
-            snprintf(name, sizeof(name), "j%u-%u", job, index);
-            dump_words(name, inline_module->pCode, inline_module->codeSize);
-            fprintf(log, " stage %#x %s", stage->stage, name);
-        }
-}
-
-static void dump_job(const MvkJob *job, bool finished)
-{
-    char path[512];
-    snprintf(path, sizeof(path), "%s/jobs.log", g_spirv_dump);
-    FILE *log = fopen(path, "a");
-    if (!log)
-        return;
-    uint32_t serial = __atomic_fetch_add(&g_dump_serial, 1, __ATOMIC_RELAXED);
-    if (finished) {
-        fprintf(log, "done %s of %u: %d\n", mvk_generated_names[job->op], job->count, job->result);
-        fclose(log);
-        return;
-    }
-    fprintf(log, "start %s of %u:", mvk_generated_names[job->op], job->count);
-    uint32_t index = 0;
-    for (uint32_t i = 0; i < job->count; i++) {
-        if (job->op == MVK_OP_vkCreateGraphicsPipelines) {
-            const VkGraphicsPipelineCreateInfo *info = (const VkGraphicsPipelineCreateInfo *)job->infos + i;
-            for (uint32_t k = 0; k < info->stageCount; k++)
-                dump_stage(log, serial, index++, &info->pStages[k]);
-        } else if (job->op == MVK_OP_vkCreateComputePipelines) {
-            dump_stage(log, serial, index++, &((const VkComputePipelineCreateInfo *)job->infos + i)->stage);
-        } else {
-            const VkShaderCreateInfoEXT *info = (const VkShaderCreateInfoEXT *)job->infos + i;
-            char name[32];
-            snprintf(name, sizeof(name), "j%u-%u", serial, index++);
-            dump_words(name, info->pCode, info->codeSize);
-            fprintf(log, " shader %#x %s", info->stage, name);
-        }
-        fprintf(log, " |");
-    }
-    fprintf(log, "\n");
-    fclose(log);
-}
-
 /* runs creation on a worker, or on a caller that needs the result before a worker starts. */
 static void run_job(MvkJob *job)
 {
     {
         const MvkDispatch *fn = &job->conn->fn;
-        if (g_spirv_dump)
-            dump_job(job, false);
         uint64_t began = mime_now_ns();
         if (job->op == MVK_OP_vkCreateShadersEXT)
             job->result = fn->vkCreateShadersEXT(job->device, job->count, job->infos, nullptr, (VkShaderEXT *)job->pipelines);
@@ -2586,16 +2487,11 @@ static void run_job(MvkJob *job)
         else
             job->result = fn->vkCreateComputePipelines(job->device, job->cache, job->count, job->infos, nullptr,
                                                        job->pipelines);
-        if (g_spirv_dump)
-            dump_job(job, true);
         MvkConnection *c = job->conn;
         uint64_t took = mime_now_ns() - began;
         int kind = job->op == MVK_OP_vkCreateShadersEXT ? 0 : job->op == MVK_OP_vkCreateGraphicsPipelines ? 1 : 2;
         __atomic_fetch_add(&g_job_stats[kind].creations, job->count, __ATOMIC_RELAXED);
         __atomic_fetch_add(&g_job_stats[kind].ns, took, __ATOMIC_RELAXED);
-        if (took > 2000000)
-            mime_debug("vulkan: connection %u: %s of %u took %llu us", c->index, mvk_generated_names[job->op], job->count,
-                       (unsigned long long)(took / 1000));
         pthread_mutex_lock(&c->job_lock);
         __atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
         __atomic_add_fetch(&c->jobs_finished, 1, __ATOMIC_RELEASE);
@@ -3164,12 +3060,8 @@ static void run_call(MvkCall *call)
     }
     if (c->records && records_waited_for(op))
         drain_records(c);
-    /* MIME_VK_SYNC_SHADERS=1 serializes shader creation in call order for comparison with worker execution. */
-    static int sync_shaders = -1;
-    if (sync_shaders < 0)
-        sync_shaders = getenv("MIME_VK_SYNC_SHADERS") != nullptr;
     if (op == MVK_OP_vkCreateGraphicsPipelines || op == MVK_OP_vkCreateComputePipelines ||
-        (op == MVK_OP_vkCreateShadersEXT && !sync_shaders))
+        op == MVK_OP_vkCreateShadersEXT)
         create_pipelines_aside(call);
     else if (op > MVK_OP_NONE && op < MVK_OP_GENERATED_COUNT && mvk_generated_commands[op])
         mvk_generated_commands[op](call);
@@ -3188,9 +3080,6 @@ static void run_call(MvkCall *call)
         if (call->header.reply != MVK_NO_REPLY)
             __atomic_fetch_add(&g_op_stats[slot].replies, 1, __ATOMIC_RELAXED);
     }
-    /* slow driver calls for MIME_DEBUG. */
-    if (took > 2000000)
-        mime_debug("vulkan: connection %u call %#x took %llu us", c->index, op, (unsigned long long)(took / 1000));
 }
 
 /* dumps call counts and durations, then resets them. */
@@ -3390,7 +3279,6 @@ void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice d
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
     mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, device);
     mvk_budget_hook(c);
-    dump_hook(c);
     VkPhysicalDeviceExternalMemoryHostPropertiesEXT host = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
     VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &host};
@@ -3739,16 +3627,8 @@ static void *warm_run(void)
     __atomic_store_n(&g_warm_done, done, __ATOMIC_RELEASE);
     mime_info("vulkan: the driver is warm after %llu ms", (unsigned long long)((done - began) / 1000000));
     /* prepare the last run's device after driver loading and replenish it after use. */
-    if (getenv("MIME_VK_SPARE_QUIET_MS"))
-        g_quiet_ns = strtoull(getenv("MIME_VK_SPARE_QUIET_MS"), nullptr, 10) * 1000000ull;
-    if (getenv("MIME_VK_NO_SPARE")) {
-        /* disable device reuse to isolate device-specific problems. */
-        g_no_spare = true;
-        g_maker_stop = true;
-    } else {
-        learned_load();
-        maker_request(0, false);
-    }
+    learned_load();
+    maker_request(0, false);
     for (;;) {
         pthread_mutex_lock(&g_maker_lock);
         /* a minute at most without a request, to give back the devices nobody took. */
@@ -3768,7 +3648,7 @@ static void *warm_run(void)
             break;
         if (fill) {
             learned_save();
-            if (quiet && mime_now_ns() - __atomic_load_n(&g_vk_busy, __ATOMIC_RELAXED) < g_quiet_ns) {
+            if (quiet && mime_now_ns() - __atomic_load_n(&g_vk_busy, __ATOMIC_RELAXED) < QUIET_NS) {
                 /* the guest is calling the driver: asked again in a second. */
                 maker_request(1000000000ull, true);
             } else {

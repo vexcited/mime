@@ -1904,23 +1904,6 @@ static void compile_job(CompileJob *j)
         ok = stage_details(j->p, &r, j, &stage, &fb);
         append_stage_info(&r, &stage, &fb);
     }
-    const char *dump = getenv("MIME_GPU_DUMP_SPIRV");
-    if (dump && r.ok) {
-        static unsigned serial;
-        unsigned n = __atomic_fetch_add(&serial, 1, __ATOMIC_RELAXED);
-        const char *stage_names[] = {"vert", "frag", "tesc", "tese", "geom"};
-        for (int k = 0; k < 5; k++) {
-            const uint32_t *w = k < 2 ? r.spirv[k] : r.spirv_extra[k - 2];
-            size_t words = k < 2 ? r.spirv_words[k] : r.extra_words[k - 2];
-            char path[300];
-            snprintf(path, sizeof(path), "%s/p%u-%s.spv", dump, n, stage_names[k]);
-            FILE *f = w ? fopen(path, "wb") : nullptr;
-            if (f) {
-                fwrite(w, 4, words, f);
-                fclose(f);
-            }
-        }
-    }
     ok = ok && program_objects(j->p, &r);
     if (r.ok && !ok && !((MimeGpuProgramInfo *)r.info)->log_bytes)
         append_program_error(&r, "the gpu rejected a translated program");
