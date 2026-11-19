@@ -367,7 +367,7 @@ static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, O
         HKEY key;
         if (handle == HKEY_PERFORMANCE_DATA)
             return ERROR_INVALID_HANDLE;
-        DWORD error = RegDuplicateHKey(handle, &key);
+        DWORD error = AdvOpenPredefinedKey(handle, &key);
         if (error)
             return error;
         use = key;
@@ -1413,7 +1413,7 @@ static LONG key_for_security(HKEY key, DWORD access, HKEY *real, BOOL *opened)
     }
     if (key == HKEY_PERFORMANCE_DATA)
         return ERROR_INVALID_HANDLE;
-    LONG error = RegDuplicateHKey(key, real);
+    LONG error = AdvOpenPredefinedKey(key, real);
     *opened = error == ERROR_SUCCESS;
     return error;
 }

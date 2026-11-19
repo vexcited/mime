@@ -70,6 +70,86 @@ static DWORD channel_read(IMAGE *img, void *data, DWORD size, DWORD timeout)
     return ERROR_SUCCESS;
 }
 
+static void post_free(SCM_CONTROL_POST *post)
+{
+    SvcFree(post->Name);
+    for (DWORD i = 0; i < post->Count; i++)
+        SvcFree(post->Arguments ? post->Arguments[i] : nullptr);
+    SvcFree(post->Arguments);
+    SvcFree(post->EventData);
+    memset(post, 0, sizeof(*post));
+}
+
+/*
+ * a control for a dispatcher of genuine sechost: it waits in the image's mailbox until the dispatcher's call takes it,
+ * and its answer comes with the dispatcher's next call. the quit control has no answer, the waiting call fails with
+ * ERROR_PROCESS_ABORTED instead, which ends the dispatcher's loop.
+ */
+static DWORD post_control(IMAGE *img, DWORD control, const WCHAR *name, DWORD event_type, const void *event_data,
+                          DWORD event_size, UINT64 status_id, DWORD count, const WCHAR *const *arguments, DWORD timeout,
+                          DWORD *result)
+{
+    EnterCriticalSection(&img->MailLock);
+    if (control == SCM_CTRL_QUIT) {
+        img->Quit = TRUE;
+        WakeAllConditionVariable(&img->Mail);
+        LeaveCriticalSection(&img->MailLock);
+        if (result)
+            *result = 0;
+        return ERROR_SUCCESS;
+    }
+    if (img->Broken || img->Quit) {
+        LeaveCriticalSection(&img->MailLock);
+        return ERROR_BROKEN_PIPE;
+    }
+    SCM_CONTROL_POST *post = &img->Post;
+    post_free(post);
+    post->Control = control;
+    post->Reason = event_type;
+    post->StatusId = status_id;
+    post->Name = SvcDup(name ? name : L"");
+    if (count) {
+        post->Arguments = SvcAllocZero(count * sizeof(*post->Arguments));
+        for (DWORD i = 0; post->Arguments && i < count; i++)
+            post->Arguments[i] = SvcDup(arguments[i] ? arguments[i] : L"");
+        post->Count = post->Arguments ? count : 0;
+    }
+    if (event_size && event_data) {
+        post->EventData = SvcAlloc(event_size);
+        if (post->EventData) {
+            memcpy(post->EventData, event_data, event_size);
+            post->EventSize = event_size;
+        }
+    }
+    img->Posted = TRUE;
+    img->Answered = FALSE;
+    WakeAllConditionVariable(&img->Mail);
+    ULONGLONG deadline = GetTickCount64() + timeout;
+    DWORD error = ERROR_SUCCESS;
+    while (!img->Answered && !img->Broken && !img->Exited) {
+        ULONGLONG now = GetTickCount64();
+        if (now >= deadline) {
+            error = ERROR_SERVICE_REQUEST_TIMEOUT;
+            break;
+        }
+        SleepConditionVariableCS(&img->Mail, &img->MailLock, (DWORD)(deadline - now));
+    }
+    if (!error && !img->Answered)
+        error = ERROR_BROKEN_PIPE;
+    if (!error && result)
+        *result = img->Answer;
+    if (error) {
+        if (img->Posted)
+            post_free(post);
+        img->Posted = FALSE;
+        img->Broken = TRUE;
+        WakeAllConditionVariable(&img->Mail);
+    }
+    img->Answered = FALSE;
+    LeaveCriticalSection(&img->MailLock);
+    return error;
+}
+
 /*
  * returns the error the handler returned. called without the lock, the image's control lock serializes controls.
  */
@@ -77,6 +157,13 @@ static DWORD send_control(IMAGE *img, DWORD control, const WCHAR *name, DWORD ev
                           DWORD event_size, UINT64 status_id, DWORD count, const WCHAR *const *arguments, DWORD timeout,
                           DWORD *result)
 {
+    if (img->Rpc) {
+        EnterCriticalSection(&img->ControlLock);
+        DWORD error = post_control(img, control, name, event_type, event_data, event_size, status_id, count, arguments,
+                                   timeout, result);
+        LeaveCriticalSection(&img->ControlLock);
+        return error;
+    }
     SCM_WRITER w;
     ScmWriterInit(&w, control);
     ScmPutString(&w, name);
@@ -138,6 +225,8 @@ static void image_free(IMAGE *img)
     if (img->Process)
         CloseHandle(img->Process);
     DeleteCriticalSection(&img->ControlLock);
+    post_free(&img->Post);
+    DeleteCriticalSection(&img->MailLock);
     SvcFree(img->Key);
     SvcFree(img->Account);
     SvcFree(img);
@@ -401,6 +490,9 @@ void RunProcessExited(IMAGE *img)
         return;
     img->Exited = TRUE;
     img->Broken = TRUE;
+    EnterCriticalSection(&img->MailLock);
+    WakeAllConditionVariable(&img->Mail);
+    LeaveCriticalSection(&img->MailLock);
     for (SERVICE *s = g_services; s; s = s->Next) {
         if (s->Image == img && s->Status.dwCurrentState != SERVICE_STOPPED) {
             SvcLog("the process of %ls ended while it was %s", s->Name, state_name(s->Status.dwCurrentState));
@@ -536,6 +628,68 @@ void RunChannelOpened(HANDLE pipe, DWORD pid, BOOL ok)
         CloseHandle(pipe);
 }
 
+/* the channel of a genuine sechost's dispatcher: like the pipe, only a process the manager started and waits for. */
+DWORD RunRpcOpenChannel(DWORD pid)
+{
+    for (IMAGE *img = g_images; img; img = img->Next) {
+        if (img->Pid == pid && !img->Exited && !img->Connected) {
+            img->Rpc = TRUE;
+            img->Connected = TRUE;
+            WakeAllConditionVariable(&g_changed);
+            return ERROR_SUCCESS;
+        }
+    }
+    return ERROR_FAILED_SERVICE_CONTROLLER_CONNECT;
+}
+
+/* answers the control the dispatcher took last and waits for the next. called without the lock. */
+DWORD RunRpcExchange(DWORD pid, DWORD answer, SCM_CONTROL_POST *post)
+{
+    EnterCriticalSection(&g_lock);
+    IMAGE *img = g_images;
+    while (img && !(img->Pid == pid && img->Rpc && !img->Exited))
+        img = img->Next;
+    if (img)
+        img->Refs++;
+    LeaveCriticalSection(&g_lock);
+    if (!img)
+        return ERROR_PROCESS_ABORTED;
+    EnterCriticalSection(&img->MailLock);
+    if (img->Awaiting) {
+        img->Answer = answer;
+        img->Answered = TRUE;
+        img->Awaiting = FALSE;
+        WakeAllConditionVariable(&img->Mail);
+    }
+    while (!img->Posted && !img->Quit && !img->Broken && !img->Exited)
+        SleepConditionVariableCS(&img->Mail, &img->MailLock, INFINITE);
+    DWORD error = ERROR_PROCESS_ABORTED;
+    if (img->Posted && !img->Broken) {
+        *post = img->Post;
+        memset(&img->Post, 0, sizeof(img->Post));
+        img->Posted = FALSE;
+        img->Awaiting = TRUE;
+        error = ERROR_SUCCESS;
+    }
+    LeaveCriticalSection(&img->MailLock);
+    EnterCriticalSection(&g_lock);
+    image_release(img);
+    LeaveCriticalSection(&g_lock);
+    return error;
+}
+
+void RunRpcChannelClosed(DWORD pid)
+{
+    for (IMAGE *img = g_images; img; img = img->Next) {
+        if (img->Pid == pid && img->Rpc) {
+            EnterCriticalSection(&img->MailLock);
+            img->Broken = TRUE;
+            WakeAllConditionVariable(&img->Mail);
+            LeaveCriticalSection(&img->MailLock);
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ starting */
 
 static BOOL file_exists(const WCHAR *command)
@@ -611,6 +765,8 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
     if (!img)
         return ERROR_NOT_ENOUGH_MEMORY;
     InitializeCriticalSection(&img->ControlLock);
+    InitializeCriticalSection(&img->MailLock);
+    InitializeConditionVariable(&img->Mail);
     img->Key = image_key(command);
     img->Account = account_of(s);
     img->Type = s->Type;

@@ -1385,6 +1385,21 @@ static DWORD handle_request(CONN *c, DWORD op, SCM_READER *r, SCM_WRITER *w, KEE
     return error;
 }
 
+/* a request of an rpc caller, made of the same message the pipe's clients send: the reply's results follow its header. */
+DWORD MainRpcRequest(DWORD pid, DWORD op, SCM_WRITER *request, SCM_WRITER *reply)
+{
+    UINT32 size;
+    UCHAR *message = ScmWriterFinish(request, &size);
+    if (!message)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    SCM_READER r;
+    ScmReaderInit(&r, message, size);
+    CONN c = {SCM_RPC_CALLER, nullptr, pid};
+    KEEP keep = KEEP_NONE;
+    ScmWriterInit(reply, 0);
+    return handle_request(&c, op, &r, reply, &keep);
+}
+
 static DWORD WINAPI connection(LPVOID context)
 {
     CONN *c = context;
@@ -1563,6 +1578,9 @@ void entry(void)
     HANDLE ready = SvcCreateWorldEvent(SCM_START_EVENT);
     if (ready)
         SetEvent(ready);
+    RpcStart();
+    LsaLookupStart();
+    AppInfoStart();
     BootStart();
     Sleep(INFINITE);
     ExitProcess(0);

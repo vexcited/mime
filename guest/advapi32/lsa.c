@@ -876,7 +876,7 @@ ADVAPI NTSTATUS WINAPI LsaRemoveAccountRights(LSA_HANDLE handle, PSID account, B
             if (ConvertSidToStringSidW(account, &text)) {
                 _snwprintf(path, RTL_NUMBER_OF(path), RIGHTS_KEY L"\\%ls", text);
                 AdvFree(text);
-                RegDeleteKeyW(HKEY_LOCAL_MACHINE, path);
+                RegDeleteKeyExW(HKEY_LOCAL_MACHINE, path, 0, 0);
             }
         } else {
             RegSetValueExW(key, L"Rights", 0, REG_MULTI_SZ, (const BYTE *)next, (DWORD)((rights_chars(next) + 1) * sizeof(WCHAR)));
@@ -1115,8 +1115,6 @@ ADVAPI NTSTATUS WINAPI LsaLookupUserAccountType(PSID sid, ULONG *type)
 /* mappings of capability sids to names are kept by lsass, which this machine does not have. */
 ADVAPI NTSTATUS WINAPI LsaLookupManageSidNameMapping(ULONG operation, PVOID input, PVOID *output)
 {
-    (void)operation;
-    (void)input;
-    (void)output;
+    DbgPrint("LsaLookupManageSidNameMapping op %u input %p output %p\n", operation, input, output);
     return STATUS_NOT_IMPLEMENTED;
 }
