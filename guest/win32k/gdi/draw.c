@@ -640,6 +640,24 @@ BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, 
     return ok;
 }
 
+/* copies from a surface win32k keeps for itself, the strip of the system bitmaps, at a position of the dc. */
+BOOL GdiBltFromSurface(HDC hdst, int x, int y, int width, int height, SURFACE *src, int src_x, int src_y, DWORD rop)
+{
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT r = {0, 0, 0, 0};
+    if (begin_draw(hdst, &ctx)) {
+        LONG dx = x, dy = y;
+        DcLogicalToSurface(ctx.Dc, &dx, &dy);
+        ok = BltSurface(ctx.Dc->Surface, &ctx.Clip, dx, dy, width, height, src, src_x, src_y, rop, ctx.Dc);
+        r = (RECT){dx, dy, dx + width, dy + height};
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &r);
+    return ok;
+}
+
 BOOL NTAPI NtGdiStretchBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
                            int src_width, int src_height, DWORD rop, DWORD bk_color)
 {
