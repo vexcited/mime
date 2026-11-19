@@ -95,6 +95,8 @@ EXPORTS
     CoInitializeSecurity@36 @309
     CoIsHandlerConnected@4 @312
     CoIsOle1Class@4 @313
+    CLSIDFromOle1Class@12 @109
+    CoGetModuleType@8 @298
     CoLockObjectExternal@12 @314
     CoMarshalHresult@8 @315
     CoMarshalInterThreadInterfaceInStream@12 @316

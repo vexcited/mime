@@ -3,6 +3,7 @@ EXPORTS
     BindMoniker@16
     CLSIDFromProgID@8
     CLSIDFromProgIDEx@8
+    CLSIDFromOle1Class@12
     CLSIDFromString@8
     CoAddRefServerProcess@0
     CoAllowSetForegroundWindow@8
@@ -47,6 +48,7 @@ EXPORTS
     CoInitializeSecurity@36
     CoIsHandlerConnected@4
     CoIsOle1Class@4
+    CoGetModuleType@8
     CoLoadLibrary@8
     CoLockObjectExternal@12
     CoMarshalHresult@8

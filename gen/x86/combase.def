@@ -96,6 +96,8 @@ EXPORTS
     CoInitializeSecurity=ole32.CoInitializeSecurity @309
     CoIsHandlerConnected=ole32.CoIsHandlerConnected @312
     CoIsOle1Class=ole32.CoIsOle1Class @313
+    CLSIDFromOle1Class=ole32.CLSIDFromOle1Class @109
+    CoGetModuleType=ole32.CoGetModuleType @298
     CoLockObjectExternal=ole32.CoLockObjectExternal @314
     CoMarshalHresult=ole32.CoMarshalHresult @315
     CoMarshalInterThreadInterfaceInStream=ole32.CoMarshalInterThreadInterfaceInStream @316
