@@ -200,7 +200,7 @@ WINBASEAPI BOOL WINAPI PeekNamedPipe(HANDLE pipe, LPVOID buffer, DWORD size, LPD
                        ? (DWORD)(info - FIELD_OFFSET(KB_FILE_PIPE_PEEK_BUFFER, Data))
                        : 0;
     if (buffer && copied)
-        RtlCopyMemory(buffer, peek->Data, copied);
+        memcpy(buffer, peek->Data, copied);
     if (read)
         *read = copied;
     if (available)
@@ -358,7 +358,7 @@ WINBASEAPI BOOL WINAPI WaitNamedPipeW(LPCWSTR name, DWORD timeout)
         return FALSE;
     }
     wait->NameLength = (ULONG)(chars * sizeof(WCHAR));
-    RtlCopyMemory(wait->Name, pipe_name, chars * sizeof(WCHAR));
+    memcpy(wait->Name, pipe_name, chars * sizeof(WCHAR));
     if (timeout == NMPWAIT_USE_DEFAULT_WAIT) {
         wait->TimeoutSpecified = FALSE;
     } else {

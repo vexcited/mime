@@ -195,8 +195,12 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
     THREAD_BASIC_INFORMATION info;
     BOOL known = NT_SUCCESS(NtQueryInformationThread(handle, ThreadBasicInformation, &info, sizeof(info), nullptr));
     if (inherit) {
-        if (known)
-            RtlInheritActivationContext(info.ClientId.UniqueThread, context);
+        /* like windows: the thread gets its stack of contexts before it runs, and the context is released with it. */
+        PTEB teb = known ? info.TebBaseAddress : nullptr;
+        ULONG_PTR cookie;
+        if (teb && NT_SUCCESS(RtlAllocateActivationContextStack((PACTIVATION_CONTEXT_STACK *)&teb->ActivationContextStackPointer)))
+            RtlActivateActivationContextEx(RTL_ACTIVATE_ACTIVATION_CONTEXT_EX_FLAG_RELEASE_ON_STACK_DEALLOCATION, teb, context,
+                                           &cookie);
         RtlReleaseActivationContext(context);
         if (!(flags & CREATE_SUSPENDED))
             NtResumeThread(handle, nullptr);
@@ -1172,6 +1176,10 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    /* CREATE_DEFAULT_ERROR_MODE: the child starts from the default mode, not the one of this process. */
+    static const ULONG default_error_mode = 1;
+    if (flags & 0x04000000)
+        add_ps(&attributes, 0x00020009u /* PS_ATTRIBUTE_ERROR_MODE */, sizeof(ULONG), (ULONG_PTR)&default_error_mode);
     attributes.TotalLength = sizeof(SIZE_T) + attributes.Count * sizeof(PS_ATTRIBUTE);
     /* the security attributes' descriptors go to the new objects. */
     OBJECT_ATTRIBUTES process_oa, thread_oa;
@@ -1388,9 +1396,8 @@ static DWORD g_apc_slot = TLS_OUT_OF_INDEXES;
 
 void KbInitializeApc(void)
 {
-    DWORD slot = TlsAlloc();
-    if (slot < RTL_NUMBER_OF(NtCurrentTeb()->TlsSlots))
-        g_apc_slot = slot;
+    /* slot 16, which ntdll takes at process start like windows does: nothing is allocated before the program runs. */
+    g_apc_slot = 16;
 }
 
 void KbNoteApc(void)

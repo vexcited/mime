@@ -1,6 +1,6 @@
 /*
  * activation contexts: CreateActCtx and friends, which Windows implements in kernel32 with ntdll and csrss's sxs.dll.
- * mime's ntdll builds the context data itself. also the manifest driven settings: reported version and long paths.
+ * mime builds the context data in the process, with the generator ntdll has too. also the manifest driven settings: reported version and long paths.
  */
 #include "kernelbase_private.h"
 
@@ -17,7 +17,7 @@ static void NTAPI notification(ULONG type, PACTIVATION_CONTEXT context, const vo
                                PVOID notification_data, PBOOLEAN disable)
 {
     if (type == ACTIVATION_CONTEXT_NOTIFICATION_DESTROY)
-        RtlFreeActivationContextData((PVOID)data);
+        SxsFreeActivationContextData((PVOID)data);
     else if (disable)
         *disable = TRUE;
 }
@@ -166,7 +166,7 @@ HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx)
         .ProcessorArchitecture = arch,
         .LangId = (flags & ACTCTX_FLAG_LANGID_VALID) ? actctx->wLangId : 0,
     };
-    status = RtlGenerateActivationContext(&request, &data);
+    status = SxsGenerateActivationContext(&request, &data);
     if (!NT_SUCCESS(status))
         goto done;
     if (flags & ACTCTX_FLAG_SET_PROCESS_DEFAULT) {
@@ -187,7 +187,7 @@ HANDLE WINAPI CreateActCtxW(PCACTCTXW actctx)
     result = context;
 done:
     if (data)
-        RtlFreeActivationContextData(data);
+        SxsFreeActivationContextData(data);
     KbFree(source);
     KbFree(directory);
     KbFree(module_path);
