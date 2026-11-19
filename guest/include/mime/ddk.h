@@ -1028,6 +1028,7 @@ NTKERNELAPI PKEVENT NTAPI HalMimeGetGpuEvent(void);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyFromUser(void *dst, const void *user_src, SIZE_T length);
 /* the global atom of a string in the table of the calling process, 0 when there is none. */
 NTKERNELAPI USHORT NTAPI MimeFindGlobalAtom(PCWSTR name);
+NTKERNELAPI USHORT NTAPI MimeAddGlobalAtom(PCWSTR name);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyToUser(void *user_dst, const void *src, SIZE_T length);
 NTKERNELAPI const void *NTAPI HalMimeGetBootInfo(void);
 NTKERNELAPI PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes);
