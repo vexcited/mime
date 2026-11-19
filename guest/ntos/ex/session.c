@@ -257,7 +257,23 @@ static void load_elevation_policy(void)
         if (value)
             flags |= policies[i].Bit;
     }
-    SharedUserData->SharedDataFlags = (SharedUserData->SharedDataFlags & ~0xEu) | flags;
+    /* DbgSplitTokenEnabled follows user account control. */
+    if (flags & 2)
+        flags |= 0x800;
+    SharedUserData->SharedDataFlags = (SharedUserData->SharedDataFlags & ~0x80Eu) | flags;
+}
+
+/* the count of boots windows keeps for the prefetcher, one more at each boot. */
+static void load_boot_id(void)
+{
+    static const WCHAR key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
+                               L"\\PrefetchParameters";
+    ULONG type = 0, length = sizeof(ULONG), id = 0;
+    if (!NT_SUCCESS(CmQueryValue(key, L"BootId", &type, &id, &length)) || type != 4 /* REG_DWORD */ || length < sizeof(ULONG))
+        id = 0;
+    id++;
+    CmSetValue(key, L"BootId", 4, &id, sizeof(id));
+    SharedUserData->BootId = id;
 }
 
 /* runs on the phase 1 system thread and never returns. */
@@ -281,6 +297,7 @@ void MiSessionInitialize(void)
     send_message(&ready, sizeof(ready));
     KiLogPrintf("session ready");
     load_elevation_policy();
+    load_boot_id();
     /* the host gets its answer first; the services start alongside the first requests. */
     PsStartServiceController();
     ExStartupRunOnce();

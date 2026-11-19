@@ -804,7 +804,7 @@ static NTSTATUS lock_user_buffer(PVOID address, SIZE_T length, BOOLEAN write)
         if (write)
             __atomic_compare_exchange_n(byte, &value, value, FALSE, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
     }
-    KI_END_TRY_USER();
+    KI_END_TRY_USER(jb);
     return STATUS_SUCCESS;
 }
 

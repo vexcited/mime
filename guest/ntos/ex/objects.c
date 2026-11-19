@@ -5,6 +5,7 @@ POBJECT_TYPE ExEventType;
 POBJECT_TYPE ExMutantType;
 POBJECT_TYPE ExSemaphoreType;
 POBJECT_TYPE ExTimerType;
+static POBJECT_TYPE g_timer2_type; /* IRTimer, the timers of NtCreateTimer2. */
 POBJECT_TYPE DbgkDebugObjectType;
 #define DEBUG_ALL_ACCESS 0x001F000F
 #define DEBUG_READ_EVENT 0x0001
@@ -37,10 +38,9 @@ static void init_shared_data(void)
     k->TickCountMultiplier = 0x0FA00000; /* 15.625 ms in 24.8 fixed point, as on windows */
     k->ImageNumberLow = MIME_NATIVE_MACHINE;
     k->ImageNumberHigh = MIME_NATIVE_MACHINE;
-    static const WCHAR root[] = L"C:\\Windows";
+    static const WCHAR root[] = L"C:\\WINDOWS"; /* upper case on windows */
     memcpy(k->NtSystemRoot, root, sizeof(root));
     k->MaxStackTraceDepth = 0;
-    k->CryptoExponent = 0x10001;
     k->TimeZoneId = 0;
     k->LargePageMinimum = 0x200000;
     k->NtBuildNumber = MIME_NT_BUILD_NUMBER;
@@ -52,12 +52,26 @@ static void init_shared_data(void)
     KiReadProcessorIds();
     KiIdentifyToHypervisor();
     KiSetProcessorFeatures(k->ProcessorFeatures);
-    k->SuiteMask = 0x100;            /* VER_SUITE_SINGLEUSERTS */
+#ifdef __x86_64__
+    KiSetExtendedState(&k->XState);
+    k->CyclesPerYield = KiMeasureCyclesPerYield();
+    k->VirtualizationFlags = KiVirtualizationFlags();
+#endif
+    /* the low halves of the highest user address and of the start of the system range, kept from 32 bit windows. */
+    k->Reserved1 = 0x7FFEFFFF;
+    k->Reserved3 = 0x80000000;
+    k->SuiteMask = 0x110;            /* VER_SUITE_SINGLEUSERTS | VER_SUITE_TERMINAL */
+    k->MitigationPolicies = 0x0A;    /* NXSupportPolicy and SEHValidationPolicy both opt in, as an x64 machine boots */
+    k->ComPlusPackage = 0xFFFFFFFF;  /* unknown until SystemComPlusPackage is asked for */
+    k->SharedDataFlags = 0x100;      /* DbgMultiSessionSku, the licence of the client editions */
+    k->TestRetInstruction = 0xC3;
+    k->TelemetryCoverageRound = 1;
+    k->LangGenerationCount = 1;
     k->ActiveConsoleId = 1;
     k->NumberOfPhysicalPages = (ULONG)MmGetTotalPages();
     k->FullNumberOfPhysicalPages = MmGetTotalPages();
     k->QpcFrequency = (LONGLONG)KiQpcFrequency();
-    k->QpcBypassEnabled = 1;
+    k->QpcBypassEnabled = MIME_QPC_BYPASS_ENABLED; /* the clock tick adds the hypervisor's page when there is one. */
     k->ActiveProcessorCount = HalBootInfo->cpu_count;
     k->ActiveGroupCount = 1;
     k->UnparkedProcessorCount = (USHORT)HalBootInfo->cpu_count;
@@ -137,6 +151,7 @@ void ExInitialize(void)
     ExpInitializeAtoms();
     ExpInitializeWnf();
     ExpInitializeFirmware();
+    ExpInitializePower();
     KeInitializeEvent(&MimeInputReadyEvent, SynchronizationEvent, FALSE);
     KeInitializeEvent(&MimeGpuEvent, NotificationEvent, FALSE);
     OBJECT_TYPE_INITIALIZER init = {};
@@ -156,6 +171,7 @@ void ExInitialize(void)
     init.DeleteProcedure = timer_delete;
     ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     ExTimerType = ObCreateObjectType(L"Timer", &init);
+    g_timer2_type = ObCreateObjectType(L"IRTimer", &init);
     init.DeleteProcedure = nullptr;
     init.Waitable = FALSE;
     init.ValidAccessMask = DEBUG_ALL_ACCESS;
@@ -444,6 +460,98 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
     ObDereferenceObject(t);
     if (previous)
         KiCopyToUser(previous, &state, sizeof(state));
+    return STATUS_SUCCESS;
+}
+
+/*
+ * the timers of the thread pool, measured on windows 11 26300 with scratch/dlls/probe/t2.c of the research
+ * repository. they are of a type of their own, IRTimer, have no name, and are waited on: bit 31 of the attributes
+ * makes one that stays signaled, bits 2 and 3 are taken, bit 1 is refused, and any other bit or bit 1 with bit 2 or 3
+ * is an invalid fourth parameter. the second parameter must be null, and so must the attributes of the object.
+ */
+NTSTATUS NTAPI NtCreateTimer2(PHANDLE handle, PVOID reserved, POBJECT_ATTRIBUTES attributes, ULONG flags, ACCESS_MASK access)
+{
+    HANDLE probe;
+    if (KeGetPreviousMode() == UserMode &&
+        (!NT_SUCCESS(KiCopyFromUser(&probe, handle, sizeof(probe))) || !NT_SUCCESS(KiCopyToUser(handle, &probe, sizeof(probe)))))
+        return STATUS_ACCESS_VIOLATION;
+    if ((flags & ~0x8000000Eu) || ((flags & 2) && (flags & 0xC)))
+        return STATUS_INVALID_PARAMETER_4;
+    if (attributes)
+        return STATUS_INVALID_PARAMETER_3;
+    if (flags & 2) {
+        UCHAR byte;
+        return reserved && !NT_SUCCESS(KiCopyFromUser(&byte, reserved, sizeof(byte))) ? STATUS_ACCESS_VIOLATION
+                                                                                        : STATUS_INVALID_PARAMETER;
+    }
+    if (reserved)
+        return STATUS_INVALID_PARAMETER_2;
+    return create_named(g_timer2_type, sizeof(ETIMER), handle, access & (0xFF000000 | TIMER_ALL_ACCESS), nullptr, nullptr,
+                        init_timer, flags & 0x80000000 ? NotificationTimer : SynchronizationTimer, 0);
+}
+
+/*
+ * the due time must be given. the period is a time too, in units of 100 ns, and may be left out, like the parameters,
+ * whose version must be 0 and whose tolerance is not used.
+ */
+/*
+ * NtSetTimerEx with TimerSetCoalescableTimer, the one class there is: the arguments of NtSetTimer in a structure, with
+ * a delay the timer may take that nothing here uses. kernelbase's SetCoalescableTimer and SetWaitableTimerEx come
+ * through it.
+ */
+NTSTATUS NTAPI NtSetTimerEx(HANDLE handle, ULONG klass, PVOID information, ULONG length)
+{
+    struct {
+        LARGE_INTEGER DueTime;
+        PVOID ApcRoutine, ApcContext, WakeContext;
+        ULONG Period, TolerableDelay;
+        PBOOLEAN PreviousState;
+    } info;
+    if (klass != 0)
+        return STATUS_INVALID_INFO_CLASS;
+    if (length != sizeof(info))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    if (!NT_SUCCESS(KiCopyFromUser(&info, information, sizeof(info))))
+        return STATUS_ACCESS_VIOLATION;
+    return NtSetTimer(handle, (PLARGE_INTEGER)information, info.ApcRoutine, info.ApcContext, info.WakeContext != nullptr,
+                      (LONG)info.Period, info.PreviousState);
+}
+
+NTSTATUS NTAPI NtSetTimer2(HANDLE handle, PLARGE_INTEGER due, PLARGE_INTEGER period, PVOID parameters)
+{
+    if (!due)
+        return STATUS_INVALID_PARAMETER_2;
+    LARGE_INTEGER d, p = {};
+    struct {
+        ULONG Version, Reserved;
+        LONGLONG NoWakeTolerance;
+    } set = {};
+    if (!NT_SUCCESS(KiCopyFromUser(&d, due, sizeof(d))) || (period && !NT_SUCCESS(KiCopyFromUser(&p, period, sizeof(p)))) ||
+        (parameters && !NT_SUCCESS(KiCopyFromUser(&set, parameters, sizeof(set)))))
+        return STATUS_ACCESS_VIOLATION;
+    if (set.Version)
+        return STATUS_INVALID_PARAMETER_3;
+    ETIMER *t;
+    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, g_timer2_type, KeGetPreviousMode(), &t);
+    if (!NT_SUCCESS(status))
+        return status;
+    LONGLONG every = p.QuadPart < 0 ? -p.QuadPart : p.QuadPart;
+    LONG milliseconds = every ? (LONG)((every + 9999) / 10000 > 0x7FFFFFFF ? 0x7FFFFFFF : (every + 9999) / 10000) : 0;
+    KeCancelTimer(&t->Timer);
+    KeSetTimerEx(&t->Timer, d, milliseconds, nullptr);
+    ObDereferenceObject(t);
+    return STATUS_SUCCESS;
+}
+
+/* the parameters are not read. a timer that fired stays as it is. */
+NTSTATUS NTAPI NtCancelTimer2(HANDLE handle, PVOID parameters)
+{
+    ETIMER *t;
+    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, g_timer2_type, KeGetPreviousMode(), &t);
+    if (!NT_SUCCESS(status))
+        return status;
+    KeCancelTimer(&t->Timer);
+    ObDereferenceObject(t);
     return STATUS_SUCCESS;
 }
 
