@@ -105,8 +105,8 @@ EXPORTS
     WinStationQueryAllowConcurrentConnections=WinStationUnsupported
     WinStationQueryCurrentSessionInformation=WinStationUnsupported
     WinStationQueryEnforcementCore=WinStationUnsupported
-    WinStationQueryInformationA=WinStationUnsupported
-    WinStationQueryInformationW=WinStationUnsupported
+    WinStationQueryInformationA=WinStationQueryInformationW
+    WinStationQueryInformationW
     WinStationQueryLicense=WinStationUnsupported
     WinStationQueryLogonCredentialsW=WinStationUnsupported
     WinStationQuerySessionVirtualIP=WinStationUnsupported

@@ -16,14 +16,18 @@ EXPORTS
     SetupDiCreateDeviceInfoListExA
     SetupDiCreateDeviceInfoListExW
     SetupDiCreateDeviceInterfaceRegKeyW
+    SetupDiDestroyClassImageList
     SetupDiDestroyDeviceInfoList
     SetupDiEnumDeviceInfo
     SetupDiEnumDeviceInterfaces
     SetupDiEnumDriverInfoW
+    SetupDiGetClassDescriptionA
     SetupDiGetClassDevsA
     SetupDiGetClassDevsExW
     SetupDiGetClassDevsExA
     SetupDiGetClassDevsW
+    SetupDiGetClassImageIndex
+    SetupDiGetClassImageList
     SetupDiGetDeviceInstanceIdA
     SetupDiGetDeviceInstanceIdW
     SetupDiGetDeviceInterfaceDetailA

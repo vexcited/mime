@@ -211,6 +211,14 @@ WINSTA BOOLEAN WINAPI WinStationVerify(HANDLE server, ULONG id)
     return valid_server(server) && describe(id, &name, &state);
 }
 
+WINSTA BOOLEAN WINAPI WinStationQueryInformationW(HANDLE server, ULONG id, ULONG klass, PVOID info, ULONG length,
+                                                  PULONG returned)
+{
+    DbgPrint("WINSTA_QIW server %p id %u class %u info %p length %u\n", server, id, klass, info, length);
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
 /* everything else the library exports needs a terminal server. */
 BOOLEAN WINAPI WinStationUnsupported(void)
 {
