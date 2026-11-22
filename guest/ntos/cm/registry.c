@@ -1778,7 +1778,18 @@ void CmInitSystem1(void)
     CmpCreateChild(CmpRoot, L"WC", 2, CM_NODE_VOLATILE);
     CmpCreateChild(machine, L"HARDWARE", 8, CM_NODE_VOLATILE);
     CmpCreateChild(machine, L"SAM", 3, CM_NODE_VOLATILE);
-    CmpCreateChild(machine, L"SECURITY", 8, CM_NODE_VOLATILE);
+    /*
+     * the hive of the security authority, where its secrets are. it is kept by the journal, and only the system opens
+     * it: the administrators can read and change its descriptor, as on windows.
+     */
+    CM_NODE *security = CmpCreateChild(machine, L"SECURITY", 8, 0);
+    if (security) {
+        SD_ACE aces[] = {{CONTAINER_INHERIT_ACE, KEY_ALL_ACCESS_, SeSidSystem},
+                         {CONTAINER_INHERIT_ACE, 0x60000, SeSidAdministrators}};
+        SD_BLOB *sd;
+        if (NT_SUCCESS(SeSdBuild(SeSidAdministrators, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, aces, 2, &sd)))
+            security->Sd = sd;
+    }
     mount(machine, L"SYSTEM", L"\\SystemRoot\\System32\\config\\SYSTEM");
     mount(machine, L"SOFTWARE", L"\\SystemRoot\\System32\\config\\SOFTWARE");
     mount(user, L".DEFAULT", L"\\SystemRoot\\System32\\config\\DEFAULT");

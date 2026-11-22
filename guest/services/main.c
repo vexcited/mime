@@ -1580,6 +1580,8 @@ void entry(void)
         SetEvent(ready);
     RpcStart();
     LsaLookupStart();
+    LsaPolicyStart();
+    DpapiStart();
     AppInfoStart();
     BootStart();
     Sleep(INFINITE);

@@ -870,6 +870,8 @@ set(services_arch ${MIME_GUEST_ARCH})
 mime_objects(${services_arch}-services ${services_arch} SOURCES ${services_sources} INCLUDES guest/services guest/lib)
 mime_link(${MIME_OUT_${services_arch}}/services.exe ${services_arch}
     OBJECTS ${services_arch}-services ${services_arch}-chkstk ${services_arch}-lib-crypto:guest/lib/crypto/hash.c
+        ${services_arch}-lib-crypto:guest/lib/crypto/hmac.c ${services_arch}-lib-crypto:guest/lib/crypto/aes.c
+        ${services_arch}-lib-crypto:guest/lib/crypto/modes.c ${services_arch}-lib-crypto:guest/lib/crypto/kdf.c
     LIBS ${MIME_LIB_${services_arch}}/ntdll.lib ${MIME_LIB_${services_arch}}/kernel32.lib
         ${MIME_LIB_${services_arch}}/advapi32.lib ${MIME_LIB_${services_arch}}/rpcrt4.lib
     FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A8000000 /highentropyva /dynamicbase /stack:0x100000,0x4000

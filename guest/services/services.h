@@ -415,6 +415,57 @@ DWORD MainRpcRequest(DWORD pid, DWORD op, SCM_WRITER *request, SCM_WRITER *reply
 void RpcStart(void);
 /* lsalookup.c: the lookup interface of the lsa over ncalrpc:[lsapolicylookup]. */
 void LsaLookupStart(void);
+/* lsarpc.c: the policy interface of the lsa over ncalrpc:[LSARPC_ENDPOINT]. */
+void LsaPolicyStart(void);
+void DpapiStart(void);
+/* dpapi.c: blobs of the data protection service for the security authority itself, in memory of MIDL_user_allocate. */
+DWORD DpapiProtect(DWORD flags, const WCHAR *description, const BYTE *in, DWORD in_size, const BYTE *entropy,
+                   DWORD entropy_size, BYTE **out, DWORD *out_size);
+DWORD DpapiUnprotect(const BYTE *in, DWORD in_size, const BYTE *entropy, DWORD entropy_size, BOOL system, BYTE **out,
+                     DWORD *out_size, WCHAR **description);
+
+/* cred.c: the credential sets of the accounts. a record has the layout of the credential of lsarpc's interface. */
+typedef struct CRED_ATTRIBUTE {
+    WCHAR *Keyword;
+    DWORD Flags;
+    DWORD ValueSize;
+    BYTE *Value;
+} CRED_ATTRIBUTE;
+
+typedef struct CRED_RECORD {
+    DWORD Flags;
+    DWORD Type;
+    WCHAR *TargetName;
+    WCHAR *Comment;
+    FILETIME LastWritten;
+    DWORD CredentialBlobSize;
+    BYTE *CredentialBlob;
+    DWORD Persist;
+    DWORD AttributeCount;
+    CRED_ATTRIBUTE *Attributes;
+    WCHAR *TargetAlias;
+    WCHAR *UserName;
+} CRED_RECORD;
+
+/* what a server says of itself, as CREDENTIAL_TARGET_INFORMATIONW. */
+typedef struct CRED_TARGET {
+    WCHAR *TargetName, *NetbiosServerName, *DnsServerName, *NetbiosDomainName, *DnsDomainName, *DnsTreeName, *PackageName;
+    DWORD Flags;
+    DWORD CredTypeCount;
+    DWORD *CredTypes;
+} CRED_TARGET;
+
+long CredStoreWrite(const CRED_RECORD *given, DWORD clear_size, DWORD flags);
+long CredStoreWriteDomain(const CRED_TARGET *target, const CRED_RECORD *given, DWORD clear_size, DWORD flags);
+long CredStoreReadDomain(const CRED_TARGET *target, DWORD flags, CRED_RECORD **items, DWORD **clear_sizes, DWORD *count);
+long CredStoreTargetInfo(const WCHAR *name, DWORD flags);
+long CredStoreSessionTypes(DWORD count, DWORD *persist);
+long CredStoreBackup(void);
+long CredStoreFindBest(const WCHAR *target, DWORD type, DWORD flags, CRED_RECORD *out, DWORD *clear_size);
+long CredStoreRead(const WCHAR *target, DWORD type, DWORD flags, CRED_RECORD *out, DWORD *clear_size);
+long CredStoreDelete(const WCHAR *target, DWORD type, DWORD flags);
+long CredStoreEnumerate(const WCHAR *filter, DWORD flags, CRED_RECORD **items, DWORD **clear_sizes, DWORD *count);
+void CredFreeRecord(CRED_RECORD *c);
 /* a pipe value that stands for the caller of the current rpc call, for the access checks. */
 #define SCM_RPC_CALLER ((HANDLE)(LONG_PTR)-10)
 void MainCollect(void);
