@@ -20,9 +20,29 @@ RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncCompleteCall(PRPC_ASYNC_STATE state, void 
     return async_handle(state);
 }
 
+RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncAbortCall(PRPC_ASYNC_STATE state, ULONG code)
+{
+    return async_handle(state);
+}
+
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcAsyncCancelCall(PRPC_ASYNC_STATE state, BOOL abortive)
 {
     return async_handle(state);
+}
+
+/* a notification belongs to an asynchronous call of the server, and no call here is one. */
+RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerSubscribeForNotification(RPC_BINDING_HANDLE binding, int notification, int type,
+                                                                void *info)
+{
+    return binding ? RPC_S_CANNOT_SUPPORT : RPC_S_INVALID_BINDING;
+}
+
+RPCRTAPI RPC_STATUS RPC_ENTRY RpcServerUnsubscribeForNotification(RPC_BINDING_HANDLE binding, int notification,
+                                                                  ULONG *queued)
+{
+    if (queued)
+        *queued = 0;
+    return binding ? RPC_S_CANNOT_SUPPORT : RPC_S_INVALID_BINDING;
 }
 
 RPCRTAPI RPC_STATUS RPC_ENTRY RpcGetAuthorizationContextForClient(RPC_BINDING_HANDLE binding, BOOL impersonate,

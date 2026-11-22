@@ -205,6 +205,7 @@ EXPORTS
     NdrXmitOrRepAsMarshall
     NdrXmitOrRepAsMemorySize
     NdrXmitOrRepAsUnmarshall
+    RpcAsyncAbortCall
     RpcAsyncCancelCall
     RpcAsyncCompleteCall
     RpcAsyncInitializeHandle
@@ -293,9 +294,11 @@ EXPORTS
     RpcServerRegisterIf2
     RpcServerRegisterIf3
     RpcServerRegisterIfEx
+    RpcServerSubscribeForNotification
     RpcServerTestCancel
     RpcServerUnregisterIf
     RpcServerUnregisterIfEx
+    RpcServerUnsubscribeForNotification
     RpcServerUseAllProtseqs
     RpcServerUseAllProtseqsEx
     RpcServerUseAllProtseqsIf
