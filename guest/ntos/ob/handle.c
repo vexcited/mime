@@ -15,6 +15,8 @@ NTSTATUS ObInitializeHandleTable(PHANDLE_TABLE table)
     table->Count = 0;
     table->FirstFree = 0;
     table->Lock = 0;
+    /* ExpAllocateHandleTable of ntoskrnl 26300 sets the flag in every new table: a child never inherits it. */
+    table->RaiseOnInvalidClose = TRUE;
     table->Entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, table->Capacity * sizeof(HANDLE_TABLE_ENTRY),
                                      KI_TAG('O', 'b', 'H', 't'));
     return table->Entries ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
@@ -515,9 +517,22 @@ static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR
     return STATUS_SUCCESS;
 }
 
+/*
+ * NtClose of ntoskrnl 26300 raises for an invalid handle under strict handle checks only while the table has the
+ * flag of class 71, which NtSetInformationProcess clears and sets. every other service raises whatever the flag.
+ * measured on windows 11: the null handle fails and never raises.
+ */
+static NTSTATUS invalid_close(PHANDLE_TABLE table, HANDLE handle, KPROCESSOR_MODE mode)
+{
+    return table->RaiseOnInvalidClose ? invalid_handle(handle, mode) : STATUS_INVALID_HANDLE;
+}
+
 NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
 {
     if (handle == NtCurrentProcess() || handle == NtCurrentThread())
+        return STATUS_SUCCESS;
+    /* measured on windows 11: the values -3 to -6 of a program close with success too, there is nothing behind them. */
+    if (mode == UserMode && (LONG_PTR)handle < 0 && (LONG_PTR)handle >= -6)
         return STATUS_SUCCESS;
     PEPROCESS owner;
     PHANDLE_TABLE table = table_for(handle, mode, &owner);
@@ -530,7 +545,7 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
     if (protected)
         return STATUS_HANDLE_NOT_CLOSABLE;
     NTSTATUS status = close_in_table(owner, table, index);
-    return status == STATUS_INVALID_HANDLE ? invalid_handle(handle, mode) : status;
+    return status == STATUS_INVALID_HANDLE ? invalid_close(table, handle, mode) : status;
 }
 
 typedef struct OBJECT_HANDLE_FLAGS {
@@ -799,6 +814,209 @@ NTSTATUS NTAPI NtCreateDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJE
     }
     KiFreeCapturedString(&name);
     return status;
+}
+
+/*
+ * a private namespace is a directory with no name, found by its boundary: the name and the sids of a boundary
+ * descriptor. one namespace has a boundary while it lives and nobody deleted it.
+ */
+typedef struct OB_NAMESPACE {
+    LIST_ENTRY Links;
+    POBJECT_DIRECTORY Directory;
+    ULONG Size;
+    UCHAR Boundary[]; /* the entries of the descriptor, after its header. */
+} OB_NAMESPACE;
+
+#define BOUNDARY_HEADER 16
+#define BOUNDARY_MAX 0x10000
+#define BOUNDARY_NAME 1
+#define BOUNDARY_SID 2
+#define BOUNDARY_IL 3
+
+static LIST_ENTRY g_namespaces = {&g_namespaces, &g_namespaces};
+static KSPIN_LOCK g_namespaces_lock;
+
+/* the entries of a boundary descriptor from the caller, checked: one name, sids and at most one level. */
+static NTSTATUS capture_boundary(PVOID user, PUCHAR *out, ULONG *size)
+{
+    ULONG head[4];
+    if (!user)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = KeGetPreviousMode() == UserMode ? KiCopyFromUser(head, user, sizeof(head))
+                                                      : (memcpy(head, user, sizeof(head)), STATUS_SUCCESS);
+    if (!NT_SUCCESS(status))
+        return STATUS_ACCESS_VIOLATION;
+    if (head[0] != 1 || head[2] < BOUNDARY_HEADER || head[2] > BOUNDARY_MAX)
+        return STATUS_INVALID_PARAMETER;
+    ULONG n = head[2] - BOUNDARY_HEADER;
+    PUCHAR copy = ExAllocatePool2(POOL_FLAG_PAGED, n ? n : 1, 'sNbO');
+    if (!copy)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    status = KeGetPreviousMode() == UserMode ? KiCopyFromUser(copy, (PUCHAR)user + BOUNDARY_HEADER, n)
+                                             : (memcpy(copy, (PUCHAR)user + BOUNDARY_HEADER, n), STATUS_SUCCESS);
+    ULONG names = 0, levels = 0, offset = 0, items = 0;
+    while (NT_SUCCESS(status) && items < head[1]) {
+        ULONG type, length;
+        if (offset + 8 > n) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        memcpy(&type, copy + offset, 4);
+        memcpy(&length, copy + offset + 4, 4);
+        if (length < 8 || length > n - offset || type < BOUNDARY_NAME || type > BOUNDARY_IL) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        names += type == BOUNDARY_NAME;
+        levels += type == BOUNDARY_IL;
+        offset += (length + 7) & ~7u;
+        items++;
+    }
+    if (NT_SUCCESS(status) && (names != 1 || levels > 1))
+        status = STATUS_INVALID_PARAMETER;
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(copy);
+        return KeGetPreviousMode() == UserMode && status == STATUS_ACCESS_VIOLATION ? status : STATUS_INVALID_PARAMETER;
+    }
+    *out = copy;
+    *size = offset > n ? n : offset;
+    return STATUS_SUCCESS;
+}
+
+static OB_NAMESPACE *find_namespace(const UCHAR *boundary, ULONG size)
+{
+    for (LIST_ENTRY *e = g_namespaces.Flink; e != &g_namespaces; e = e->Flink) {
+        OB_NAMESPACE *ns = CONTAINING_RECORD(e, OB_NAMESPACE, Links);
+        if (ns->Size == size && !memcmp(ns->Boundary, boundary, size))
+            return ns;
+    }
+    return nullptr;
+}
+
+void ObpForgetNamespace(POBJECT_DIRECTORY directory)
+{
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+    OB_NAMESPACE *ns = directory->Namespace;
+    directory->Namespace = nullptr;
+    if (ns && ns->Links.Flink)
+        RemoveEntryList(&ns->Links);
+    KeReleaseSpinLock(&g_namespaces_lock, irql);
+    if (ns)
+        ExFreePool(ns);
+}
+
+NTSTATUS NTAPI NtCreatePrivateNamespace(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                        PVOID boundary_descriptor)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = capture_attributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR boundary = nullptr;
+    ULONG size = 0;
+    if (oa.ObjectName || oa.RootDirectory)
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status))
+        status = capture_boundary(boundary_descriptor, &boundary, &size);
+    OB_NAMESPACE *ns = nullptr;
+    if (NT_SUCCESS(status)) {
+        ns = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*ns) + size, 'sNbO');
+        status = ns ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+    }
+    POBJECT_DIRECTORY dir = nullptr;
+    if (NT_SUCCESS(status)) {
+        memset(ns, 0, sizeof(*ns));
+        ns->Size = size;
+        memcpy(ns->Boundary, boundary, size);
+        status = ObCreateObject(ObDirectoryType, &oa, KeGetPreviousMode(), sizeof(OBJECT_DIRECTORY), (PVOID *)&dir);
+    }
+    if (NT_SUCCESS(status)) {
+        memset(dir, 0, sizeof(*dir));
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+        if (find_namespace(ns->Boundary, size)) {
+            status = STATUS_OBJECT_NAME_COLLISION;
+        } else {
+            ns->Directory = dir;
+            dir->Namespace = ns;
+            InsertTailList(&g_namespaces, &ns->Links);
+            ns = nullptr;
+        }
+        KeReleaseSpinLock(&g_namespaces_lock, irql);
+        HANDLE h;
+        if (NT_SUCCESS(status))
+            status = ObInsertObjectNamed(dir, &oa, access, KeGetPreviousMode(), &h);
+        else
+            ObDereferenceObject(dir);
+        if (NT_SUCCESS(status))
+            status = ObStoreHandle(handle, h);
+    }
+    if (ns)
+        ExFreePool(ns);
+    if (boundary)
+        ExFreePool(boundary);
+    KiFreeCapturedString(&name);
+    return status;
+}
+
+NTSTATUS NTAPI NtOpenPrivateNamespace(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                      PVOID boundary_descriptor)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = capture_attributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR boundary = nullptr;
+    ULONG size = 0;
+    status = capture_boundary(boundary_descriptor, &boundary, &size);
+    POBJECT_DIRECTORY dir = nullptr;
+    if (NT_SUCCESS(status)) {
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+        OB_NAMESPACE *ns = find_namespace(boundary, size);
+        if (ns) {
+            dir = ns->Directory;
+            ObReferenceObject(dir);
+        }
+        KeReleaseSpinLock(&g_namespaces_lock, irql);
+        status = dir ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+    HANDLE h;
+    if (NT_SUCCESS(status)) {
+        /* the handle takes the reference. */
+        status = ObCreateHandle(PsCurrentProcess(), dir, access, oa.Attributes & OBJ_INHERIT, &h);
+        if (!NT_SUCCESS(status))
+            ObDereferenceObject(dir);
+    }
+    if (NT_SUCCESS(status))
+        status = ObStoreHandle(handle, h);
+    if (boundary)
+        ExFreePool(boundary);
+    KiFreeCapturedString(&name);
+    return status;
+}
+
+/* the namespace is no longer found by its boundary; what it holds lives on with its handles. */
+NTSTATUS NTAPI NtDeletePrivateNamespace(HANDLE handle)
+{
+    POBJECT_DIRECTORY dir;
+    ACCESS_MASK granted = 0;
+    NTSTATUS status = ObReferenceHandle(handle, ObDirectoryType, KeGetPreviousMode(), (PVOID *)&dir, &granted);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (!(granted & 0x10000 /* DELETE */)) {
+        ObDereferenceObject(dir);
+        return STATUS_ACCESS_DENIED;
+    }
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+    OB_NAMESPACE *ns = dir->Namespace;
+    if (ns && ns->Links.Flink) {
+        RemoveEntryList(&ns->Links);
+        ns->Links.Flink = ns->Links.Blink = nullptr;
+    }
+    KeReleaseSpinLock(&g_namespaces_lock, irql);
+    ObDereferenceObject(dir);
+    return ns ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
 }
 
 /*

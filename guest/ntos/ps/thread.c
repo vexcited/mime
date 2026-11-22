@@ -1609,7 +1609,7 @@ BOOLEAN NTAPI PsIsThreadTerminating(PETHREAD thread)
 void PsDumpThreads(void)
 {
     static const char *const states[] = {"initialized", "ready", "running", "standby", "terminated", "waiting"};
-    enum { MAX = 512 };
+    enum { MAX = 4096 };
     static PETHREAD threads[MAX];
     static PVOID satisfied[MAX];
     ULONG n = 0;

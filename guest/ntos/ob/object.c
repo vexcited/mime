@@ -231,7 +231,11 @@ NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCE
     h->HandleCount = 0;
     h->Type = type;
     h->Directory = nullptr;
+    h->Name = (UNICODE_STRING){};
     h->Flags = OB_FLAG_SD_PENDING;
+    h->Pad = 0;
+    /* no descriptor yet: one that is never assigned must not be read out of what the pool held before. */
+    h->Reserved = 0;
     if (attributes) {
         if (attributes->Attributes & OBJ_PERMANENT)
             h->Flags |= OB_FLAG_PERMANENT;
@@ -834,6 +838,11 @@ static void symlink_delete(PVOID object)
         ExFreePool(link->Target.Buffer);
 }
 
+static void directory_delete(PVOID object)
+{
+    ObpForgetNamespace(object);
+}
+
 void ObInitialize(void)
 {
     ObpInitializeSecurity();
@@ -842,6 +851,7 @@ void ObInitialize(void)
     ObSetGenericMapping(&init, 0x20000, 0x20000, 0x20000, 0xF0001);
     ObTypeType = ObCreateObjectType(L"Type", &init);
     ObSetGenericMapping(&init, 0x20003, 0x2000C, 0x20003, 0xF000F);
+    init.DeleteProcedure = directory_delete;
     ObDirectoryType = ObCreateObjectType(L"Directory", &init);
     init.ValidAccessMask = SYMBOLIC_LINK_ALL_ACCESS;
     init.DeleteProcedure = symlink_delete;

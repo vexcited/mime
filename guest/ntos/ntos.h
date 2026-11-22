@@ -1182,6 +1182,7 @@ typedef struct _OBJECT_DIRECTORY_ENTRY {
 
 typedef struct _OBJECT_DIRECTORY {
     OBJECT_DIRECTORY_ENTRY *Buckets[OB_DIRECTORY_BUCKETS];
+    struct OB_NAMESPACE *Namespace; /* the boundary of a private namespace, which the directory is the root of. */
 } OBJECT_DIRECTORY, *POBJECT_DIRECTORY;
 
 typedef struct _OBJECT_SYMBOLIC_LINK {
@@ -1200,6 +1201,7 @@ typedef struct _HANDLE_TABLE {
     ULONG Count;
     ULONG FirstFree;
     KSPIN_LOCK Lock;
+    BOOLEAN RaiseOnInvalidClose; /* class 71 of the process, see invalid_close. */
 } HANDLE_TABLE, *PHANDLE_TABLE;
 
 /*
@@ -1222,6 +1224,7 @@ FORCEINLINE void ObUnlockHandleTable(PHANDLE_TABLE table, ULONG64 state)
 }
 
 extern POBJECT_TYPE ObDirectoryType;
+void ObpForgetNamespace(POBJECT_DIRECTORY directory);
 extern POBJECT_TYPE ObSymbolicLinkType;
 extern POBJECT_TYPE ObTypeType;
 extern POBJECT_DIRECTORY ObRootDirectory;

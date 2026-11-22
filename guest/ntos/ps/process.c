@@ -883,10 +883,12 @@ static NTSTATUS query_process(HANDLE handle, PROCESSINFOCLASS klass, PVOID info,
         out.u32[0] = 5;
         size = sizeof(ULONG);
         break;
-    case 71: /* 1 on windows 11 26300. */
-        out.u32[0] = 1;
-        size = sizeof(ULONG);
-        break;
+    case 71: /* whether NtClose may raise for an invalid handle. windows leaves the returned length alone. */
+        out.u32[0] = process->HandleTable.RaiseOnInvalidClose;
+        ObDereferenceObject(process);
+        if (length != sizeof(ULONG))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        return KiCopyToUser(info, &out, sizeof(ULONG));
     case 89: /* 0xc0 on windows 11 26300 for a process started at normal priority. */
         out.times[0] = 0xC0;
         size = sizeof(ULONG64);
@@ -1155,6 +1157,29 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
             SeSetVirtualizationToken(token, enable != 0);
             ObDereferenceObject(token);
         }
+        ObDereferenceObject(process);
+        return STATUS_SUCCESS;
+    }
+    if ((ULONG)klass == 71) {
+        /*
+         * ProcessRaiseUMExceptionOnInvalidHandleClose. kernelbase clears it from CloseHandle until the call
+         * succeeds, unless the process is debugged. as ntoskrnl 26300 does: four bytes, the set information
+         * right, 0 clears the flag of the handle table, 1 sets it, and any other value is taken and ignored.
+         */
+        ULONG raise;
+        NTSTATUS probed = KiProbeQueryBuffer((PVOID)info, length, sizeof(ULONG), TRUE);
+        if (!NT_SUCCESS(probed))
+            return probed;
+        if (length != sizeof(raise))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!NT_SUCCESS(KiCopyFromUser(&raise, info, sizeof(raise))))
+            return STATUS_ACCESS_VIOLATION;
+        PEPROCESS process;
+        NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+        if (!NT_SUCCESS(status))
+            return status;
+        if (raise <= 1)
+            process->HandleTable.RaiseOnInvalidClose = raise != 0;
         ObDereferenceObject(process);
         return STATUS_SUCCESS;
     }
