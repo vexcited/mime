@@ -37,6 +37,7 @@ EXPORTS
     CoGetObjectContext
     CoGetPSClsid
     CoGetStandardMarshal
+    CoGetStdMarshalEx
     CoGetTreatAsClass
     CoImpersonateClient
     CoIncrementMTAUsage

@@ -40,6 +40,7 @@ EXPORTS
     CoGetObjectContext=_CoGetObjectContext@8
     CoGetPSClsid=_CoGetPSClsid@8
     CoGetStandardMarshal=_CoGetStandardMarshal@24
+    CoGetStdMarshalEx=_CoGetStdMarshalEx@12
     CoGetTreatAsClass=_CoGetTreatAsClass@8
     CoImpersonateClient=_CoImpersonateClient@0
     CoIncrementMTAUsage=_CoIncrementMTAUsage@4

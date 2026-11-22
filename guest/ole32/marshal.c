@@ -415,6 +415,90 @@ WINOLEAPI HRESULT WINAPI CoGetStandardMarshal(REFIID iid, IUnknown *object, DWOR
     return S_OK;
 }
 
+/*
+ * the standard marshaler as a part of another object, which a proxy or a handler aggregates: the inner unknown is the
+ * part's own, and its IMarshal counts on the outer object, which it marshals and holds no reference on.
+ */
+typedef struct STDINNER {
+    STDMARSHAL Std; /* Object is the outer object, not counted. */
+    IUnknown Inner;
+    LONG InnerRefs;
+} STDINNER;
+
+static HRESULT STDMETHODCALLTYPE outer_qi(IMarshal *self, REFIID iid, void **out)
+{
+    IUnknown *outer = CONTAINING_RECORD(self, STDMARSHAL, Marshal)->Object;
+    return outer->lpVtbl->QueryInterface(outer, iid, out);
+}
+
+static ULONG STDMETHODCALLTYPE outer_add_ref(IMarshal *self)
+{
+    IUnknown *outer = CONTAINING_RECORD(self, STDMARSHAL, Marshal)->Object;
+    return outer->lpVtbl->AddRef(outer);
+}
+
+static ULONG STDMETHODCALLTYPE outer_release(IMarshal *self)
+{
+    IUnknown *outer = CONTAINING_RECORD(self, STDMARSHAL, Marshal)->Object;
+    return outer->lpVtbl->Release(outer);
+}
+
+static const IMarshalVtbl g_std_outer_vtbl = {outer_qi,      outer_add_ref, outer_release,  std_unmarshal_class,
+                                              std_size_max,  std_marshal,   std_unmarshal,  std_release_data,
+                                              std_disconnect};
+
+static HRESULT STDMETHODCALLTYPE inner_qi(IUnknown *self, REFIID iid, void **out)
+{
+    STDINNER *m = CONTAINING_RECORD(self, STDINNER, Inner);
+    if (!out)
+        return E_POINTER;
+    if (IsEqualGUID(iid, &IID_IUnknown)) {
+        *out = self;
+        InterlockedIncrement(&m->InnerRefs);
+        return S_OK;
+    }
+    if (IsEqualGUID(iid, &IID_IMarshal)) {
+        *out = &m->Std.Marshal;
+        outer_add_ref(&m->Std.Marshal);
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE inner_add_ref(IUnknown *self)
+{
+    return InterlockedIncrement(&CONTAINING_RECORD(self, STDINNER, Inner)->InnerRefs);
+}
+
+static ULONG STDMETHODCALLTYPE inner_release(IUnknown *self)
+{
+    STDINNER *m = CONTAINING_RECORD(self, STDINNER, Inner);
+    ULONG refs = InterlockedDecrement(&m->InnerRefs);
+    if (!refs)
+        OleFree(m);
+    return refs;
+}
+
+static const IUnknownVtbl g_std_inner_vtbl = {inner_qi, inner_add_ref, inner_release};
+
+WINOLEAPI HRESULT WINAPI CoGetStdMarshalEx(IUnknown *outer, DWORD flags, IUnknown **inner)
+{
+    if (!outer || !inner)
+        return E_INVALIDARG;
+    *inner = nullptr;
+    STDINNER *m = OleAllocZero(sizeof(*m));
+    if (!m)
+        return E_OUTOFMEMORY;
+    memset(m, 0, sizeof(*m));
+    m->Std.Marshal.lpVtbl = &g_std_outer_vtbl;
+    m->Std.Object = outer;
+    m->Inner.lpVtbl = &g_std_inner_vtbl;
+    m->InnerRefs = 1;
+    *inner = &m->Inner;
+    return S_OK;
+}
+
 WINOLEAPI HRESULT WINAPI CoGetMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *object, DWORD destination,
                                              void *context, DWORD flags)
 {
