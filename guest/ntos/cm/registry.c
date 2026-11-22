@@ -627,8 +627,12 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     if (ctx && ctx->SelectView) {
         if (ctx->RegistryView)
             view = ctx->RegistryView;
+        /*
+         * a 32-bit program has no view of its own here: its wow64 writes Wow6432Node into the paths and asks for the
+         * keys by name, with calls of its own that must reach the keys as written. a view is asked with the flags.
+         */
         if (!view)
-            view = ctx->Mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386 ? 32 : 64;
+            view = 64;
         status = CmpMapRegistryView(root, view, path, &len, MAX_PATH_CHARS, &start, &physical, &ctx->ViewContainer);
     }
     if (NT_SUCCESS(status))
@@ -653,10 +657,12 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         if (NT_SUCCESS(status)) {
             ((CM_KEY_BODY *)*found)->RegistryView = (UCHAR)view;
             ((CM_KEY_BODY *)*found)->PhysicalView = physical;
-            if (ctx)
-                ((CM_KEY_BODY *)*found)->HandleTags = ctx->RegistryView == 32   ? KEY_WOW64_32KEY_
-                                                      : ctx->RegistryView == 64 ? KEY_WOW64_64KEY_
-                                                                                : 0;
+            /* a key takes the tags of the handle it was opened from, and the view asked for it in their place. */
+            USHORT tags = root->HandleTags;
+            if (ctx && ctx->RegistryView)
+                tags = (tags & ~(USHORT)(KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_)) |
+                       (ctx->RegistryView == 32 ? KEY_WOW64_32KEY_ : KEY_WOW64_64KEY_);
+            ((CM_KEY_BODY *)*found)->HandleTags = tags;
         }
     }
     return status;

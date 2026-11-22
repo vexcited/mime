@@ -31,6 +31,18 @@ static ULONG classes_root(PCWSTR path, ULONG length)
     return suffix ? end + suffix : 0;
 }
 
+/* whether a path below SOFTWARE lies in a subtree the two views share. */
+static BOOLEAN shared_software(PCWSTR path, ULONG length)
+{
+#define CM_WIDE_ENTRY(path) L"" path,
+    static const PCWSTR shared[] = {CM_SHARED_SOFTWARE_KEYS(CM_WIDE_ENTRY)};
+#undef CM_WIDE_ENTRY
+    for (ULONG i = 0; i < RTL_NUMBER_OF(shared); i++)
+        if (prefix(path, length, shared[i]))
+            return TRUE;
+    return FALSE;
+}
+
 static ULONG redirect_point(PCWSTR path, ULONG length)
 {
     ULONG classes = classes_root(path, length);
@@ -47,13 +59,7 @@ static ULONG redirect_point(PCWSTR path, ULONG length)
     if (!software)
         return 0;
     /* modern windows shares these subtrees across the two software views. */
-#define CM_WIDE_ENTRY(path) L"" path,
-    static const PCWSTR shared[] = {CM_SHARED_SOFTWARE_KEYS(CM_WIDE_ENTRY)};
-#undef CM_WIDE_ENTRY
-    for (ULONG i = 0; i < RTL_NUMBER_OF(shared); i++)
-        if (prefix(path + software, length - software, shared[i]))
-            return 0;
-    return software;
+    return shared_software(path + software, length - software) ? 0 : software;
 }
 
 /* the caller holds the registry lock while node ancestry is read. */
@@ -63,8 +69,6 @@ NTSTATUS CmpMapRegistryView(CM_KEY_BODY *root, ULONG view, PWCHAR path, ULONG *l
     *start = root->Node;
     *physical = root->PhysicalView;
     *container = FALSE;
-    if (*physical)
-        return STATUS_SUCCESS;
     ULONG root_length = 0;
     for (CM_NODE *node = root->Node; node != CmpRoot; node = node->Parent) {
         if (!node || node->NameLength + 1u >= capacity - root_length)
@@ -99,13 +103,30 @@ NTSTATUS CmpMapRegistryView(CM_KEY_BODY *root, ULONG view, PWCHAR path, ULONG *l
     static const WCHAR marker[] = L"\\Wow6432Node";
     const ULONG marker_length = RTL_NUMBER_OF(marker) - 1;
     ULONG point = classes_root(full, chars);
-    if (!point || !prefix(full + point, chars - point, marker))
+    BOOLEAN classes = point && prefix(full + point, chars - point, marker);
+    if (!classes)
         point = prefix(full, chars, L"\\Machine\\Software");
-    if (point && prefix(full + point, chars - point, marker)) {
-        if (point >= root_length) {
-            *physical = TRUE;
-            goto copy_path;
-        }
+    BOOLEAN named = point && prefix(full + point, chars - point, marker);
+    /*
+     * windows keeps a link below Wow6432Node for each subtree the views share, which leads to the one key both have,
+     * however the node was reached: the wow64 of a 32-bit program writes the node into every path below SOFTWARE and
+     * leaves the rest to the kernel. measured with reg32.c and nt32.c of the research repository. the classes have
+     * a node of their own.
+     */
+    BOOLEAN link = FALSE;
+    if (named && !classes) {
+        PCWSTR below = full + point + marker_length;
+        ULONG below_length = chars - point - marker_length;
+        link = !prefix(below, below_length, L"\\Classes") && shared_software(below, below_length);
+    }
+    /* a path that names the node, or goes on from a key reached by such a path, is taken as written. */
+    if (!link && (*physical || (named && point >= root_length))) {
+        *physical = TRUE;
+        point = root_length;
+        goto copy_path;
+    }
+    *physical = FALSE;
+    if (named) {
         memmove(full + point, full + point + marker_length, (chars - point - marker_length) * sizeof(WCHAR));
         chars -= marker_length;
     }
