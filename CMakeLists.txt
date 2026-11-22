@@ -757,7 +757,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10 ${arch}-lib-dxbc:guest/lib/dxbc/container.c)
     set(objects_d3d10_1 ${arch}-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
-    set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
+    set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib ${MIME_LIB_${arch}}/imagehlp.lib)
     set(libs_cryptnet ${MIME_LIB_${arch}}/crypt32.lib)
     set(libs_msvfw32 ${MIME_LIB_${arch}}/winmm.lib ${MIME_LIB_${arch}}/comdlg32.lib)
     set(libs_authz ${MIME_LIB_${arch}}/advapi32.lib)
@@ -1175,7 +1175,7 @@ set(MIME_X86_DLLS
     netapi32:0x6a000000:registry_imports wtsapi32:0x69000000:all_five secur32:0x68000000:secur32_imports
     crypt32:0x67000000:crypt32_imports userenv:0x66000000:registry_imports ole32:0x65000000:ole32_imports
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
-    msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
+    msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:wintrust_imports odbc32:0x5c000000:user
     gdiplus:0x5b000000:gdiplus_imports d2d1:0x1E500000:d2d1_imports msvbvm60:0x1E400000:msvbvm60_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:oleacc_imports oledlg:0x56000000:oledlg_imports combase:0x54000000:all_five usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup dwrite:0x45000000:all_five msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
@@ -1270,6 +1270,7 @@ set(gdiplus_imports ntdll kernel32 user32 gdi32 ole32)
 set(d2d1_imports ntdll kernel32 user32 gdi32 ole32 dwrite)
 set(msvbvm60_imports ntdll kernel32 user32 gdi32 ole32 oleaut32 advapi32)
 set(crypt ntdll kernel32 crypt32)
+set(wintrust_imports ntdll kernel32 crypt32 imagehlp)
 set(acm ntdll kernel32 user32 gdi32 winmm)
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(setup ntdll kernel32 cfgmgr32 advapi32 version)

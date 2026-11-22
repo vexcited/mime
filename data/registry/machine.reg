@@ -202,6 +202,45 @@
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 1\{CertDllVerifyRevocation,CertDllVerifyCTLUsage}\DEFAULT]
 "Dll"=multi:"C:\\Windows\\SysWOW64\\cryptnet.dll"
 
+; the subject interface package of portable executables, which crypt32 loads from wintrust as windows registers it.
+; the sealed digest and the packages of the other kinds of file are not there yet.
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllCreateIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPCreateIndirectData"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetCaps\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetCaps"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetSignedDataMsg"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllPutSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPPutSignedDataMsg"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllRemoveSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPRemoveSignedDataMsg"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPVerifyIndirectData"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllCreateIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPCreateIndirectData"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetCaps\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetCaps"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetSignedDataMsg"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllPutSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPPutSignedDataMsg"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllRemoveSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPRemoveSignedDataMsg"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPVerifyIndirectData"
+
 ; user account control is on. the kernel reads DeclineElevationPrompts here and finds none.
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System]
 "EnableLUA"=dword:00000001

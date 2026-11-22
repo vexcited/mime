@@ -104,6 +104,8 @@ static BOOL hash_matches(ALG_ID alg, WT_BYTES data, WT_BYTES expected)
 static const MimeHashAlg *crypto_hash(ALG_ID alg)
 {
     switch (alg) {
+    case CALG_MD5:
+        return &mime_md5;
     case CALG_SHA1:
         return &mime_sha1;
     case CALG_SHA_256:
@@ -133,21 +135,34 @@ static BOOL hash_range(const MimeHashAlg *alg, MimeHashCtx *ctx, HANDLE mapping,
     return TRUE;
 }
 
-/* the file without the checksum, the certificate directory entry and the certificates. */
-static BOOL image_digest_matches(ALG_ID id, const WT_SUBJECT *subject, WT_BYTES expected)
+/*
+ * the file without the checksum, the certificate directory entry and the certificates. a file with no certificates
+ * that does not end on eight bytes is hashed with the zeros that would bring it there, as the signature it gets later
+ * starts on such a boundary.
+ */
+DWORD WtImageDigest(ALG_ID id, const WT_SUBJECT *subject, BYTE hash[64])
 {
+    static const BYTE zeros[8];
     const MimeHashAlg *alg = crypto_hash(id);
-    if (!alg || alg->digest_size != expected.size)
-        return FALSE;
+    if (!alg)
+        return 0;
     MimeHashCtx ctx;
-    BYTE hash[64];
     alg->init(&ctx);
     if (!hash_range(alg, &ctx, subject->mapping, 0, subject->checksum) ||
         !hash_range(alg, &ctx, subject->mapping, subject->checksum + 4, subject->directory) ||
         !hash_range(alg, &ctx, subject->mapping, subject->directory + 8, subject->certificate))
-        return FALSE;
+        return 0;
+    if (subject->certificate == subject->size && (subject->size & 7))
+        alg->update(&ctx, zeros, 8 - (subject->size & 7));
     alg->final(&ctx, hash);
-    return !memcmp(hash, expected.data, expected.size);
+    return (DWORD)alg->digest_size;
+}
+
+static BOOL image_digest_matches(ALG_ID id, const WT_SUBJECT *subject, WT_BYTES expected)
+{
+    BYTE hash[64];
+    DWORD size = WtImageDigest(id, subject, hash);
+    return size && size == expected.size && !memcmp(hash, expected.data, size);
 }
 
 static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)

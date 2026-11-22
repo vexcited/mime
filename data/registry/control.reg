@@ -20,6 +20,11 @@
 [HKLM\SYSTEM\CurrentControlSet\Control\ServiceGroupOrder]
 "List"=multi:"System Reserved","EMS","WdfLoadGroup","Boot Bus Extender","System Bus Extender","SCSI miniport","Port","Primary Disk","SCSI Class","SCSI CDROM Class","FSFilter Infrastructure","FSFilter System","FSFilter Bottom","FSFilter Copy Protection","FSFilter Security Enhancer","FSFilter Open File","FSFilter Physical Quota Management","FSFilter Virtualization","FSFilter Encryption","FSFilter Compression","FSFilter Imaging","FSFilter HSM","FSFilter Cluster File System","FSFilter System Recovery","FSFilter Quota Management","FSFilter Content Screener","FSFilter Continuous Backup","FSFilter Replication","FSFilter Anti-Virus","FSFilter Undelete","FSFilter Activity Monitor","FSFilter Top","Filter","Boot File System","Base","Pointer Port","Keyboard Port","Pointer Class","Keyboard Class","Video Init","Video","Video Save","File System","Streams Drivers","NDIS Wrapper","COM Infrastructure","Event Log","PerceptionGroup","ProfSvc_Group","AudioGroup","UIGroup","MS_WindowsLocalValidation","PlugPlay","Cryptography","PNP_TDI","NDIS","TDI","iSCSI","NetBIOSGroup","ShellSvcGroup","SchedulerGroup","SpoolerGroup","SmartCardGroup","NetworkProvider","MS_WindowsRemoteValidation","NetDDEGroup","Parallel arbitrator","Extended Base","PCI Configuration","MS Transactions (type 7)"
 
+; the configuration of code integrity, as windows 11 has it: the block list of vulnerable drivers is on.
+[HKLM\SYSTEM\CurrentControlSet\Control\CI\Config]
+"RevocationListLcuKirValue"=dword:00000000
+"VulnerableDriverBlocklistEnable"=dword:00000001
+
 ; the service control manager reads this key and takes its defaults for the values it does not find.
 [HKLM\SYSTEM\CurrentControlSet\Control\SCMConfig]
 
