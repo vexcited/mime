@@ -4,4 +4,5 @@
  */
 #ifndef __i386__
 #include "../advapi32/crypt.c"
+#include "../advapi32/cryptolib.c"
 #endif

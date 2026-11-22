@@ -1347,6 +1347,61 @@ set(includes_dcomp ${MIME_GEN}/shaders)
 set(objects_dcomp)
 set(libs_dcomp)
 
+# where the 32-bit cryptsp is microsoft's, the CryptoAPI of mime's 32-bit advapi32 is forwarded there, as the calls of
+# windows' advapi32 end there, with the SystemFunction exports windows forwards too. the providers of
+# guest/advapi32/crypt.c are not built then.
+mime_genuine(cryptsp_x86_genuine x86 cryptsp.dll)
+# where the 32-bit sechost is microsoft's, the credential functions of mime's 32-bit advapi32 are forwarded there, as
+# the calls of windows' advapi32 end there: sechost asks the security authority, so both widths have one store. the
+# manager of guest/advapi32/sechost_credman.c is then for the guests whose sechost is mime's.
+mime_genuine(sechost_x86_genuine x86 sechost.dll)
+set(sechost_credentials BackupCredentials DeleteA DeleteW EncryptAndMarshalBinaryBlob EnumerateA EnumerateW
+    FindBestCredentialA FindBestCredentialW Free GetSessionTypes GetTargetInfoA GetTargetInfoW IsMarshaledCredentialW
+    IsProtectedA IsProtectedW MarshalCredentialA MarshalCredentialW ParseUserNameWithType ProfileLoaded ProfileLoadedEx
+    ProfileUnloaded ProtectA ProtectEx ProtectW ReadA ReadByTokenHandle ReadDomainCredentialsA ReadDomainCredentialsW
+    ReadW RestoreCredentials UnmarshalCredentialA UnmarshalCredentialW UnprotectA UnprotectEx UnprotectW WriteA
+    WriteDomainCredentialsA WriteDomainCredentialsW WriteW)
+set(def_advapi32)
+if(cryptsp_x86_genuine OR sechost_x86_genuine)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MIME_GEN}/x86/advapi32.def)
+    file(STRINGS ${MIME_GEN}/x86/advapi32.def advapi32_lines)
+    set(advapi32_def "")
+    foreach(line IN LISTS advapi32_lines)
+        set(keep TRUE)
+        if(cryptsp_x86_genuine AND line MATCHES "^ +Crypt[A-Za-z]+=_Crypt")
+            set(keep FALSE)
+        elseif(sechost_x86_genuine AND line MATCHES "^ +Cred([A-Za-z]+)=_Cred" AND CMAKE_MATCH_1 IN_LIST sechost_credentials)
+            set(keep FALSE)
+        endif()
+        if(keep)
+            string(APPEND advapi32_def "${line}\n")
+        endif()
+    endforeach()
+    if(sechost_x86_genuine)
+        foreach(export IN LISTS sechost_credentials)
+            string(APPEND advapi32_def "    Cred${export}=sechost.Cred${export}\n")
+        endforeach()
+    endif()
+endif()
+if(cryptsp_x86_genuine)
+    foreach(export AcquireContextA AcquireContextW ContextAddRef CreateHash Decrypt DeriveKey DestroyHash DestroyKey
+            DuplicateHash DuplicateKey Encrypt EnumProviderTypesA EnumProviderTypesW EnumProvidersA EnumProvidersW
+            ExportKey GenKey GenRandom GetDefaultProviderA GetDefaultProviderW GetHashParam GetKeyParam GetProvParam
+            GetUserKey HashData HashSessionKey ImportKey ReleaseContext SetHashParam SetKeyParam SetProvParam
+            SetProviderA SetProviderExA SetProviderExW SetProviderW SignHashA SignHashW VerifySignatureA
+            VerifySignatureW)
+        string(APPEND advapi32_def "    Crypt${export}=cryptsp.Crypt${export}\n")
+    endforeach()
+    foreach(number 006 007 008 009 010 011 012 013 014 015 016 018 020 021 022 023 024 025 026 027 030 031 032 033)
+        string(APPEND advapi32_def "    SystemFunction${number}=cryptsp.SystemFunction${number}\n")
+    endforeach()
+    string(APPEND advapi32_def "    SystemFunction035=cryptsp.CheckSignatureInFile\n")
+endif()
+if(cryptsp_x86_genuine OR sechost_x86_genuine)
+    file(CONFIGURE OUTPUT ${MIME_BUILD_GEN}/x86/advapi32.def CONTENT "${advapi32_def}" @ONLY)
+    set(def_advapi32 DEF ${MIME_BUILD_GEN}/x86/advapi32.def IMPORTS_DEF ${MIME_GEN}/x86/advapi32.imports.def)
+endif()
+
 foreach(entry IN LISTS MIME_X86_DLLS)
     string(REPLACE ":" ";" entry ${entry})
     list(GET entry 0 name)
@@ -1358,9 +1413,24 @@ foreach(entry IN LISTS MIME_X86_DLLS)
         set(file windows.storage.dll)
     elseif(name STREQUAL "wshom")
         set(file wshom.ocx)
+    elseif(name STREQUAL "windows.media.devices")
+        set(file Windows.Media.Devices.dll)
+        list(APPEND sources guest/combase/mediadevice.c guest/combase/audioendpoint.c)
+    elseif(name STREQUAL "windows.devices.enumeration")
+        set(file Windows.Devices.Enumeration.dll)
+        list(APPEND sources guest/combase/devinfo.c guest/combase/audioendpoint.c)
+    elseif(name STREQUAL "windows.networking.connectivity")
+        set(file Windows.Networking.Connectivity.dll)
+        list(APPEND sources guest/combase/netinfo.c guest/combase/async.c guest/combase/collections.c)
+    elseif(name STREQUAL "cryptowinrt")
+        set(file CryptoWinRT.dll)
+        list(APPEND sources guest/combase/keycred.c guest/combase/async.c)
+    endif()
+    if(name STREQUAL "advapi32" AND cryptsp_x86_genuine)
+        list(FILTER sources EXCLUDE REGEX "/advapi32/crypt\\.c$")
     endif()
     mime_dll(${name} x86 BASE ${address} FILE ${file} SOURCES ${sources} OBJECTS x86-chkstk ${objects_${name}}
-        INCLUDES ${includes_${name}} IMPORTS ${${imports}} DEPENDS ${depends_${name}})
+        INCLUDES ${includes_${name}} IMPORTS ${${imports}} DEPENDS ${depends_${name}} ${def_${name}})
 endforeach()
 
 mime_sources(sources d3d8 x86)
