@@ -1,0 +1,3 @@
+LIBRARY nlansp_c.dll
+EXPORTS
+    NSPStartup @1
