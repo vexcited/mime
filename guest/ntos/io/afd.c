@@ -1351,7 +1351,17 @@ static NTSTATUS capture_buffers(AFD_REQUEST *r, ULONG64 buffers)
 {
     if (r->Count && !buffers)
         return STATUS_ACCESS_VIOLATION;
-    NTSTATUS status = KiCopyFromUser(r->Buffers, (PVOID)(ULONG_PTR)buffers, r->Count * sizeof(MIME_AFD_BUFFER));
+    NTSTATUS status = STATUS_SUCCESS;
+    if (PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386) {
+        /* the WSABUF of a 32-bit program is a length and a pointer of four bytes each. */
+        for (ULONG i = 0; i < r->Count && NT_SUCCESS(status); i++) {
+            ULONG narrow[2];
+            status = KiCopyFromUser(narrow, (PUCHAR)(ULONG_PTR)buffers + i * sizeof(narrow), sizeof(narrow));
+            r->Buffers[i] = (MIME_AFD_BUFFER){narrow[0], 0, narrow[1]};
+        }
+    } else {
+        status = KiCopyFromUser(r->Buffers, (PVOID)(ULONG_PTR)buffers, r->Count * sizeof(MIME_AFD_BUFFER));
+    }
     if (!NT_SUCCESS(status))
         return status;
     ULONG64 total = 0;
@@ -1795,6 +1805,56 @@ static NTSTATUS do_config(PVOID output, ULONG out_len, ULONG_PTR *information)
     }
     ExFreePool(config);
     return status;
+}
+
+/* the same configuration in a pool block the caller frees, for the network store. */
+MIME_AFD_CONFIG *AfdCopyConfig(void)
+{
+    MIME_AFD_CONFIG *config = ExAllocatePool2(POOL_FLAG_NON_PAGED, AFD_CONFIG_SIZE, KI_TAG('A', 'f', 'd', 'C'));
+    if (!config)
+        return nullptr;
+    memset(config, 0, AFD_CONFIG_SIZE);
+    ULONG64 size = 0;
+    if (host(MIME_HC_NET_CONFIG, pa(config), AFD_CONFIG_SIZE, 0, 0, 0, &size) || size < sizeof(*config) ||
+        size > AFD_CONFIG_SIZE) {
+        ExFreePool(config);
+        return nullptr;
+    }
+    return config;
+}
+
+/* the open sockets in a pool block the caller frees, for the tcp and udp tables of the network store. */
+ULONG AfdCopySockets(MIME_AFD_SOCKET_INFO **out)
+{
+    *out = nullptr;
+    lock();
+    ULONG total = 0;
+    for (PLIST_ENTRY e = g_sockets.Flink; e != &g_sockets; e = e->Flink)
+        total++;
+    MIME_AFD_SOCKET_INFO *list =
+        total ? ExAllocatePool2(POOL_FLAG_NON_PAGED, total * sizeof(*list), KI_TAG('A', 'f', 'd', 'L')) : nullptr;
+    ULONG count = 0;
+    for (PLIST_ENTRY e = g_sockets.Flink; list && e != &g_sockets; e = e->Flink) {
+        AFD_SOCKET *s = CONTAINING_RECORD(e, AFD_SOCKET, Links);
+        if (!s->Host || s->Closed)
+            continue;
+        MIME_AFD_SOCKET_INFO *info = &list[count++];
+        memset(info, 0, sizeof(*info));
+        info->ProcessId = s->ProcessId;
+        info->Family = s->Family;
+        info->Type = s->Type;
+        info->State = s->State;
+        info->Bound = s->Bound;
+        info->Flags = (s->Hup ? 1 : 0) | (s->ShutWrite ? 2 : 0);
+        info->ConnectTime = s->ConnectTime;
+        if (!host(MIME_HC_NET_NAME, s->Host, 0, pa(&g_addr), 0, 0, nullptr))
+            info->Local = g_addr;
+        if (s->State == MIME_AFD_STATE_CONNECTED && !host(MIME_HC_NET_NAME, s->Host, 1, pa(&g_addr), 0, 0, nullptr))
+            info->Remote = g_addr;
+    }
+    unlock();
+    *out = list;
+    return count;
 }
 
 /* every open socket with its addresses, for the tcp and udp tables. */

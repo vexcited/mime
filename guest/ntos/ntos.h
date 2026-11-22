@@ -1822,6 +1822,24 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
 NTSTATUS AfdReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
                       PVOID buffer, ULONG length);
 NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+struct MIME_AFD_CONFIG;
+struct MIME_AFD_SOCKET_INFO;
+struct MIME_AFD_CONFIG *AfdCopyConfig(void);
+ULONG AfdCopySockets(struct MIME_AFD_SOCKET_INFO **list);
+
+/* nsi.c: the network store interface, \Device\Nsi. */
+void IopInitializeNsi(void);
+void IopInitializeDeviceApi(void);
+BOOLEAN IopIsNsi(PFILE_OBJECT file);
+NTSTATUS NsiDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                          ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
+NTSTATUS NsiCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+
+/* netbt.c: netbios over tcp, \Device\NetBT_Tcpip_{guid}. */
+void IopInitializeNetbt(void);
+BOOLEAN IopIsNetbt(PFILE_OBJECT file);
+NTSTATUS NetbtDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                            ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
 
 /* request.c: a user mode request a driver answers itself, maybe later. */
 typedef struct IO_USER_REQUEST {

@@ -878,6 +878,9 @@ void IoInitialize(void)
     IopInitializeConsole();
     IopInitializeKsec();
     IopInitializeAfd();
+    IopInitializeNetbt();
+    IopInitializeNsi();
+    IopInitializeDeviceApi();
     IopInitializeHttp();
     IopInitializeRedirector();
     IopInitializePads();
