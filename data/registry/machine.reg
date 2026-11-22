@@ -34,9 +34,12 @@
 ; which services each svchost group runs, read by svchost when it hosts a group.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost]
 "DcomLaunch"=multi:"DcomLaunch"
-"LocalService"=multi:"NSI"
+"LocalService"=multi:"NSI","bthserv"
+"LocalServiceAndNoImpersonation"=multi:"SCardSvr"
 "LocalServiceNoNetwork"=multi:"CoreMessagingRegistrar"
-"NetworkService"=multi:"LanmanWorkstation"
+"LocalServiceNetworkRestricted"=multi:"Dhcp"
+"LocalSystemNetworkRestricted"=multi:"NgcSvc"
+"NetworkService"=multi:"CryptSvc","LanmanWorkstation","DoSvc"
 "RPCSS"=multi:"RpcEptMapper","RpcSs"
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalService]
