@@ -471,7 +471,7 @@ typedef struct MimeBootInfo {
 #define MIME_GENUINE_MAX 1024
 
 typedef struct MimeRomEntry {
-    char path[96]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded. */
+    char path[128]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded: a file of the driver store has a long one. */
     uint64_t offset; /* from the rom header, page aligned. */
     uint64_t size; /* 0 for a file of the manifest. */
     /*
