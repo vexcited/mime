@@ -1477,6 +1477,12 @@ typedef struct _EPROCESS {
     USHORT Machine;             /* of the program image. */
     USHORT Subsystem;           /* of the program image, kept after the image section is let go at exit. */
     PVOID Wow64Peb;             /* the 32-bit peb of a wow64 process. */
+    /* what the manifest of the image says of the systems it knows, which CreateProcess asks csrss for. */
+    USHORT SxsSupportedOsMajor, SxsSupportedOsMinor;
+    ULONG64 SxsMaxVersionTested;
+    ULONG SxsRunLevel, SxsUiAccess; /* requestedExecutionLevel of the manifest, 0 without one. */
+    /* the features on demand the process asked for, and the ones a thread of it is asking for now: see ex/feature.c. */
+    UCHAR FeaturesAsked, FeaturesAsking;
     CHAR ImageFileName[16];
     WCHAR ImagePathBuffer[MIME_IMAGE_NAME_CHARS];
     UNICODE_STRING ImagePath;
@@ -1609,6 +1615,9 @@ BOOLEAN IopRemoveCompletionPacket(PVOID port, ULONG64 values[4]);
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id);
 void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
+/* features on demand: a name that was not found may be the one a feature is used by. TRUE says to try the name again. */
+BOOLEAN ExFeatureFileFault(PCUNICODE_STRING name, BOOLEAN look);
+BOOLEAN ExFeatureKeyFault(HANDLE root, PCUNICODE_STRING name);
 /* the activation context of a new process, from the manifest of its image: see sxs/process.c. */
 void PspSxsInitialize(void);
 NTSTATUS PspSxsCreateProcessContext(PEPROCESS process, PCUNICODE_STRING image);

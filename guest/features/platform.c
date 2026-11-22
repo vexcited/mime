@@ -302,9 +302,16 @@ void FeatureInstalledVersion(RUN *run, const FEATURE_DEF *feature, WCHAR *versio
         WidenName(feature->Version, version, chars);
 }
 
+/*
+ * A feature whose files are on the drive is on, whoever put them there: an installer the user ran, a program's own
+ * setup, another version than the one Mime would fetch. The state is recorded when that is seen.
+ */
 BOOL FeatureFilesPresent(RUN *run, const FEATURE_DEF *feature)
 {
-    return HandlerPresent(run, feature);
+    BOOL present = HandlerPresent(run, feature);
+    if (present && ops_get_state(run, feature) != FEATURE_STATE_ENABLED)
+        ops_set_state(run, feature, FEATURE_STATE_ENABLED, FEATURE_OK, true);
+    return present;
 }
 
 /* ------------------------------------------------------------------ files */

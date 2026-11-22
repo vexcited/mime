@@ -625,7 +625,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_dll(kernelbase ${arch} BASE 0x7FFB00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
         OPTIONS -DMIME_BUILD_KERNELBASE IMPORTS ntdll)
 
-    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S OBJECTS ${arch}-chkstk
+    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S OBJECTS ${arch}-chkstk
         IMPORTS ntdll kernel32 DEF ${MIME_GEN}/${arch}/mscoree.def)
 
 endforeach()
@@ -1152,7 +1152,7 @@ list(APPEND sources guest/ntdll/actgen.c guest/ntdll/manifest.c)
 mime_dll(kernelbase x86 BASE 0x76000000 SOURCES ${sources} OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_KERNELBASE
     IMPORTS ntdll)
 
-mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
+mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
 
 set(all_five ntdll kernel32 user32 gdi32 win32u)
 set(MIME_X86_DLLS

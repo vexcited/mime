@@ -1040,6 +1040,12 @@ NTSTATUS NTAPI NtOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     CM_PARSE_CONTEXT ctx = {FALSE, FALSE, options, 0};
     HANDLE h;
     status = open_key(&oa, access, &ctx, &h);
+    /* the key a feature on demand is found by: the feature is asked for, once, and the key looked for again. */
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND && KeGetPreviousMode() == UserMode &&
+        ExFeatureKeyFault(oa.RootDirectory, oa.ObjectName)) {
+        ctx = (CM_PARSE_CONTEXT){FALSE, FALSE, options, 0};
+        status = open_key(&oa, access, &ctx, &h);
+    }
     KiFreeCapturedString(&name);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);

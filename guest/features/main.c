@@ -379,8 +379,6 @@ static int show_status(const FEATURE_DEF *feature)
 
 int tool_main(void)
 {
-    /* What this program looks into must not ask for a feature, it would ask itself. */
-    SetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, L"1");
     OPTIONS o = {};
     if (!parse(&o)) {
         tu_eprint(L"features: the command line is not right, `features help` tells how it is used.\n");

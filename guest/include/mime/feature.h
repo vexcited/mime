@@ -49,30 +49,14 @@ DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS
  */
 DWORD PowerShellInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS progress, void *context);
 
-/*
- * Asks OptionalFeatures.exe to enable a feature and waits for it. The user is asked first unless the policy decided. Returns a
- * Win32 error, 0 when the feature is on the drive. The process that asked carries on when it is 0.
- */
-DWORD MimeFeatureRequest(PCWSTR name, DWORD flags);
-
-/*
- * Asks for the feature that holds a font family, for a lookup of a font by name that found none. Returns 0 when the
- * font is on the drive, ERROR_NOT_FOUND when no feature has it, MIME_FEATURE_FONT_MISSING when the font is still
- * missing and the user was told that the program is ended.
- */
-DWORD MimeFeatureRequestFont(PCWSTR family);
-
+/* What OptionalFeatures.exe ends with when a font a program asked for is still missing and the user was told the program is ended. */
 #define MIME_FEATURE_FONT_MISSING 0x20004D01
 
 /*
- * Called when a program meant to use a file and did not find it: it starts the program, loads the library or opens the
- * file to read it. When the path is in the folders of a feature that is not on the drive, the feature is requested and
- * TRUE says to try again. A feature is requested once in a process, whatever the answer, so a program that fails twice
- * costs one request. Takes a DOS path or an NT path, or the bare name of a program that a feature holds.
- *
- * A look at a name is not a use and never calls this: the attributes of a file, the listing of a folder, the open of a
- * directory and any query of information answer from the drive as it is, as the folders of a feature are there on
- * Windows. The folders are in the skeleton of the drive.
+ * For Mime's own libraries, when one meant to use a file and did not find it: it starts the program or loads the library.
+ * The file is opened to be read, which is where the kernel asks for the feature whose folders hold it, once in a process,
+ * see guest/ntos/ex/feature.c. TRUE says the file is there now and to try again. Takes a DOS path or an NT path, or the
+ * bare name of a program that a feature holds.
  */
 BOOL MimeFeatureFault(PCWSTR path);
 
@@ -81,9 +65,6 @@ BOOL MimeFeatureFault(PCWSTR path);
  * Caller is the return address of the file function that looked. TRUE says that the shell arrived and to look again.
  */
 BOOL MimeFeatureFaultFromRuntime(PCWSTR path, PVOID caller);
-
-/* The environment variable OptionalFeatures.exe sets for what it runs, so that a missing file in there asks for nothing. */
-#define MIME_FEATURE_BUSY_VARIABLE L"WINDOWS_FEATURE_BUSY"
 
 /* Where the state of the features is kept, and where the policy is. */
 #define MIME_FEATURE_STATE_KEY L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsFeatures"

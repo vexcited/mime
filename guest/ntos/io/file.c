@@ -79,6 +79,15 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     thread->CreateEa = ea_copy;
     thread->CreateEaLength = ea_copy ? ea_length : 0;
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
+    /*
+     * a file of a feature on demand that a program opens to read or to run: the feature is asked for, once. a folder
+     * opened to list it is only looked at.
+     */
+    if ((status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) && mode == UserMode &&
+        disposition == FILE_OPEN && !oa.RootDirectory &&
+        (access & (FILE_READ_DATA | FILE_EXECUTE | GENERIC_READ | GENERIC_EXECUTE)) &&
+        ExFeatureFileFault(oa.ObjectName, (options & FILE_DIRECTORY_FILE) != 0))
+        status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
     thread->CreateEa = outer_ea;
     thread->CreateEaLength = outer_ea_length;
     if (ea_copy)
@@ -794,6 +803,18 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
     status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
                              FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_OPEN_FOR_BACKUP_INTENT, KernelMode, TRUE);
+    /* the program of a feature on demand or an assembly of one, which a search looks at before anything opens it. */
+    if ((status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) && old == UserMode &&
+        !oa.RootDirectory) {
+        t->PreviousMode = old;
+        BOOLEAN arrived = ExFeatureFileFault(oa.ObjectName, TRUE);
+        t->PreviousMode = KernelMode;
+        if (arrived)
+            status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                     FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_OPEN_FOR_BACKUP_INTENT,
+                                     KernelMode, TRUE);
+    }
     if (NT_SUCCESS(status)) {
         PFILE_OBJECT file;
         status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&file, nullptr);
@@ -1036,6 +1057,10 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
         status = HttpDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else if (IopIsPad(file))
         status = PadDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
+    else if (IopIsNsi(file))
+        status = NsiDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
+    else if (IopIsNetbt(file))
+        status = NetbtDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
         status = buffered_control(file, IRP_MJ_DEVICE_CONTROL, event, apc_context, iosb, code, input, in_len, output,
                                   out_len);
@@ -1079,6 +1104,8 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         HttpCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsPad(file))
         PadCancel(file, PsCurrentThread(), nullptr);
+    else if (IopIsNsi(file))
+        NsiCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsMimeFs(file)) {
         FsNotifyCancel(file, PsCurrentThread(), nullptr);
         FsLocksCancel(file, PsCurrentThread(), nullptr);
@@ -1104,6 +1131,8 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         status = HttpCancel(file, nullptr, request);
     else if (IopIsPad(file))
         status = PadCancel(file, nullptr, request);
+    else if (IopIsNsi(file))
+        status = NsiCancel(file, nullptr, request);
     else if (IopIsMimeFs(file)) {
         status = FsNotifyCancel(file, nullptr, request);
         NTSTATUS locks = FsLocksCancel(file, nullptr, request);

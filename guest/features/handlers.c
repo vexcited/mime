@@ -3,6 +3,8 @@
 
 #define WEBVIEW2_CLIENTS L"SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define WEBVIEW2_CLIENT_STATE L"SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\ClientState\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+#define WEBVIEW2_USER_CLIENTS L"Software\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+#define WEBVIEW2_USER_CLIENT_STATE L"Software\\Microsoft\\EdgeUpdate\\ClientState\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define INSTALL_MINUTES 30
 
 /*
@@ -35,11 +37,20 @@ static void webview2_application(RUN *run, WCHAR *path, SIZE_T chars)
     path[chars - 1] = 0;
 }
 
-/* The runtime lives in a folder named after its version, which holds msedgewebview2.exe. */
-static BOOL webview2_find(RUN *run, WCHAR *version, SIZE_T chars)
+/*
+ * Where the runtime of the user alone lives, when its installer ran without the rights of an administrator: the same
+ * folders under the local application data, and the same keys under the user's part of the registry.
+ */
+static BOOL webview2_user_application(WCHAR *path, SIZE_T chars)
 {
-    WCHAR application[MAX_PATH], pattern[MAX_PATH];
-    webview2_application(run, application, RTL_NUMBER_OF(application));
+    DWORD n = ExpandEnvironmentStringsW(L"%LOCALAPPDATA%\\Microsoft\\EdgeWebView\\Application", path, (DWORD)chars);
+    return n && n <= chars && path[0] != L'%';
+}
+
+/* The runtime in a folder of versions: the folder named after a version that holds msedgewebview2.exe. */
+static BOOL webview2_find_in(PCWSTR application, WCHAR *version, SIZE_T chars)
+{
+    WCHAR pattern[MAX_PATH];
     _snwprintf(pattern, RTL_NUMBER_OF(pattern), L"%ls\\*", application);
     pattern[RTL_NUMBER_OF(pattern) - 1] = 0;
     WIN32_FIND_DATAW data;
@@ -62,6 +73,19 @@ static BOOL webview2_find(RUN *run, WCHAR *version, SIZE_T chars)
     } while (FindNextFileW(find, &data));
     FindClose(find);
     return found;
+}
+
+/*
+ * The runtime is there whoever put it there and whatever its version: Mime, the installer a program brought, or the
+ * user. The one of the machine comes before the one of the user, as the loader of WebView2 looks for them.
+ */
+static BOOL webview2_find(RUN *run, WCHAR *version, SIZE_T chars)
+{
+    WCHAR application[MAX_PATH];
+    webview2_application(run, application, RTL_NUMBER_OF(application));
+    if (webview2_find_in(application, version, chars))
+        return TRUE;
+    return webview2_user_application(application, RTL_NUMBER_OF(application)) && webview2_find_in(application, version, chars);
 }
 
 static BOOL webview2_present(RUN *run)
@@ -143,42 +167,40 @@ static void set_detail(RUN *run, PCWSTR format, DWORD code)
     run->Detail[RTL_NUMBER_OF(run->Detail) - 1] = 0;
 }
 
-/* The standalone installer of the Evergreen runtime, which installs for all users and ends with 0 when it is done. */
+/*
+ * The standalone installer of the Evergreen runtime, which installs for all users and ends with 0 when it is done. The
+ * address always gives the runtime Microsoft publishes that day, so no version is named anywhere.
+ */
 static uint32_t webview2_install(RUN *run, PCWSTR package)
 {
-    for (int attempt = 0; attempt < 2; attempt++) {
-        WCHAR line[MAX_PATH + 40];
-        _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" /silent /install", package);
-        line[RTL_NUMBER_OF(line) - 1] = 0;
-        WCHAR application[MAX_PATH];
-        webview2_application(run, application, RTL_NUMBER_OF(application));
-        DWORD code;
-        DWORD error = run_and_wait(run, line, &code, application);
-        if (error)
-            return error;
-        if (code == 0 && webview2_present(run))
-            return ERROR_SUCCESS;
-        set_detail(run, L"The installer ended with code 0x%08X.", code);
-        /*
-         * The registry may declare a runtime that has no files, and the updater inside the installer then refuses
-         * a version that is not newer. Without the declaration the installer starts over.
-         */
-        if (attempt == 0 && !webview2_present(run)) {
-            RegDeleteTreeW(HKEY_LOCAL_MACHINE, WEBVIEW2_CLIENTS);
-            RegDeleteTreeW(HKEY_LOCAL_MACHINE, WEBVIEW2_CLIENT_STATE);
-            continue;
-        }
-        return code && code < 0x10000 ? code : FEATURE_ERROR_INSTALL_FAILURE;
-    }
-    return FEATURE_ERROR_INSTALL_FAILURE;
+    WCHAR line[MAX_PATH + 40];
+    _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" /silent /install", package);
+    line[RTL_NUMBER_OF(line) - 1] = 0;
+    WCHAR application[MAX_PATH];
+    webview2_application(run, application, RTL_NUMBER_OF(application));
+    DWORD code;
+    DWORD error = run_and_wait(run, line, &code, application);
+    if (error)
+        return error;
+    if (code == 0 && webview2_present(run))
+        return ERROR_SUCCESS;
+    set_detail(run, L"The installer ended with code 0x%08X.", code);
+    return code && code < 0x10000 ? code : FEATURE_ERROR_INSTALL_FAILURE;
 }
 
+/* The files and what the updater wrote about them, of the machine and of the user, so that no program finds a runtime. */
 static uint32_t webview2_remove(RUN *run)
 {
     WCHAR folder[MAX_PATH];
     _snwprintf(folder, RTL_NUMBER_OF(folder), L"%lsProgram Files (x86)\\Microsoft\\EdgeWebView", run->Root);
     folder[RTL_NUMBER_OF(folder) - 1] = 0;
     DeleteTree(folder);
+    if (webview2_user_application(folder, RTL_NUMBER_OF(folder)))
+        DeleteTree(folder);
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, WEBVIEW2_CLIENTS);
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, WEBVIEW2_CLIENT_STATE);
+    RegDeleteTreeW(HKEY_CURRENT_USER, WEBVIEW2_USER_CLIENTS);
+    RegDeleteTreeW(HKEY_CURRENT_USER, WEBVIEW2_USER_CLIENT_STATE);
     static const WCHAR *const kept[] = {L"Program Files (x86)\\Microsoft\\EdgeWebView\\Application"};
     keep_folders(run, kept, RTL_NUMBER_OF(kept));
     if (webview2_present(run))
@@ -460,8 +482,6 @@ void HandlerVersion(RUN *run, const FEATURE_DEF *feature, WCHAR *version, SIZE_T
 
 uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
 {
-    /* Whatever the installer starts must not ask for the feature it is putting there. */
-    SetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, L"1");
     switch (feature->Handler) {
     case FEATURE_HANDLER_WEBVIEW2:
         return webview2_install(run, package);
@@ -489,7 +509,6 @@ void HandlerComplete(RUN *run, const FEATURE_DEF *feature)
     WCHAR path[MAX_PATH];
     netfx_path(run, L"Windows\\assembly\\NativeImages_v4.0.30319_64\\System", path, RTL_NUMBER_OF(path));
     if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
-        SetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, L"1");
         netfx_native_images(run);
     }
 }
