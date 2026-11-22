@@ -279,7 +279,25 @@
 "DataType0"=dword:00000002
 "GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
 "Type"=dword:00000006
+
+; the cryptographic services, which crypt32 asks to keep the protected roots of a user. as on windows 11 26300.
+[HKLM\SYSTEM\CurrentControlSet\Services\CryptSvc]
+"DependOnService"=multi:"RpcSs"
+"Description"="Provides three management services: Catalog Database Service, which confirms the signatures of Windows files and allows new programs to be installed; Protected Root Service, which adds and removes Trusted Root Certification Authority certificates from this computer; and Automatic Root Certificate Update Service, which retrieves root certificates from Windows Update and enable scenarios such as SSL."
+"DisplayName"="Cryptographic Services"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,60,ea,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k NetworkService -p"
+"ObjectName"="NT Authority\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000002
+"Type"=dword:00000010
+
+[HKLM\SYSTEM\CurrentControlSet\Services\CryptSvc\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\cryptsvc.dll"
 "ServiceDllUnloadOnStop"=dword:00000001
+"ServiceMain"="CryptServiceMain"
 
 ; the drivers of the devices the firmware tree names; mime runs the work in its own libraries, the keys are what
 ; plug and play resolves a device's service to.
