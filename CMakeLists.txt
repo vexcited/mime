@@ -708,6 +708,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_uianimation ${MIME_LIB_${arch}}/msvcrt.lib)
     set(libs_mlang ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_secur32 ${MIME_LIB_${arch}}/advapi32.lib)
+    set(libs_crypt32 ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_rsaenh ${MIME_LIB_${arch}}/advapi32.lib)
     set(objects_windowscodecs ${arch}-lib-png:guest/lib/png/inflate.c ${arch}-lib-png:guest/lib/png/deflate.c
         ${arch}-lib-pngio ${arch}-lib-jpeg ${arch}-lib-tiff ${arch}-lib-gif ${arch}-lib-bcn ${arch}-lib-icc ${arch}-lib-jxr ${arch}-lib-par)
@@ -1172,7 +1173,7 @@ set(MIME_X86_DLLS
     shlwapi:0x71000000:shlwapi_imports shell32:0x70000000:shell32_imports winmm:0x6f000000:all_five version:0x6e000000:all_five
     advapi32:0x6d000000:advapi32_imports sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
     netapi32:0x6a000000:registry_imports wtsapi32:0x69000000:all_five secur32:0x68000000:secur32_imports
-    crypt32:0x67000000:registry_imports userenv:0x66000000:registry_imports ole32:0x65000000:ole32_imports
+    crypt32:0x67000000:crypt32_imports userenv:0x66000000:registry_imports ole32:0x65000000:ole32_imports
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:gdiplus_imports d2d1:0x1E500000:d2d1_imports msvbvm60:0x1E400000:msvbvm60_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
@@ -1224,6 +1225,7 @@ set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt advapi32)
 set(shlwapi_imports ntdll kernel32 user32 gdi32 win32u kernelbase advapi32)
 set(advapi32_imports ntdll kernel32 user32 gdi32 win32u kernelbase)
 set(registry_imports ntdll kernel32 user32 gdi32 win32u advapi32)
+set(crypt32_imports ntdll kernel32 user32 gdi32 win32u advapi32 rpcrt4 msvcrt)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 advapi32 shlwapi combase)
 set(mlang_imports ntdll kernel32 oleaut32)
 set(secur32_imports ntdll kernel32 user32 gdi32 win32u advapi32)

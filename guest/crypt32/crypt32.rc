@@ -1,0 +1,28 @@
+// the descriptions of private key operations, which rsaenh.dll and dssenh.dll load from crypt32.dll by number and
+// refuse to make or use a key without. the text is that of crypt32.dll.mui of windows 11.
+LANGUAGE 9, 1
+STRINGTABLE
+BEGIN
+    7501 "RSA Signature Key"
+    7502 "RSA KeyExchange Key"
+    7503 "Using your private exchange key to decrypt"
+    7504 "Signing data with your private exchange key"
+    7505 "Creating a new RSA signature key"
+    7506 "Creating a new RSA exchange key"
+    7507 "DSS Signature Key"
+    7508 "DH KeyExchange Key"
+    7509 "Creating a new DSS signature key"
+    7510 "Creating a new Diffie-Hellman exchange key"
+    7511 "Using your Diffie-Hellman exchange key to create an agreed key"
+    7512 "Migrating keys to new storage"
+    7513 "Deleting your private signature key"
+    7514 "Deleting your private exchange key"
+    7515 "Deleting your old private signature key for migration purposes"
+    7516 "Deleting your old private exchange key for migration purposes"
+    7517 "Signing data with your private signature key"
+    7518 "Exporting your private exchange key"
+    7519 "Exporting your private signature key"
+    7520 "Importing a new private exchange key"
+    7521 "Importing a new private signature key"
+    7522 "CryptoAPI Private Key"
+END

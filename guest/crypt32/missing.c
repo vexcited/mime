@@ -57,11 +57,6 @@ WINCRYPT32API BOOL WINAPI CryptVerifyMessageSignatureWithKey(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CryptVerifyMessageSignature(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CryptVerifyMessageHash(void)
 {
     return NOT_YET(FALSE);

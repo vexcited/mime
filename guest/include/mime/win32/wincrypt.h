@@ -904,6 +904,7 @@ typedef struct _CERT_TRUST_STATUS {
 #define CERT_TRUST_IS_NOT_TIME_NESTED 0x00000002
 #define CERT_TRUST_IS_REVOKED 0x00000004
 #define CERT_TRUST_IS_NOT_SIGNATURE_VALID 0x00000008
+#define CERT_TRUST_HAS_WEAK_SIGNATURE 0x00100000
 #define CERT_TRUST_IS_NOT_VALID_FOR_USAGE 0x00000010
 #define CERT_TRUST_IS_UNTRUSTED_ROOT 0x00000020
 #define CERT_TRUST_REVOCATION_STATUS_UNKNOWN 0x00000040
@@ -998,6 +999,8 @@ typedef struct _CERT_CHAIN_PARA {
 #define CERT_CHAIN_USE_LOCAL_MACHINE_STORE 0x00000008
 #define CERT_CHAIN_ENABLE_CACHE_AUTO_UPDATE 0x00000010
 #define CERT_CHAIN_ENABLE_SHARE_STORE 0x00000020
+#define CERT_CHAIN_OPT_IN_WEAK_SIGNATURE 0x00010000
+#define CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT 0x08000000
 #define CERT_CHAIN_REVOCATION_CHECK_END_CERT 0x10000000
 #define CERT_CHAIN_REVOCATION_CHECK_CHAIN 0x20000000
 #define CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT 0x40000000
@@ -1073,6 +1076,8 @@ typedef struct _CERT_CHAIN_POLICY_STATUS {
 #define SECURITY_FLAG_IGNORE_WRONG_USAGE 0x00000200
 #define SECURITY_FLAG_IGNORE_CERT_CN_INVALID 0x00001000
 #define SECURITY_FLAG_IGNORE_CERT_DATE_INVALID 0x00002000
+#define SECURITY_FLAG_IGNORE_WEAK_SIGNATURE 0x00010000
+#define SECURITY_FLAG_OPT_IN_WEAK_SIGNATURE 0x00020000
 
 typedef struct _HTTPSPolicyCallbackData {
     union {
@@ -1432,6 +1437,9 @@ WINCRYPT32API HCRYPTMSG WINAPI CryptMsgOpenToDecode(DWORD encoding, DWORD flags,
 WINCRYPT32API BOOL WINAPI CryptMsgUpdate(HCRYPTMSG message, const BYTE *data, DWORD size, BOOL final);
 WINCRYPT32API HCERTSTORE WINAPI CryptGetMessageCertificates(DWORD encoding, HCRYPTPROV_LEGACY provider, DWORD flags,
                                                             const BYTE *signed_blob, DWORD size);
+WINCRYPT32API BOOL WINAPI CryptVerifyMessageSignature(CRYPT_VERIFY_MESSAGE_PARA *para, DWORD signer_index,
+                                                      const BYTE *blob, DWORD blob_size, BYTE *decoded,
+                                                      DWORD *decoded_size, PCCERT_CONTEXT *signer);
 WINCRYPT32API BOOL WINAPI CryptVerifyDetachedMessageSignature(CRYPT_VERIFY_MESSAGE_PARA *para, DWORD signer_index,
                                                               const BYTE *signature, DWORD signature_size, DWORD count,
                                                               const BYTE *blobs[], DWORD sizes[], PCCERT_CONTEXT *signer);
