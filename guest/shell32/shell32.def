@@ -46,3 +46,8 @@ EXPORTS
     ShellAboutA @569
     PathMakeUniqueName @47
     PathCleanupSpec @171
+    SHAddFromPropSheetExtArray @167
+    SHCreatePropSheetExtArray @168
+    SHDestroyPropSheetExtArray @169
+    SHReplaceFromPropSheetExtArray @170
+    SHGetItemFromObject @512
