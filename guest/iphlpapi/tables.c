@@ -36,6 +36,15 @@ static void if_row(const IPH_ADAPTER *a, MIB_IFROW *row)
     memcpy(row->bPhysAddr, a->mac, a->mac_length);
     row->dwAdminStatus = a->admin_up ? MIB_IF_ADMIN_STATUS_UP : MIB_IF_ADMIN_STATUS_DOWN;
     row->dwOperStatus = a->up ? IF_OPER_STATUS_OPERATIONAL : IF_OPER_STATUS_NON_OPERATIONAL;
+    row->dwInOctets = (DWORD)a->rx_bytes;
+    row->dwInUcastPkts = (DWORD)(a->rx_packets - a->rx_multicast);
+    row->dwInNUcastPkts = (DWORD)a->rx_multicast;
+    row->dwInDiscards = (DWORD)a->rx_dropped;
+    row->dwInErrors = (DWORD)a->rx_errors;
+    row->dwOutOctets = (DWORD)a->tx_bytes;
+    row->dwOutUcastPkts = (DWORD)a->tx_packets;
+    row->dwOutDiscards = (DWORD)a->tx_dropped;
+    row->dwOutErrors = (DWORD)a->tx_errors;
     SIZE_T i = 0;
     for (; a->description[i] && i + 1 < MAXLEN_IFDESCR; i++)
         row->bDescr[i] = a->description[i] < 0x80 ? (UCHAR)a->description[i] : '?';
@@ -80,9 +89,23 @@ DWORD WINAPI GetIfEntry(PMIB_IFROW row)
     return a ? NO_ERROR : ERROR_FILE_NOT_FOUND;
 }
 
-static void if_row2(const IPH_ADAPTER *a, MIB_IF_ROW2 *row)
+/* measured on windows: a row asked for without statistics has every counter at 0. */
+static void if_row2(const IPH_ADAPTER *a, MIB_IF_ROW2 *row, BOOL statistics)
 {
     memset(row, 0, sizeof(*row));
+    if (statistics) {
+        row->InOctets = a->rx_bytes;
+        row->InUcastPkts = a->rx_packets - a->rx_multicast;
+        row->InNUcastPkts = a->rx_multicast;
+        row->InDiscards = a->rx_dropped;
+        row->InErrors = a->rx_errors;
+        row->InUcastOctets = a->rx_bytes;
+        row->OutOctets = a->tx_bytes;
+        row->OutUcastPkts = a->tx_packets;
+        row->OutDiscards = a->tx_dropped;
+        row->OutErrors = a->tx_errors;
+        row->OutUcastOctets = a->tx_bytes;
+    }
     row->InterfaceLuid = a->luid;
     row->InterfaceIndex = a->index;
     row->InterfaceGuid = a->guid;
@@ -140,7 +163,7 @@ DWORD NETIOAPI_API_ GetIfTable2Ex(MIB_IF_TABLE_LEVEL level, PMIB_IF_TABLE2 *tabl
     PMIB_IF_TABLE2 t = new_table(s->adapter_count, sizeof(MIB_IF_ROW2));
     if (t) {
         for (ULONG i = 0; i < s->adapter_count; i++)
-            if_row2(&s->adapters[i], &t->Table[i]);
+            if_row2(&s->adapters[i], &t->Table[i], level != MibIfTableNormalWithoutStatistics);
         t->NumEntries = s->adapter_count;
     }
     IphRelease(s);
@@ -173,7 +196,7 @@ DWORD NETIOAPI_API_ GetIfEntry2Ex(MIB_IF_ENTRY_LEVEL level, PMIB_IF_ROW2 row)
         error = ERROR_INVALID_PARAMETER;
     }
     if (a) {
-        if_row2(a, row);
+        if_row2(a, row, level == MibIfEntryNormal);
         error = NO_ERROR;
     }
     IphRelease(s);

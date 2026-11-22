@@ -373,13 +373,19 @@ typedef struct _IP_ADAPTER_INFO {
     BOOL HaveWins;
     IP_ADDR_STRING PrimaryWinsServer;
     IP_ADDR_STRING SecondaryWinsServer;
-    LONGLONG LeaseObtained; /* time_t */
+    /* a time_t. the 32-bit iphlpapi.dll of windows writes it with 32 bits, records of 640 bytes, measured on 26100. */
+#ifdef _WIN64
+    LONGLONG LeaseObtained;
     LONGLONG LeaseExpires;
+#else
+    LONG LeaseObtained;
+    LONG LeaseExpires;
+#endif
 } IP_ADAPTER_INFO, *PIP_ADAPTER_INFO;
 #ifdef _WIN64
 MIME_STATIC_ASSERT(sizeof(IP_ADAPTER_INFO) == 704, "IP_ADAPTER_INFO");
 #else
-MIME_STATIC_ASSERT(sizeof(IP_ADAPTER_INFO) == 648, "IP_ADAPTER_INFO");
+MIME_STATIC_ASSERT(sizeof(IP_ADAPTER_INFO) == 640, "IP_ADAPTER_INFO");
 #endif
 
 typedef struct {

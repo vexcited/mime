@@ -1,9 +1,12 @@
 /*
- * the dhcp client api. mime runs no dhcp client service, so calls check their arguments like windows, look up the
- * adapter they name, then find no service to ask, which is what windows gives while the service is stopped.
+ * the dhcp client api. mime runs no dhcp client service: the host leases the addresses. calls check their arguments
+ * like windows, look up the adapter they name, then find no service to ask, which is what windows gives while the
+ * service is stopped. what iphlpapi asks about every adapter has an answer all the same, from the addresses the
+ * network store tells: whether an adapter is configured by dhcp.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/iphlpapi.h>
+#include <mime/afd.h>
 
 #define RPC_S_SERVER_UNAVAILABLE 1722L
 #define ERROR_BUFFER_OVERFLOW_ 111L
@@ -50,7 +53,6 @@ ULONG_PTR DhcpGlobalTerminateEvent;
 
 typedef ULONG(WINAPI *CONVERT_GUID)(const GUID *, ULONG64 *);
 typedef ULONG(WINAPI *CONVERT_NAME)(const WCHAR *, ULONG64 *);
-typedef ULONG(WINAPI *GET_ADAPTERS)(ULONG, ULONG, PVOID, PIP_ADAPTER_ADDRESSES, PULONG);
 
 static int hex_value(WCHAR c)
 {
@@ -269,7 +271,51 @@ DWORD WINAPI Dhcpv4CheckServerAvailability(WCHAR *adapter, DWORD *available)
     return RPC_S_SERVER_UNAVAILABLE;
 }
 
-/* whether DHCP is on for an adapter is the adapter's own flag, which is what Mime's adapters report. */
+typedef DWORD(WINAPI *GET_IF_TABLE)(PMIB_IF_TABLE2 *);
+typedef DWORD(WINAPI *GET_UNICAST_TABLE)(ADDRESS_FAMILY, PMIB_UNICASTIPADDRESS_TABLE *);
+typedef void(WINAPI *FREE_TABLE)(PVOID);
+
+/* the interfaces and ipv4 addresses of the machine. iphlpapi reads them from the network store and asks nothing here. */
+static DWORD read_tables(PMIB_IF_TABLE2 *interfaces, PMIB_UNICASTIPADDRESS_TABLE *addresses, FREE_TABLE *free_table)
+{
+    *interfaces = nullptr;
+    *addresses = nullptr;
+    HMODULE module = LoadLibraryW(L"iphlpapi.dll");
+    GET_IF_TABLE get_interfaces = module ? (GET_IF_TABLE)GetProcAddress(module, "GetIfTable2") : nullptr;
+    GET_UNICAST_TABLE get_addresses =
+        module ? (GET_UNICAST_TABLE)GetProcAddress(module, "GetUnicastIpAddressTable") : nullptr;
+    *free_table = module ? (FREE_TABLE)GetProcAddress(module, "FreeMibTable") : nullptr;
+    if (!get_interfaces || !get_addresses || !*free_table)
+        return RPC_S_SERVER_UNAVAILABLE;
+    DWORD error = get_interfaces(interfaces);
+    if (!error)
+        error = get_addresses(AF_INET, addresses);
+    if (error && *interfaces) {
+        (*free_table)(*interfaces);
+        *interfaces = nullptr;
+    }
+    return error;
+}
+
+/*
+ * an adapter is configured by dhcp when an ipv4 address of it came from a lease, or when a wired or wireless card has
+ * no address yet, which is windows' default for one.
+ */
+static BOOL uses_dhcp(const MIB_IF_ROW2 *row, const MIB_UNICASTIPADDRESS_TABLE *addresses)
+{
+    BOOL any = FALSE;
+    for (ULONG i = 0; i < addresses->NumEntries; i++) {
+        const MIB_UNICASTIPADDRESS_ROW *a = &addresses->Table[i];
+        if (a->InterfaceLuid.Value != row->InterfaceLuid.Value)
+            continue;
+        any = TRUE;
+        if (a->PrefixOrigin == IpPrefixOriginDhcp)
+            return TRUE;
+    }
+    return !any && row->InterfaceAndOperStatusFlags.HardwareInterface &&
+           (row->Type == IF_TYPE_ETHERNET_CSMACD || row->Type == IF_TYPE_IEEE80211);
+}
+
 DWORD WINAPI DhcpIsEnabled(WCHAR *adapter, DWORD *enabled)
 {
     if (!adapter || !enabled)
@@ -279,30 +325,19 @@ DWORD WINAPI DhcpIsEnabled(WCHAR *adapter, DWORD *enabled)
     if (error)
         return error;
     *enabled = 0;
-    HMODULE module = LoadLibraryW(L"iphlpapi.dll");
-    GET_ADAPTERS get = module ? (GET_ADAPTERS)GetProcAddress(module, "GetAdaptersAddresses") : nullptr;
-    if (!get)
+    PMIB_IF_TABLE2 interfaces;
+    PMIB_UNICASTIPADDRESS_TABLE addresses;
+    FREE_TABLE free_table;
+    if (read_tables(&interfaces, &addresses, &free_table))
         return ERROR_SUCCESS;
-    ULONG size = 0;
-    ULONG flags = GAA_FLAG_SKIP_UNICAST | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
-    if (get(AF_UNSPEC, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW)
-        return ERROR_SUCCESS;
-    PIP_ADAPTER_ADDRESSES list = HeapAlloc(GetProcessHeap(), 0, size);
-    if (!list)
-        return ERROR_NOT_ENOUGH_MEMORY;
-    if (get(AF_UNSPEC, flags, nullptr, list, &size) == ERROR_SUCCESS) {
-        for (PIP_ADAPTER_ADDRESSES a = list; a; a = a->Next) {
-            if (a->Luid.Value == luid) {
-                *enabled = (a->Flags & IP_ADAPTER_DHCP_ENABLED) != 0;
-                break;
-            }
-        }
-    }
-    HeapFree(GetProcessHeap(), 0, list);
+    for (ULONG i = 0; i < interfaces->NumEntries; i++)
+        if (interfaces->Table[i].InterfaceLuid.Value == luid)
+            *enabled = uses_dhcp(&interfaces->Table[i], addresses);
+    free_table(addresses);
+    free_table(interfaces);
     return ERROR_SUCCESS;
 }
 
-/* the service is asked to turn DHCP on, and when it is not running windows tries to start it. */
 DWORD WINAPI DhcpEnableDhcp(WCHAR *adapter, DWORD enable)
 {
     return ask_service(adapter);
@@ -390,6 +425,7 @@ DWORD WINAPI DhcpEnumClasses(DWORD reserved, WCHAR *adapter, DWORD *size, PVOID 
     return ask_service(adapter);
 }
 
+/* every interface but the loopback with its luid and whether dhcp configures it, 16 bytes each. */
 DWORD WINAPI DhcpEnumInterfaces(PVOID list)
 {
     if (!list)
@@ -398,9 +434,34 @@ DWORD WINAPI DhcpEnumInterfaces(PVOID list)
         DWORD count;
         HLOCAL interfaces;
     } *head = list;
+    typedef struct {
+        ULONG64 Luid;
+        DWORD Enabled;
+        DWORD Pad;
+    } ENTRY;
     head->count = 0;
     head->interfaces = nullptr;
-    return RPC_S_SERVER_UNAVAILABLE;
+    PMIB_IF_TABLE2 interfaces;
+    PMIB_UNICASTIPADDRESS_TABLE addresses;
+    FREE_TABLE free_table;
+    DWORD error = read_tables(&interfaces, &addresses, &free_table);
+    if (error)
+        return RPC_S_SERVER_UNAVAILABLE;
+    ENTRY *entries = LocalAlloc(LMEM_ZEROINIT, (interfaces->NumEntries + 1) * sizeof(ENTRY));
+    if (entries) {
+        for (ULONG i = 0; i < interfaces->NumEntries; i++) {
+            const MIB_IF_ROW2 *row = &interfaces->Table[i];
+            if (row->Type == IF_TYPE_SOFTWARE_LOOPBACK)
+                continue;
+            entries[head->count].Luid = row->InterfaceLuid.Value;
+            entries[head->count].Enabled = uses_dhcp(row, addresses);
+            head->count++;
+        }
+        head->interfaces = entries;
+    }
+    free_table(addresses);
+    free_table(interfaces);
+    return entries ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
 }
 
 DWORD WINAPI DhcpGetDhcpServicedConnections(ULONG_PTR reserved, PVOID *connections, DWORD *count)
@@ -463,12 +524,137 @@ DWORD WINAPI DhcpNotifyConfigChange(WCHAR *server, WCHAR *adapter, BOOL new_addr
 
 /* ------------------------------------------------------------------ leases */
 
+/* the host's configuration, which tells the lease of each link. freed from the heap of the process. */
+static MIME_AFD_CONFIG *read_config(void)
+{
+    static const WCHAR device[] = MIME_AFD_DEVICE;
+    UNICODE_STRING name = {sizeof(device) - sizeof(WCHAR), sizeof(device), (PWSTR)device};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &name, 0, nullptr, nullptr);
+    IO_STATUS_BLOCK io;
+    HANDLE afd;
+    if (!NT_SUCCESS(NtCreateFile(&afd, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &oa, &io, nullptr, 0,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0)))
+        return nullptr;
+    MIME_AFD_CONFIG *config = nullptr;
+    for (ULONG size = 65536; size <= 1u << 20 && !config; size *= 2) {
+        MIME_AFD_CONFIG *c = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+        if (!c)
+            break;
+        NTSTATUS status = NtDeviceIoControlFile(afd, nullptr, nullptr, nullptr, &io, IOCTL_AFD_CONFIG, nullptr, 0, c, size);
+        if (NT_SUCCESS(status) && io.Information >= sizeof(*c) && c->Size <= io.Information) {
+            config = c;
+        } else {
+            HeapFree(GetProcessHeap(), 0, c);
+            if (status != (NTSTATUS)0x80000005L)
+                break;
+        }
+    }
+    NtClose(afd);
+    return config;
+}
+
+/*
+ * the record of a lease, measured on Windows 11 26100 with scratch/g2/net2/lease.exe: the address, its mask
+ * and the server as they go on the wire, the seconds the lease lasts, the time it was taken in seconds since 1970, and
+ * the seconds to its renewal and to its rebinding, half and seven eighths of it. the dns servers of the lease are a
+ * count and a block of addresses. the bytes between are what Windows has for a leased ethernet adapter.
+ */
+typedef struct {
+    UCHAR Address[4];
+    UCHAR Mask[4];
+    UCHAR Server[4];
+    ULONG Lease;
+    ULONG Obtained;
+    ULONG Renewal;
+    ULONG Rebinding;
+} LEASE_HEAD;
+
+#define LEASE_STATE (sizeof(void *) == 8 ? 32 : 28)
+#define LEASE_STATE_COUNT (sizeof(void *) == 8 ? 40 : 36)
+#define LEASE_KIND (sizeof(void *) == 8 ? 72 : 56)
+#define LEASE_KIND_COUNT (sizeof(void *) == 8 ? 76 : 60)
+#define LEASE_DNS_COUNT (sizeof(void *) == 8 ? 104 : 80)
+#define LEASE_DNS (sizeof(void *) == 8 ? 112 : 84)
+
+/* FALSE when the link of the adapter has no leased address or the host tells no lease for it. */
+static BOOL fill_lease(const MIME_AFD_CONFIG *c, ULONG index, BYTE *lease)
+{
+    const MIME_AFD_LINK *links = (const MIME_AFD_LINK *)(c + 1);
+    const MIME_AFD_LINK_ADDRESS *addresses = (const MIME_AFD_LINK_ADDRESS *)(links + c->Links);
+    const MIME_AFD_LINK *link = nullptr;
+    for (ULONG i = 0; i < c->Links && !link; i++)
+        if (links[i].Index == index)
+            link = &links[i];
+    if (!link || !(link->DhcpServer[0] | link->DhcpServer[1] | link->DhcpServer[2] | link->DhcpServer[3]))
+        return FALSE;
+    const MIME_AFD_LINK_ADDRESS *leased = nullptr;
+    for (ULONG i = 0; i < c->Addresses && !leased; i++)
+        if (addresses[i].Index == index && addresses[i].Address.Family == AF_INET && (addresses[i].Flags & MIME_AFD_ADDR_DYNAMIC))
+            leased = &addresses[i];
+    if (!leased)
+        return FALSE;
+    LEASE_HEAD *head = (LEASE_HEAD *)lease;
+    memcpy(head->Address, leased->Address.Data + 2, 4);
+    ULONG mask = leased->Prefix ? 0xFFFFFFFFu << (32 - (leased->Prefix > 32 ? 32 : leased->Prefix)) : 0;
+    head->Mask[0] = (UCHAR)(mask >> 24);
+    head->Mask[1] = (UCHAR)(mask >> 16);
+    head->Mask[2] = (UCHAR)(mask >> 8);
+    head->Mask[3] = (UCHAR)mask;
+    memcpy(head->Server, link->DhcpServer, 4);
+    head->Lease = link->DhcpLease;
+    head->Obtained = (ULONG)link->DhcpObtained;
+    head->Renewal = link->DhcpLease / 2;
+    head->Rebinding = (ULONG)((ULONG64)link->DhcpLease * 7 / 8);
+    static const UCHAR state[4] = {0, 1, 1, 1}, kind[4] = {0, 1, 1, 0};
+    memcpy(lease + LEASE_STATE, state, 4);
+    *(ULONG *)(lease + LEASE_STATE_COUNT) = 1;
+    memcpy(lease + LEASE_KIND, kind, 4);
+    *(ULONG *)(lease + LEASE_KIND_COUNT) = 2;
+    ULONG servers = 0;
+    for (ULONG i = 0; i < c->Servers && i < MIME_AFD_MAX_DNS; i++)
+        servers += c->Server[i].Family == AF_INET;
+    UCHAR *dns = servers ? LocalAlloc(LMEM_ZEROINIT, servers * 4) : nullptr;
+    if (dns) {
+        ULONG at = 0;
+        for (ULONG i = 0; i < c->Servers && i < MIME_AFD_MAX_DNS; i++)
+            if (c->Server[i].Family == AF_INET)
+                memcpy(dns + 4 * at++, c->Server[i].Data + 2, 4);
+        *(ULONG *)(lease + LEASE_DNS_COUNT) = servers;
+        *(HLOCAL *)(lease + LEASE_DNS) = dns;
+    }
+    return TRUE;
+}
+
+static DWORD adapter_index(const WCHAR *adapter, ULONG *index)
+{
+    ULONG64 luid;
+    DWORD error = adapter_luid(adapter, &luid);
+    if (error)
+        return error;
+    typedef ULONG(WINAPI * TO_INDEX)(const ULONG64 *, ULONG *);
+    HMODULE module = LoadLibraryW(L"iphlpapi.dll");
+    TO_INDEX convert = module ? (TO_INDEX)GetProcAddress(module, "ConvertInterfaceLuidToIndex") : nullptr;
+    return convert ? convert(&luid, index) : ERROR_PROC_NOT_FOUND;
+}
+
+/* an adapter without a lease is answered as the service that is not there answers, which iphlpapi takes for no lease. */
 DWORD WINAPI DhcpQueryLeaseInfo(WCHAR *adapter, BYTE *lease)
 {
     if (!lease)
         return ERROR_INVALID_PARAMETER;
     memset(lease, 0, LEASE_SIZE);
-    return adapter ? ask_service(adapter) : ERROR_INVALID_PARAMETER;
+    if (!adapter)
+        return ERROR_INVALID_PARAMETER;
+    ULONG index;
+    DWORD error = adapter_index(adapter, &index);
+    if (error)
+        return error;
+    MIME_AFD_CONFIG *c = read_config();
+    BOOL filled = c && fill_lease(c, index, lease);
+    if (c)
+        HeapFree(GetProcessHeap(), 0, c);
+    return filled ? ERROR_SUCCESS : RPC_S_SERVER_UNAVAILABLE;
 }
 
 DWORD WINAPI DhcpQueryLeaseInfoEx(WCHAR *adapter, BYTE *lease, DWORD *flags)
@@ -479,21 +665,38 @@ DWORD WINAPI DhcpQueryLeaseInfoEx(WCHAR *adapter, BYTE *lease, DWORD *flags)
         *flags = 0;
     if (!adapter || !lease || !flags)
         return ERROR_INVALID_PARAMETER;
-    return ask_service(adapter);
+    return DhcpQueryLeaseInfo(adapter, lease);
 }
 
+/* a record for each adapter in the order given, zeros for one without a lease. */
 DWORD WINAPI DhcpQueryLeaseInfoArray(WCHAR **adapters, DWORD count, BYTE **leases)
 {
     *leases = nullptr;
     if (!adapters || !count)
         return ERROR_INVALID_PARAMETER;
-    for (DWORD i = 0; i < count; i++) {
-        ULONG64 luid;
-        DWORD error = adapter_luid(adapters[i], &luid);
-        if (error)
-            return error;
+    ULONG *indexes = HeapAlloc(GetProcessHeap(), 0, count * sizeof(ULONG));
+    if (!indexes)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD error = ERROR_SUCCESS;
+    for (DWORD i = 0; i < count && !error; i++)
+        error = adapter_index(adapters[i], &indexes[i]);
+    MIME_AFD_CONFIG *c = error ? nullptr : read_config();
+    BYTE *array = c ? HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)count * LEASE_SIZE) : nullptr;
+    BOOL any = FALSE;
+    for (DWORD i = 0; array && i < count; i++)
+        any |= fill_lease(c, indexes[i], array + (SIZE_T)i * LEASE_SIZE);
+    if (c)
+        HeapFree(GetProcessHeap(), 0, c);
+    HeapFree(GetProcessHeap(), 0, indexes);
+    if (error)
+        return error;
+    if (!any) {
+        if (array)
+            HeapFree(GetProcessHeap(), 0, array);
+        return RPC_S_SERVER_UNAVAILABLE;
     }
-    return RPC_S_SERVER_UNAVAILABLE;
+    *leases = array;
+    return ERROR_SUCCESS;
 }
 
 /* the client id and class id of a lease request are copied into buffers of 254 and 255 bytes. */

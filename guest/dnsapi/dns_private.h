@@ -217,4 +217,8 @@ DNS_STATUS DnsCheckName(const char *name, BOOL *numeric);
 void DnsAnswerFree(DNS_ANSWER *answer);
 void DnsCacheFlush(const char *name);
 
+/* dnsadapter.c: the ip4 servers of the machine or of an adapter named by its guid, from the host's configuration. */
+#define MIME_DNS_MAX_CONFIG_SERVERS 8
+ULONG DnsConfigServers(const WCHAR *adapter, IP4_ADDRESS *list, ULONG max);
+
 #endif
