@@ -9,6 +9,8 @@
 
 ; the services that start first with what they need, and the ones that want to be told before a shutdown, none of Mime's do.
 [HKLM\SYSTEM\CurrentControlSet\Control]
+; with this much memory or more each service of svchost gets a process of its own, 3.5 GB as on windows 11.
+"SvcHostSplitThresholdInKB"=dword:00380000
 "EarlyStartServices"=multi:"RpcSs","Power","BrokerInfrastructure","SystemEventsBroker","DcomLaunch","RpcEpMapper","LSM","AppIdSvc","AppxSvc"
 "PreshutdownOrder"=multi:
 ; the options the boot loader started the system with, as read on windows 11.

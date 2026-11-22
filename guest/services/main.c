@@ -666,7 +666,7 @@ static DWORD op_query_config(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     WCHAR *path = DbReadString(key, L"ImagePath", nullptr);
     WCHAR *group = DbReadString(key, L"Group", nullptr);
     WCHAR *account = DbReadString(key, L"ObjectName", nullptr);
-    WCHAR *display = DbReadString(key, L"DisplayName", nullptr);
+    WCHAR *display = DbReadDisplayName(key);
     WCHAR *services = DbReadString(key, L"DependOnService", nullptr);
     WCHAR *groups = DbReadString(key, L"DependOnGroup", nullptr);
     RegCloseKey(key);
@@ -774,7 +774,7 @@ static DWORD op_query_config2(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
         ScmPutU32(w, value);
         break;
     case SERVICE_CONFIG_TRIGGER_INFO:
-        ScmPutU32(w, 0);
+        error = TriggerWriteInfo(key, w);
         break;
     case SERVICE_CONFIG_LAUNCH_PROTECTED:
         DbReadDword(key, L"LaunchProtected", &value);
@@ -840,7 +840,7 @@ static DWORD op_enum(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     UINT32 count_offset = w->Size;
     ScmPutU32(w, 0);
     for (SERVICE *s = g_services; s; s = s->Next) {
-        if (!DbLoadRecord(s) || !(s->Type & type_mask))
+        if (!DbLoadRecord(s) || !(RunStatusType(s) & type_mask))
             continue;
         if (has_group) {
             const WCHAR *g = s->Group ? s->Group : L"";
@@ -1534,6 +1534,10 @@ static void read_timeouts(void)
         if (DbReadDword(key, L"ServicesPipeTimeout", &value))
             g_control_timeout = value;
         g_handler_timeout = g_control_timeout;
+        /* ScReadSCMConfiguration: the threshold in KB, absent or 0 for no splitting. */
+        MEMORYSTATUSEX memory = {sizeof(memory)};
+        if (DbReadDword(key, L"SvcHostSplitThresholdInKB", &value) && value && GlobalMemoryStatusEx(&memory))
+            g_split_svchost = memory.ullTotalPhys >= (ULONGLONG)value << 10;
         RegCloseKey(key);
     }
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\SCMConfig", 0, KEY_READ, &key) == ERROR_SUCCESS) {
@@ -1574,15 +1578,18 @@ void entry(void)
         CloseHandle(thread);
     ShutdownInit();
 
-    /* clients wait on this event. it is created here or already was by the first client. */
-    HANDLE ready = SvcCreateWorldEvent(SCM_START_EVENT);
-    if (ready)
-        SetEvent(ready);
+    SvcCreateSessionReadyEvent();
     RpcStart();
     LsaLookupStart();
     LsaPolicyStart();
     DpapiStart();
     AppInfoStart();
+    ScheduleStart();
+    TriggerStart();
+    /* clients wait on this event, set once every endpoint answers. it is created here or already was by a client. */
+    HANDLE ready = SvcCreateWorldEvent(SCM_START_EVENT);
+    if (ready)
+        SetEvent(ready);
     BootStart();
     Sleep(INFINITE);
     ExitProcess(0);

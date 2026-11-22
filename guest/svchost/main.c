@@ -284,16 +284,71 @@ typedef BOOL(WINAPI *SET_MITIGATION_POLICY)(int policy, void *buffer, SIZE_T len
 
 static CO_UNINITIALIZE g_co_uninitialize; /* set once this process has initialized COM. */
 
-/* used when the registry gives none: system, administrators and service accounts, plus what the flags allow. */
+WINBASEAPI BOOL WINAPI OpenProcessToken(HANDLE process, DWORD access, PHANDLE token);
+WINBASEAPI BOOL WINAPI GetTokenInformation(HANDLE token, DWORD klass, LPVOID info, DWORD length, PDWORD returned);
+WINBASEAPI BOOL WINAPI ConvertSidToStringSidW(PSID sid, LPWSTR *text);
+
+/* the sid a token class of the process holds first, TokenUser 1 or TokenPrimaryGroup 5, as text. */
+static WCHAR *process_sid(DWORD klass)
+{
+    HANDLE token;
+    if (!OpenProcessToken(GetCurrentProcess(), 0x0008, &token))
+        return nullptr;
+    BYTE buffer[128];
+    DWORD size;
+    WCHAR *text = nullptr;
+    if (GetTokenInformation(token, klass, buffer, sizeof(buffer), &size))
+        ConvertSidToStringSidW(*(PSID *)buffer, &text);
+    CloseHandle(token);
+    return text;
+}
+
+/*
+ * used when the registry gives none, as svchost of windows builds it: owned by the process user and its primary group,
+ * authenticated users, then app containers, interactive users and the com capability as the flags allow.
+ */
 static PSECURITY_DESCRIPTOR default_access_descriptor(DWORD flags)
 {
-    WCHAR text[160] = L"O:SYG:SYD:(A;;0x3;;;SY)(A;;0x3;;;BA)(A;;0x3;;;LS)(A;;0x3;;;NS)";
-    if (flags & GROUP_FLAG_ALLOW_INTERACTIVE)
-        wcscat(text, L"(A;;0x3;;;IU)");
+    WCHAR *user = process_sid(1), *group = process_sid(5);
+    WCHAR text[512];
+    const WCHAR *access = flags & GROUP_FLAG_ALLOW_CROSS_CONTAINER ? L"0x27" : L"0x7";
+    _snwprintf(text, ARRAYSIZE(text), L"O:%sG:%sD:(A;;0x7;;;AU)", user ? user : L"SY", group ? group : L"SY");
+    text[ARRAYSIZE(text) - 1] = 0;
+    if (user)
+        LocalFree(user);
+    if (group)
+        LocalFree(group);
+    size_t n = wcslen(text);
     if (flags & GROUP_FLAG_ALLOW_LOWBOX)
-        wcscat(text, L"(A;;0x3;;;AC)");
+        n += _snwprintf(text + n, ARRAYSIZE(text) - n, L"(A;;%s;;;AC)", access);
+    if (flags & GROUP_FLAG_ALLOW_INTERACTIVE)
+        n += _snwprintf(text + n, ARRAYSIZE(text) - n, L"(A;;%s;;;IU)", access);
+    if (flags & GROUP_FLAG_ALLOW_COM_CAPABILITY)
+        _snwprintf(text + n, ARRAYSIZE(text) - n,
+                   L"(A;;0x7;;;S-1-15-3-1024-2405443489-874036122-4286035555-1823921565-1746547431-2453885448-3625952902-991631256)");
+    text[ARRAYSIZE(text) - 1] = 0;
     PSECURITY_DESCRIPTOR sd = nullptr;
     return ConvertStringSecurityDescriptorToSecurityDescriptorW(text, 1, &sd, nullptr) ? sd : nullptr;
+}
+
+/* CoInitializeSecurity takes a descriptor in absolute form only; the registry and the sddl give self-relative ones. */
+static PSECURITY_DESCRIPTOR absolute_descriptor(PSECURITY_DESCRIPTOR relative)
+{
+    DWORD sd_size = 0, dacl_size = 0, sacl_size = 0, owner_size = 0, group_size = 0;
+    MakeAbsoluteSD(relative, nullptr, &sd_size, nullptr, &dacl_size, nullptr, &sacl_size, nullptr, &owner_size, nullptr,
+                   &group_size);
+    SIZE_T total = sd_size + dacl_size + sacl_size + owner_size + group_size;
+    BYTE *block = total ? HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, total) : nullptr;
+    if (!block)
+        return nullptr;
+    BYTE *dacl = block + sd_size, *sacl = dacl + dacl_size, *owner = sacl + sacl_size, *group = owner + owner_size;
+    if (!MakeAbsoluteSD(relative, block, &sd_size, dacl_size ? dacl : nullptr, &dacl_size,
+                        sacl_size ? sacl : nullptr, &sacl_size, owner_size ? owner : nullptr, &owner_size,
+                        group_size ? group : nullptr, &group_size)) {
+        HeapFree(GetProcessHeap(), 0, block);
+        return nullptr;
+    }
+    return block;
 }
 
 static void start_com(const GROUP_SETTINGS *g)
@@ -308,7 +363,8 @@ static void start_com(const GROUP_SETTINGS *g)
     }
     if (initialize(nullptr, 0) >= 0)
         g_co_uninitialize = uninitialize;
-    PSECURITY_DESCRIPTOR sd = g->access_descriptor ? g->access_descriptor : default_access_descriptor(g->flags);
+    PSECURITY_DESCRIPTOR relative = g->access_descriptor ? g->access_descriptor : default_access_descriptor(g->flags);
+    PSECURITY_DESCRIPTOR sd = relative ? absolute_descriptor(relative) : nullptr;
     HRESULT hr = secure(sd, -1, nullptr, nullptr, g->authn_level, g->impersonation_level, nullptr, g->capabilities,
                         nullptr);
     if (hr < 0)

@@ -12,6 +12,9 @@
 #include <mime/win32/winsvc.h>
 #include <mime/win32/winactctx.h>
 
+WINBASEAPI BOOL WINAPI MakeAbsoluteSD(PSECURITY_DESCRIPTOR relative, PSECURITY_DESCRIPTOR absolute, LPDWORD absolute_size,
+                                      void *dacl, LPDWORD dacl_size, void *sacl, LPDWORD sacl_size, PSID owner,
+                                      LPDWORD owner_size, PSID group, LPDWORD group_size);
 WINBASEAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCWSTR text, DWORD revision,
                                                                             PSECURITY_DESCRIPTOR *sd, PULONG size);
 

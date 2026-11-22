@@ -59,6 +59,16 @@
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalServiceNoNetwork]
 "CoInitializeSecurityParam"=dword:00000001
 
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalServiceNetworkRestricted]
+"CoInitializeSecurityAllowLowBox"=dword:00000001
+"CoInitializeSecurityParam"=dword:00000001
+"COM_UnmarshalingPolicy"=dword:00000001
+"DefaultRpcStackSize"=dword:00000040
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalSystemNetworkRestricted]
+"CoInitializeSecurityParam"=dword:00000001
+"COM_UnmarshalingPolicy"=dword:00000001
+
 ; the program folders. 32-bit programs read their own, installers read both.
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion]
 "CommonFilesDir"="C:\\Program Files\\Common Files"

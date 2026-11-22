@@ -761,8 +761,14 @@ ADVAPI BOOL WINAPI QueryServiceConfigW(SC_HANDLE service, LPQUERY_SERVICE_CONFIG
     const WCHAR *deps = ScmGetChars(r, &deps_n);
     const WCHAR *account = ScmGetChars(r, &account_n);
     const WCHAR *display = ScmGetChars(r, &display_n);
-    /* terminated strings follow the structure; the dependency list ends with an empty name. */
-    DWORD total = sizeof(QUERY_SERVICE_CONFIGW) + (path_n + 1) * 2 + (group_n + 1) * 2 + (deps ? deps_n * 2 + 2 : 2) +
+    /*
+     * terminated strings follow the structure; the dependency list ends with an empty name. the size asked for is the
+     * manager's on windows, which counts 100 bytes before the strings and two ends for the list.
+     */
+    DWORD deps_chars = deps ? deps_n : 0;
+    while (deps_chars && !deps[deps_chars - 1])
+        deps_chars--;
+    DWORD total = 100 + (path_n + 1) * 2 + (group_n + 1) * 2 + (deps_chars + 2) * 2 +
                   (account ? (account_n + 1) * 2 : 0) + (display_n + 1) * 2;
     BOOL ok = TRUE;
     if (r->Failed) {
@@ -802,8 +808,8 @@ ADVAPI BOOL WINAPI QueryServiceConfigA(SC_HANDLE service, LPQUERY_SERVICE_CONFIG
 {
     if (!needed)
         return fail(ERROR_INVALID_ADDRESS);
-    /* convert the wide answer string by string into the buffer after the structure. */
-    DWORD wide_size = 0;
+    /* convert the wide answer string by string into the buffer after the structure. a success leaves the last error. */
+    DWORD wide_size = 0, last_error = GetLastError();
     QUERY_SERVICE_CONFIGW *wide = nullptr;
     if (!QueryServiceConfigW(service, nullptr, 0, &wide_size)) {
         if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
@@ -830,8 +836,9 @@ ADVAPI BOOL WINAPI QueryServiceConfigA(SC_HANDLE service, LPQUERY_SERVICE_CONFIG
             deps_chars += (DWORD)wcslen(wide->lpDependencies + deps_chars) + 1;
     DWORD deps_bytes = deps_chars ? (DWORD)WideCharToMultiByte(CP_ACP, 0, wide->lpDependencies, (int)deps_chars + 1, nullptr, 0, nullptr, nullptr) : 1;
     total += deps_bytes;
-    *needed = total;
-    if (!config || size < total) {
+    /* the size asked for is the one of the wide answer, as on windows. */
+    *needed = wide_size;
+    if (!config || size < wide_size || size < total) {
         AdvFree(wide);
         return fail(ERROR_INSUFFICIENT_BUFFER);
     }
@@ -857,6 +864,7 @@ ADVAPI BOOL WINAPI QueryServiceConfigA(SC_HANDLE service, LPQUERY_SERVICE_CONFIG
     else
         *at = 0;
     AdvFree(wide);
+    SetLastError(last_error);
     return TRUE;
 }
 

@@ -146,6 +146,7 @@ struct SERVICE {
     WCHAR *DepServices; /* DependOnService, a multi sz. */
     WCHAR *DepGroups;   /* DependOnGroup. */
     DWORD Type, Start, ErrorControl, Tag;
+    BOOL Split;             /* a share process service that got a process of its own, see RunStatusType. */
     BOOL MarkedForDelete;   /* freed once nothing holds it and it has stopped. */
     BOOL DelayedStart;      /* DelayedAutostart: started after the other automatic services. */
     BOOL FailureOnNonCrash; /* failure actions also run when it stops with an error. */
@@ -276,6 +277,13 @@ extern SERVICE *g_services;
 extern BOOL g_shutdown;
 extern BOOL g_database_ready;
 extern DWORD g_control_timeout, g_handler_timeout, g_autostart_timeout;
+/* services of svchost get a process each, SvcHostSplitThresholdInKB of the control key against the memory. */
+extern BOOL g_split_svchost;
+/* the type the status and the enumerations give: the registered one, with the own process bit once split. */
+static inline DWORD RunStatusType(const SERVICE *s)
+{
+    return s->Type | (s->Split ? SERVICE_WIN32_OWN_PROCESS : 0);
+}
 extern BOOL g_autostart_running;
 extern BOOL g_phase1_running;
 extern DWORD g_start_timeout;
@@ -293,6 +301,7 @@ void *SvcAlloc(SIZE_T size);
 void *SvcAllocZero(SIZE_T size);
 void SvcFree(void *p);
 HANDLE SvcCreateWorldEvent(const WCHAR *name);
+void SvcCreateSessionReadyEvent(void);
 WCHAR *SvcDup(const WCHAR *s);
 WCHAR *SvcDupN(const WCHAR *s, SIZE_T chars);
 DWORD SvcMultiSzChars(const WCHAR *m);
@@ -318,6 +327,7 @@ DWORD DbCheckParameters(BOOL creating, const WCHAR *name, DWORD type, DWORD star
 void DbRemove(SERVICE *s);
 HKEY DbOpenKey(const WCHAR *name, REGSAM access, BOOL create);
 WCHAR *DbReadString(HKEY key, const WCHAR *value, DWORD *chars);
+WCHAR *DbReadDisplayName(HKEY key);
 BOOL DbReadDword(HKEY key, const WCHAR *value, DWORD *out);
 DWORD DbWriteString(HKEY key, const WCHAR *value, const WCHAR *text, DWORD type);
 DWORD DbWriteDword(HKEY key, const WCHAR *value, DWORD data);
@@ -468,7 +478,11 @@ long CredStoreEnumerate(const WCHAR *filter, DWORD flags, CRED_RECORD **items, D
 void CredFreeRecord(CRED_RECORD *c);
 /* the task scheduler of schedule.c, and the wait for its endpoint to be known to the mapper. */
 void ScheduleStart(void);
+void TriggerStart(void);
+/* trigger.c: the triggers of the key of a service, as RQueryServiceConfigEx gives them. */
+DWORD TriggerWriteInfo(HKEY service, SCM_WRITER *w);
 void ScheduleWaitRegistered(DWORD milliseconds);
+void AppInfoWaitRegistered(DWORD milliseconds);
 /* a pipe value that stands for the caller of the current rpc call, for the access checks. */
 #define SCM_RPC_CALLER ((HANDLE)(LONG_PTR)-10)
 void MainCollect(void);

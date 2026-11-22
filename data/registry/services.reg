@@ -8,6 +8,7 @@
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k DcomLaunch -p"
 "ObjectName"="LocalSystem"
 "Start"=dword:00000002
+"SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\DcomLaunch\Parameters]
@@ -20,6 +21,7 @@
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
 "Start"=dword:00000002
+"SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\RpcEptMapper\Parameters]
@@ -33,6 +35,7 @@
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
 "Start"=dword:00000002
+"SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\RpcSs\Parameters]

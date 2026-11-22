@@ -101,3 +101,22 @@ HANDLE SvcCreateWorldEvent(const WCHAR *name)
     SetLastError(error);
     return event;
 }
+
+/*
+ * the event the local session manager of windows makes and sets once the sessions can be asked about, which
+ * winscard.dll opens before it does anything. the descriptor is the one of windows 11 26100, read with tsr.c of
+ * scratch/g2/bth: everyone and the app containers wait on it, the system sets it. mime has no session
+ * manager process, its sessions are there from the start, so the service manager makes the event set.
+ */
+void SvcCreateSessionReadyEvent(void)
+{
+    static const WCHAR sddl[] =
+        L"O:BAG:SYD:(A;;0x100000;;;WD)(A;;0x100000;;;AC)"
+        L"(A;;0x100000;;;S-1-15-3-1024-1864111754-776273317-3666925027-2523908081-3792458206-3582472437-4114419977-1582884857)"
+        L"(A;;DC;;;SY)";
+    SECURITY_ATTRIBUTES attributes = {sizeof(attributes), nullptr, FALSE};
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, &attributes.lpSecurityDescriptor, nullptr))
+        return;
+    CreateEventW(&attributes, TRUE, TRUE, L"Global\\TermSrvReadyEvent");
+    LocalFree(attributes.lpSecurityDescriptor);
+}

@@ -9,6 +9,7 @@ ULONGLONG g_stamp;
 DWORD g_control_timeout = 30000;
 DWORD g_handler_timeout = 30000;
 DWORD g_autostart_timeout = 45000;
+BOOL g_split_svchost;
 BOOL g_shutdown;
 BOOL g_autostart_running;
 
@@ -462,7 +463,7 @@ static void service_gone(SERVICE *s, IMAGE *img, DWORD exit_code, BOOL crash)
     s->Status.dwWaitHint = 0;
     s->Status.dwWin32ExitCode = exit_code;
     s->Status.dwServiceSpecificExitCode = 0;
-    s->Status.dwServiceType = s->Type;
+    s->Status.dwServiceType = RunStatusType(s);
     s->StatusId = 0;
     s->StopRequested = FALSE;
     s->ShutdownStopping = FALSE;
@@ -556,7 +557,7 @@ DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *report)
         return ERROR_INVALID_DATA;
 
     SERVICE_STATUS stored = *report;
-    stored.dwServiceType = s->Type;
+    stored.dwServiceType = RunStatusType(s);
     BOOL ending = stored.dwCurrentState == SERVICE_STOPPED || stored.dwCurrentState == SERVICE_STOP_PENDING;
     if (!ending)
         stored.dwWin32ExitCode = stored.dwServiceSpecificExitCode = 0;
@@ -870,7 +871,7 @@ static void start_failed(SERVICE *s, DWORD error)
     s->Status.dwWaitHint = 0;
     if (s->Status.dwWin32ExitCode == ERROR_SERVICE_NEVER_STARTED || !s->Status.dwWin32ExitCode)
         s->Status.dwWin32ExitCode = error;
-    s->Status.dwServiceType = s->Type;
+    s->Status.dwServiceType = RunStatusType(s);
     s->StartError = error;
     state_changed(s, old);
 }
@@ -997,6 +998,54 @@ static DWORD driver_request(SERVICE *s, BOOL unload)
     }
 }
 
+static BOOL contains_no_case(const WCHAR *text, const WCHAR *part)
+{
+    SIZE_T n = wcslen(part);
+    for (; *text; text++)
+        if (!_wcsnicmp(text, part, n))
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * CWin32ServiceRecord::CheckForSvchostSplitAllowed of services.exe, asked at each start of a share process service
+ * that is not split yet. With splitting on, a service of svchost gets a process of its own and the own process bit in
+ * its record, which stays for the life of the manager: the status says 0x30 from then on, also once stopped, while
+ * the configuration keeps the registered 0x20. Not split: a service whose next recovery action restarts the machine,
+ * a name that starts with Rpc, and a key with SvcHostSplitDisable.
+ */
+static BOOL split_allowed(SERVICE *s, const WCHAR *command)
+{
+    if (!g_split_svchost)
+        return FALSE;
+    SERVICE_FAILURE_ACTIONSW actions;
+    SC_ACTION buffer[SVC_MAX_FAILURE_ACTIONS];
+    WCHAR *reboot, *run;
+    if (!DbReadFailureActions(s, &actions, buffer, &reboot, &run)) {
+        BOOL restarts = FALSE;
+        if (actions.cActions) {
+            DWORD index = s->FailureCount < actions.cActions ? s->FailureCount : actions.cActions - 1;
+            restarts = actions.lpsaActions[index].Type == SC_ACTION_REBOOT;
+        }
+        SvcFree(reboot);
+        SvcFree(run);
+        if (restarts)
+            return FALSE;
+    }
+    if (!contains_no_case(command, L"svchost.exe -k") && !contains_no_case(command, L"svchost -k"))
+        return FALSE;
+    if (!_wcsnicmp(s->Name, L"Rpc", 3))
+        return FALSE;
+    DWORD disabled = 0;
+    HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
+    if (key) {
+        if (!DbReadDword(key, L"SvcHostSplitDisable", &disabled))
+            disabled = 0;
+        RegCloseKey(key);
+    }
+    return !disabled;
+}
+
 static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD reason)
 {
     DWORD error = 0;
@@ -1015,8 +1064,25 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
             return ERROR_NOT_SUPPORTED;
         return driver_request(s, FALSE);
     }
+    if ((s->Type & SERVICE_WIN32_SHARE_PROCESS) && !(s->Type & SERVICE_WIN32_OWN_PROCESS) && !s->Split &&
+        split_allowed(s, command))
+        s->Split = TRUE;
+    /* the process of a split service is told which service of the group it hosts. */
+    if (s->Split) {
+        SIZE_T chars = wcslen(command) + 4 + wcslen(s->Name) + 1;
+        WCHAR *single = SvcAllocZero(chars * sizeof(WCHAR));
+        if (!single) {
+            SvcFree(command);
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        wcscpy(single, command);
+        wcscat(single, L" -s ");
+        wcscat(single, s->Name);
+        SvcFree(command);
+        command = single;
+    }
     WCHAR *key = image_key(command);
-    BOOL own = (s->Type & SERVICE_WIN32_OWN_PROCESS) != 0;
+    BOOL own = (RunStatusType(s) & SERVICE_WIN32_OWN_PROCESS) != 0;
     IMAGE *img = own ? nullptr : find_image(key);
     SvcFree(key);
     /* services of one process share one account, a service wanting another does not join it. */
@@ -1035,7 +1101,7 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
     s->Status.dwControlsAccepted = 0;
     s->Status.dwCheckPoint = 0;
     s->Status.dwWaitHint = 0;
-    s->Status.dwServiceType = s->Type;
+    s->Status.dwServiceType = RunStatusType(s);
     s->Status.dwWin32ExitCode = 0;
     s->Status.dwServiceSpecificExitCode = 0;
     s->StartError = 0;
