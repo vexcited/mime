@@ -719,6 +719,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_combase guest/lib)
     set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound ${arch}-lib-cabinet)
     set(objects_secur32 ${arch}-lib-crypto)
+    set(objects_ncrypt ${arch}-lib-crypto:guest/lib/crypto/aes.c ${arch}-lib-crypto:guest/lib/crypto/des.c ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/hmac.c ${arch}-lib-crypto:guest/lib/crypto/kdf.c ${arch}-lib-crypto:guest/lib/crypto/modes.c)
+    set(includes_ncrypt guest/lib)
     set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c
         ${arch}-lib-crypto:guest/lib/crypto/bignum.c ${arch}-lib-crypto:guest/lib/crypto/rsa.c
         ${arch}-lib-crypto:guest/lib/crypto/aes.c ${arch}-lib-crypto:guest/lib/crypto/des.c
@@ -1297,6 +1299,8 @@ set(includes_windowscodecs guest/lib)
 set(objects_combase x86-lib-crypto:guest/lib/crypto/hash.c)
 set(includes_combase guest/lib)
 set(objects_crypt32 x86-lib-crypto x86-lib-compound x86-lib-cabinet)
+set(objects_ncrypt x86-lib-crypto:guest/lib/crypto/aes.c x86-lib-crypto:guest/lib/crypto/des.c x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/hmac.c x86-lib-crypto:guest/lib/crypto/kdf.c x86-lib-crypto:guest/lib/crypto/modes.c)
+set(includes_ncrypt guest/lib)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
         x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c

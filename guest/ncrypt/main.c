@@ -7,6 +7,7 @@
  */
 #define NCRYPTAPI
 #include <mime/win32/ncrypt.h>
+#include <crypto/crypto.h>
 
 #define PROVIDER_MAGIC 0x44440001
 #define KEY_MAGIC 0x44440002
@@ -16,6 +17,7 @@
 #define FILE_MAGIC 0x50534B4D
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
+
 
 /* ------------------------------------------------------------------ bcrypt */
 
@@ -98,6 +100,8 @@ typedef struct {
     /* the key spec of a key that lives, or is to live, in a container of the legacy store: 0, AT_KEYEXCHANGE or AT_SIGNATURE. */
     DWORD legacy_spec;
     BOOL from_legacy;
+    /* the pair came with NCryptImportKey, which a later NCryptFinalizeKey keeps. */
+    BOOL imported;
 } KEY;
 
 typedef struct {
@@ -196,12 +200,32 @@ static SECURITY_STATUS open_algorithm(LPCWSTR name, BCRYPT_HANDLE *alg)
 
 /* ------------------------------------------------------------------ providers */
 
+/*
+ * the rsa providers of capi whose containers the software key storage provider also opens, as crypt32 asks it to when
+ * it prefers a cng handle for a certificate whose key is in one of them.
+ */
+static BOOL legacy_provider_name(LPCWSTR name)
+{
+    static const LPCWSTR names[] = {
+        L"Microsoft Base Cryptographic Provider v1.0",
+        L"Microsoft Enhanced Cryptographic Provider v1.0",
+        L"Microsoft Strong Cryptographic Provider",
+        L"Microsoft Enhanced RSA and AES Cryptographic Provider",
+        L"Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)",
+        L"Microsoft RSA SChannel Cryptographic Provider",
+    };
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(names); i++)
+        if (!_wcsicmp(name, names[i]))
+            return TRUE;
+    return FALSE;
+}
+
 SECURITY_STATUS WINAPI NCryptOpenStorageProvider(NCRYPT_PROV_HANDLE *handle, LPCWSTR name, DWORD flags)
 {
     if (!handle)
         return NTE_INVALID_PARAMETER;
     *handle = 0;
-    if (name && *name && _wcsicmp(name, MS_KEY_STORAGE_PROVIDER)) {
+    if (name && *name && _wcsicmp(name, MS_KEY_STORAGE_PROVIDER) && !legacy_provider_name(name)) {
         if (!_wcsicmp(name, MS_PLATFORM_CRYPTO_PROVIDER))
             return (flags & ~0x1040u) ? NTE_BAD_FLAGS : TBS_E_TPM_NOT_FOUND;
         return STATUS_NOT_FOUND_;
@@ -284,11 +308,46 @@ BOOL WINAPI NCryptIsKeyHandle(NCRYPT_KEY_HANDLE handle)
 /* ------------------------------------------------------------------ persistence */
 
 /* a key's file is its name in hex under the user's or the machine's Microsoft\Crypto\Keys. */
+NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PSID sid, BOOLEAN allocate);
+
+/*
+ * the roaming application data of the user the thread acts for: an impersonated user's is in its profile, which a
+ * service reaches its callers' keys through, as windows finds the folder from the token. the process's otherwise.
+ */
+static DWORD user_appdata(WCHAR *base, DWORD size)
+{
+    HANDLE token;
+    /* as the service where it may, else as the user it acts for, whose token a service account cannot always open. */
+    if (NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), 0x0008 /* TOKEN_QUERY */, TRUE, &token)) ||
+        NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), 0x0008 /* TOKEN_QUERY */, FALSE, &token))) {
+        BYTE buffer[sizeof(PSID) * 2 + 68];
+        ULONG got = 0;
+        WCHAR text[96], key[200];
+        UNICODE_STRING sid = {0, sizeof(text), text};
+        BOOL found = FALSE;
+        if (NT_SUCCESS(NtQueryInformationToken(token, 1 /* TokenUser */, buffer, sizeof(buffer), &got)) &&
+            NT_SUCCESS(RtlConvertSidToUnicodeString(&sid, *(PSID *)buffer, FALSE))) {
+            text[sid.Length / sizeof(WCHAR)] = 0;
+            _snwprintf(key, RTL_NUMBER_OF(key), L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%ls", text);
+            key[RTL_NUMBER_OF(key) - 1] = 0;
+            DWORD bytes = size * sizeof(WCHAR);
+            found = !RegGetValueW(HKEY_LOCAL_MACHINE, key, L"ProfileImagePath", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                                  nullptr, base, &bytes);
+        }
+        NtClose(token);
+        if (found && wcslen(base) + 17 < size) {
+            wcscat(base, L"\\AppData\\Roaming");
+            return (DWORD)wcslen(base);
+        }
+    }
+    return GetEnvironmentVariableW(L"APPDATA", base, size);
+}
+
 static BOOL key_path(LPCWSTR name, DWORD flags, WCHAR *path)
 {
     WCHAR base[MAX_PATH];
-    LPCWSTR root = (flags & NCRYPT_MACHINE_KEY_FLAG) ? L"ProgramData" : L"APPDATA";
-    DWORD got = GetEnvironmentVariableW(root, base, MAX_PATH);
+    DWORD got = (flags & NCRYPT_MACHINE_KEY_FLAG) ? GetEnvironmentVariableW(L"ProgramData", base, MAX_PATH)
+                                                  : user_appdata(base, MAX_PATH);
     if (!got || got >= MAX_PATH)
         return FALSE;
     SIZE_T length = wcslen(base);
@@ -427,6 +486,7 @@ static SECURITY_STATUS load_key(KEY *key)
  */
 #define NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG 0x00000200
 #define NCRYPT_NO_KEY_VALIDATION 0x00000008
+#define NCRYPT_DO_NOT_FINALIZE_FLAG_ 0x00000400
 #define NTE_BAD_DATA_ ((SECURITY_STATUS)0x80090005L)
 #define LEGACY_AT_KEYEXCHANGE 1
 #define LEGACY_AT_SIGNATURE 2
@@ -602,6 +662,64 @@ static SECURITY_STATUS legacy_write(KEY *key)
 }
 
 /* the key of a container of the legacy store, as a key of this provider. */
+/*
+ * the private blob a container of the legacy store keeps for a key spec, read from its file as the key storage provider
+ * of windows reads the files of capi: a key that cannot be exported is still the container's. the layout and the name
+ * of the file are those of the containers of advapi32.
+ */
+#define CONTAINER_MAGIC_ 0x4B53494D
+typedef struct {
+    DWORD magic;
+    WCHAR name[MAX_PATH];
+    DWORD exportable[2];
+    DWORD size[2];
+} CONTAINER_HEADER;
+
+static BYTE *container_blob(const KEY *key, DWORD spec, DWORD *size)
+{
+    WCHAR base[MAX_PATH], path[MAX_PATH];
+    BOOL machine = (key->flags & NCRYPT_MACHINE_KEY_FLAG) != 0;
+    DWORD n = machine ? GetEnvironmentVariableW(L"ProgramData", base, MAX_PATH) : user_appdata(base, MAX_PATH);
+    if (!n || n >= MAX_PATH - 80)
+        return nullptr;
+    ULONG64 a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+    for (LPCWSTR c = key->name; *c; c++) {
+        WCHAR w = towupper(*c);
+        a = (a ^ (w & 0xff)) * 0x100000001b3ull;
+        a = (a ^ (w >> 8)) * 0x100000001b3ull;
+        b = (b ^ (w >> 8)) * 0x100000001b3ull;
+        b = (b ^ (w & 0xff)) * 0x100000001b3ull;
+    }
+    _snwprintf(path, MAX_PATH, L"%ls\\Microsoft\\Crypto\\RSA\\%ls\\%016llx%016llx", base, machine ? L"MachineKeys" : L"Keys",
+               a, b);
+    path[MAX_PATH - 1] = 0;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return nullptr;
+    CONTAINER_HEADER h;
+    DWORD read;
+    BYTE *blob = nullptr;
+    int slot = spec == LEGACY_AT_KEYEXCHANGE ? 0 : 1;
+    if (ReadFile(file, &h, sizeof(h), &read, nullptr) && read == sizeof(h) && h.magic == CONTAINER_MAGIC_ &&
+        h.size[0] < 0x100000 && h.size[1] < 0x100000 && h.size[slot]) {
+        /* the blobs end the file; the header before them holds the pointers of advapi32, of the size of its process. */
+        LARGE_INTEGER file_size = {};
+        GetFileSizeEx(file, &file_size);
+        LARGE_INTEGER at = {.QuadPart = file_size.QuadPart - h.size[0] - h.size[1] + (slot ? h.size[0] : 0)};
+        blob = HeapAlloc(GetProcessHeap(), 0, h.size[slot]);
+        if (blob && (!SetFilePointerEx(file, at, nullptr, FILE_BEGIN) ||
+                     !ReadFile(file, blob, h.size[slot], &read, nullptr) || read != h.size[slot])) {
+            HeapFree(GetProcessHeap(), 0, blob);
+            blob = nullptr;
+        }
+        if (blob)
+            *size = h.size[slot];
+    }
+    CloseHandle(file);
+    return blob;
+}
+
 static SECURITY_STATUS legacy_read(KEY *key, DWORD spec)
 {
     if (!legacy_available())
@@ -614,16 +732,23 @@ static SECURITY_STATUS legacy_read(KEY *key, DWORD spec)
     DWORD size = 0;
     if (g_legacy.get_user_key(provider, spec, &user)) {
         result = NTE_NOT_SUPPORTED;
-        if (g_legacy.export_key(user, 0, LEGACY_PRIVATEKEYBLOB, 0, nullptr, &size) && size &&
-            (legacy = HeapAlloc(GetProcessHeap(), 0, size)) &&
-            g_legacy.export_key(user, 0, LEGACY_PRIVATEKEYBLOB, 0, legacy, &size)) {
+        BOOL exported = g_legacy.export_key(user, 0, LEGACY_PRIVATEKEYBLOB, 0, nullptr, &size) && size &&
+                        (legacy = HeapAlloc(GetProcessHeap(), 0, size)) &&
+                        g_legacy.export_key(user, 0, LEGACY_PRIVATEKEYBLOB, 0, legacy, &size);
+        if (!exported) {
+            if (legacy)
+                HeapFree(GetProcessHeap(), 0, legacy);
+            size = 0;
+            legacy = container_blob(key, spec, &size);
+        }
+        if (legacy) {
             ULONG cng_size = 0;
             cng = cng_from_legacy(legacy, size, &cng_size);
             result = NTE_BAD_DATA_;
             if (cng) {
                 memcpy(key->algorithm, L"RSA", sizeof(L"RSA"));
                 key->length = ((const ULONG *)cng)[1];
-                key->export_policy = NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
+                key->export_policy = exported ? NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG : 0;
                 key->key_usage = 3;
                 result = open_algorithm(key->algorithm, &key->alg);
                 if (!result)
@@ -717,14 +842,18 @@ SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE handle, DWORD flags)
         return NTE_INVALID_PARAMETER;
     if (!g_bcrypt.generate || !g_bcrypt.finalize)
         return NTE_NOT_SUPPORTED;
-    SECURITY_STATUS status = normalize(g_bcrypt.generate(key->alg, &key->key, key->length, 0));
-    if (!status)
-        status = normalize(g_bcrypt.finalize(key->key, 0));
+    SECURITY_STATUS status = ERROR_SUCCESS;
+    /* an imported key waited for its properties: it keeps the pair it came with. */
+    if (!key->imported) {
+        status = normalize(g_bcrypt.generate(key->alg, &key->key, key->length, 0));
+        if (!status)
+            status = normalize(g_bcrypt.finalize(key->key, 0));
+    }
     if (!status && key->name)
         status = save_key(key);
     if (!status && (flags & NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG))
         status = legacy_write(key);
-    if (status && key->key) {
+    if (status && key->key && !key->imported) {
         g_bcrypt.destroy(key->key);
         key->key = nullptr;
     }
@@ -1020,6 +1149,365 @@ SECURITY_STATUS WINAPI NCryptExportKey(NCRYPT_KEY_HANDLE handle, NCRYPT_KEY_HAND
     return status;
 }
 
+/* ------------------------------------------------------------------ pkcs #8 */
+
+/* a der element: its tag, its contents and the position after it, or false at the end or on bad data. */
+typedef struct {
+    const BYTE *p;
+    SIZE_T left;
+} DER;
+
+static BOOL der_next(DER *d, BYTE *tag, DER *contents)
+{
+    if (d->left < 2)
+        return FALSE;
+    *tag = d->p[0];
+    SIZE_T length = d->p[1], at = 2;
+    if (length & 0x80) {
+        SIZE_T bytes = length & 0x7f;
+        if (!bytes || bytes > 4 || d->left < 2 + bytes)
+            return FALSE;
+        length = 0;
+        for (SIZE_T i = 0; i < bytes; i++)
+            length = length << 8 | d->p[2 + i];
+        at += bytes;
+    }
+    if (d->left - at < length)
+        return FALSE;
+    contents->p = d->p + at;
+    contents->left = length;
+    d->p += at + length;
+    d->left -= at + length;
+    return TRUE;
+}
+
+static BOOL der_expect(DER *d, BYTE want, DER *contents)
+{
+    BYTE tag;
+    return der_next(d, &tag, contents) && tag == want;
+}
+
+/* an unsigned integer without its leading zero. */
+static DER der_unsigned(DER v)
+{
+    while (v.left > 1 && !v.p[0]) {
+        v.p++;
+        v.left--;
+    }
+    return v;
+}
+
+static BOOL put_padded(BYTE **at, BYTE *end, DER v, SIZE_T size)
+{
+    v = der_unsigned(v);
+    if (v.left > size || *at + size > end)
+        return FALSE;
+    memset(*at, 0, size - v.left);
+    memcpy(*at + size - v.left, v.p, v.left);
+    *at += size;
+    return TRUE;
+}
+
+/* an RSAPrivateKey as a BCRYPT_RSAFULLPRIVATE_BLOB. */
+static BYTE *rsa_blob(DER key, ULONG *size)
+{
+    DER seq, f[9];
+    if (!der_expect(&key, 0x30, &seq))
+        return nullptr;
+    for (int i = 0; i < 9; i++)
+        if (!der_expect(&seq, 0x02, &f[i]))
+            return nullptr;
+    DER n = der_unsigned(f[1]), e = der_unsigned(f[2]), p = der_unsigned(f[4]), q = der_unsigned(f[5]);
+    ULONG cn = (ULONG)n.left, ce = (ULONG)e.left, cp = (ULONG)p.left, cq = (ULONG)q.left;
+    *size = 24 + ce + cn + cp + cq + cp + cq + cp + cn;
+    BYTE *blob = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, *size);
+    if (!blob)
+        return nullptr;
+    ULONG header[6] = {0x33415352, cn * 8, ce, cn, cp, cq};
+    memcpy(blob, header, sizeof(header));
+    BYTE *at = blob + 24, *end = blob + *size;
+    BOOL ok = put_padded(&at, end, f[2], ce) && put_padded(&at, end, f[1], cn) && put_padded(&at, end, f[4], cp) &&
+              put_padded(&at, end, f[5], cq) && put_padded(&at, end, f[6], cp) && put_padded(&at, end, f[7], cq) &&
+              put_padded(&at, end, f[8], cp) && put_padded(&at, end, f[3], cn);
+    if (!ok) {
+        SecureZeroMemory(blob, *size);
+        HeapFree(GetProcessHeap(), 0, blob);
+        return nullptr;
+    }
+    return blob;
+}
+
+/* an ECPrivateKey with its public point as a BCRYPT_ECCPRIVATE_BLOB of the ecdh magic of its curve. */
+static BYTE *ec_blob(DER key, DER curve, LPCWSTR *algorithm, ULONG *size)
+{
+    static const BYTE p256[] = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+    static const BYTE p384[] = {0x2B, 0x81, 0x04, 0x00, 0x22};
+    static const BYTE p521[] = {0x2B, 0x81, 0x04, 0x00, 0x23};
+    ULONG bytes = 0, magic = 0;
+    if (curve.left == sizeof(p256) && !memcmp(curve.p, p256, sizeof(p256))) {
+        bytes = 32, magic = 0x324B4345, *algorithm = L"ECDH_P256";
+    } else if (curve.left == sizeof(p384) && !memcmp(curve.p, p384, sizeof(p384))) {
+        bytes = 48, magic = 0x344B4345, *algorithm = L"ECDH_P384";
+    } else if (curve.left == sizeof(p521) && !memcmp(curve.p, p521, sizeof(p521))) {
+        bytes = 66, magic = 0x364B4345, *algorithm = L"ECDH_P521";
+    } else
+        return nullptr;
+    DER seq, version, d, point = {};
+    if (!der_expect(&key, 0x30, &seq) || !der_expect(&seq, 0x02, &version) || !der_expect(&seq, 0x04, &d))
+        return nullptr;
+    while (seq.left) {
+        BYTE tag;
+        DER item;
+        if (!der_next(&seq, &tag, &item))
+            return nullptr;
+        if (tag == 0xA1 && !der_expect(&item, 0x03, &point))
+            return nullptr;
+    }
+    /* the public point is needed, as a bit string of no unused bits holding an uncompressed point. */
+    if (point.left != 2 + 2 * bytes || point.p[0] || point.p[1] != 4 || d.left > bytes)
+        return nullptr;
+    *size = 8 + 3 * bytes;
+    BYTE *blob = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, *size);
+    if (!blob)
+        return nullptr;
+    ULONG header[2] = {magic, bytes};
+    memcpy(blob, header, sizeof(header));
+    memcpy(blob + 8, point.p + 2, 2 * bytes);
+    memcpy(blob + 8 + 2 * bytes + bytes - d.left, d.p, d.left);
+    return blob;
+}
+
+/* a PrivateKeyInfo of rsa or of an elliptic curve, as the bcrypt blob of the algorithm it names. */
+static BYTE *pkcs8_blob(const BYTE *input, DWORD input_size, LPCWSTR *algorithm, LPCWSTR *type, ULONG *size)
+{
+    static const BYTE rsa_oid[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01};
+    static const BYTE ec_oid[] = {0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01};
+    DER all = {input, input_size}, info, version, alg, oid, key, params = {};
+    if (!der_expect(&all, 0x30, &info) || !der_expect(&info, 0x02, &version) || !der_expect(&info, 0x30, &alg) ||
+        !der_expect(&alg, 0x06, &oid) || !der_expect(&info, 0x04, &key))
+        return nullptr;
+    BYTE tag;
+    if (alg.left && der_next(&alg, &tag, &params) && tag != 0x06)
+        params.left = 0;
+    if (oid.left == sizeof(rsa_oid) && !memcmp(oid.p, rsa_oid, sizeof(rsa_oid))) {
+        *algorithm = L"RSA";
+        *type = L"RSAFULLPRIVATEBLOB";
+        return rsa_blob(key, size);
+    }
+    if (oid.left == sizeof(ec_oid) && !memcmp(oid.p, ec_oid, sizeof(ec_oid))) {
+        *type = L"ECCPRIVATEBLOB";
+        return ec_blob(key, params, algorithm, size);
+    }
+    return nullptr;
+}
+
+typedef struct {
+    ULONG cbBuffer;
+    ULONG BufferType;
+    PVOID pvBuffer;
+} NCRYPT_BUFFER_;
+
+typedef struct {
+    ULONG ulVersion;
+    ULONG cBuffers;
+    NCRYPT_BUFFER_ *pBuffers;
+} NCRYPT_BUFFER_DESC_;
+
+/* the name an import asks for, NCRYPTBUFFER_PKCS_KEY_NAME in its parameter list. */
+static LPCWSTR import_name(const void *params)
+{
+    const NCRYPT_BUFFER_DESC_ *desc = params;
+    if (!desc || !desc->pBuffers)
+        return nullptr;
+    for (ULONG i = 0; i < desc->cBuffers; i++)
+        if (desc->pBuffers[i].BufferType == 45 && desc->pBuffers[i].pvBuffer && desc->pBuffers[i].cbBuffer >= 2)
+            return desc->pBuffers[i].pvBuffer;
+    return nullptr;
+}
+
+/*
+ * an EncryptedPrivateKeyInfo, decrypted with the password crypt32 hands in NCRYPTBUFFER_PKCS_SECRET: pbes2 with pbkdf2
+ * and aes or triple des, or the pkcs #12 scheme of sha1 and triple des. the plain PrivateKeyInfo, or nothing.
+ */
+static BOOL oid_is(DER oid, const BYTE *want, SIZE_T size)
+{
+    return oid.left == size && !memcmp(oid.p, want, size);
+}
+
+static const MimeHashAlg *hmac_of(DER oid)
+{
+    static const BYTE sha1[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x07};
+    static const BYTE sha256[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x09};
+    static const BYTE sha384[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x0A};
+    static const BYTE sha512[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x0B};
+    if (oid_is(oid, sha1, sizeof(sha1)))
+        return &mime_sha1;
+    if (oid_is(oid, sha256, sizeof(sha256)))
+        return &mime_sha256;
+    if (oid_is(oid, sha384, sizeof(sha384)))
+        return &mime_sha384;
+    if (oid_is(oid, sha512, sizeof(sha512)))
+        return &mime_sha512;
+    return nullptr;
+}
+
+static ULONG64 der_number(DER v)
+{
+    ULONG64 n = 0;
+    v = der_unsigned(v);
+    for (SIZE_T i = 0; i < v.left && i < 8; i++)
+        n = n << 8 | v.p[i];
+    return n;
+}
+
+/* rfc 7292 b.2: the key or iv of an id, from the password as a big endian bmp string with its end. */
+static void pkcs12_kdf(const WCHAR *password, DER salt, ULONG64 iterations, BYTE id, BYTE *out, SIZE_T size)
+{
+    enum { V = 64, U = 20 };
+    SIZE_T plen = (wcslen(password) + 1) * 2;
+    BYTE pass[512];
+    if (plen > sizeof(pass))
+        plen = sizeof(pass);
+    for (SIZE_T i = 0; i < plen / 2; i++) {
+        pass[2 * i] = (BYTE)(password[i] >> 8);
+        pass[2 * i + 1] = (BYTE)password[i];
+    }
+    SIZE_T s_len = salt.left ? V * ((salt.left + V - 1) / V) : 0, p_len = V * ((plen + V - 1) / V);
+    BYTE I[V * 10];
+    if (s_len + p_len > sizeof(I))
+        return;
+    for (SIZE_T i = 0; i < s_len; i++)
+        I[i] = salt.p[i % salt.left];
+    for (SIZE_T i = 0; i < p_len; i++)
+        I[s_len + i] = pass[i % plen];
+    BYTE D[V], A[U], B[V];
+    memset(D, id, V);
+    for (SIZE_T done = 0; done < size;) {
+        BYTE buffer[V + sizeof(I)];
+        memcpy(buffer, D, V);
+        memcpy(buffer + V, I, s_len + p_len);
+        mime_hash(&mime_sha1, buffer, V + s_len + p_len, A);
+        for (ULONG64 c = 1; c < iterations; c++)
+            mime_hash(&mime_sha1, A, U, A);
+        SIZE_T n = size - done < U ? size - done : U;
+        memcpy(out + done, A, n);
+        done += n;
+        if (done >= size)
+            break;
+        for (SIZE_T i = 0; i < V; i++)
+            B[i] = A[i % U];
+        for (SIZE_T j = 0; j < (s_len + p_len) / V; j++) {
+            unsigned carry = 1;
+            for (SIZE_T k = V; k-- > 0;) {
+                carry += I[j * V + k] + B[k];
+                I[j * V + k] = (BYTE)carry;
+                carry >>= 8;
+            }
+        }
+    }
+    SecureZeroMemory(pass, sizeof(pass));
+    SecureZeroMemory(I, sizeof(I));
+}
+
+static BYTE *pkcs8_decrypt(const BYTE *input, DWORD input_size, const WCHAR *password, ULONG *plain_size)
+{
+    static const BYTE pbes2[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x05, 0x0D};
+    static const BYTE pbkdf2[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x05, 0x0C};
+    static const BYTE des3[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x03, 0x07};
+    static const BYTE aes[] = {0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01};
+    static const BYTE pkcs12_des3[] = {0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x0C, 0x01, 0x03};
+    DER all = {input, input_size}, info, alg, oid, params, data;
+    if (!password || !der_expect(&all, 0x30, &info) || !der_expect(&info, 0x30, &alg) ||
+        !der_expect(&alg, 0x06, &oid) || !der_expect(&alg, 0x30, &params) || !der_expect(&info, 0x04, &data) ||
+        !data.left)
+        return nullptr;
+    BYTE key[32], iv[16];
+    SIZE_T key_size = 0, block = 8;
+    BOOL use_aes = FALSE;
+    if (oid_is(oid, pbes2, sizeof(pbes2))) {
+        DER kdf, kdf_oid, kdf_params, scheme, scheme_oid, salt, count, next, prf_oid;
+        if (!der_expect(&params, 0x30, &kdf) || !der_expect(&kdf, 0x06, &kdf_oid) ||
+            !oid_is(kdf_oid, pbkdf2, sizeof(pbkdf2)) || !der_expect(&kdf, 0x30, &kdf_params) ||
+            !der_expect(&kdf_params, 0x04, &salt) || !der_expect(&kdf_params, 0x02, &count) ||
+            !der_expect(&params, 0x30, &scheme) || !der_expect(&scheme, 0x06, &scheme_oid))
+            return nullptr;
+        const MimeHashAlg *prf = &mime_sha1;
+        BYTE tag;
+        while (kdf_params.left && der_next(&kdf_params, &tag, &next)) {
+            if (tag == 0x30 && der_expect(&next, 0x06, &prf_oid) && !(prf = hmac_of(prf_oid)))
+                return nullptr;
+        }
+        DER iv_der;
+        if (!der_expect(&scheme, 0x04, &iv_der))
+            return nullptr;
+        if (oid_is(scheme_oid, des3, sizeof(des3)) && iv_der.left == 8)
+            key_size = 24;
+        else if (scheme_oid.left == sizeof(aes) + 1 && !memcmp(scheme_oid.p, aes, sizeof(aes)) && iv_der.left == 16) {
+            BYTE last = scheme_oid.p[sizeof(aes)];
+            key_size = last == 0x02 ? 16 : last == 0x16 ? 24 : last == 0x2A ? 32 : 0;
+            use_aes = TRUE;
+            block = 16;
+        }
+        if (!key_size)
+            return nullptr;
+        memcpy(iv, iv_der.p, iv_der.left);
+        char utf8[512];
+        int n = WideCharToMultiByte(CP_UTF8, 0, password, -1, utf8, sizeof(utf8), nullptr, nullptr);
+        if (n <= 0)
+            return nullptr;
+        mime_pbkdf2(prf, utf8, (size_t)(n - 1), salt.p, salt.left, der_number(count), key, key_size);
+        SecureZeroMemory(utf8, sizeof(utf8));
+    } else if (oid_is(oid, pkcs12_des3, sizeof(pkcs12_des3))) {
+        DER salt, count;
+        if (!der_expect(&params, 0x04, &salt) || !der_expect(&params, 0x02, &count))
+            return nullptr;
+        key_size = 24;
+        pkcs12_kdf(password, salt, der_number(count), 1, key, 24);
+        pkcs12_kdf(password, salt, der_number(count), 2, iv, 8);
+    } else
+        return nullptr;
+    if (data.left % block)
+        return nullptr;
+    BYTE *plain = HeapAlloc(GetProcessHeap(), 0, data.left);
+    if (!plain)
+        return nullptr;
+    if (use_aes) {
+        MimeAes context;
+        mime_aes_init(&context, key, key_size);
+        mime_cbc_decrypt(&mime_cipher_aes, &context, iv, data.p, plain, data.left);
+        SecureZeroMemory(&context, sizeof(context));
+    } else {
+        MimeDes3 context;
+        mime_des3_init(&context, key, key_size);
+        mime_cbc_decrypt(&mime_cipher_des3, &context, iv, data.p, plain, data.left);
+        SecureZeroMemory(&context, sizeof(context));
+    }
+    SecureZeroMemory(key, sizeof(key));
+    BYTE pad = plain[data.left - 1];
+    BOOL ok = pad && pad <= block;
+    for (SIZE_T i = 0; ok && i < pad; i++)
+        ok = plain[data.left - 1 - i] == pad;
+    if (!ok) {
+        SecureZeroMemory(plain, data.left);
+        HeapFree(GetProcessHeap(), 0, plain);
+        return nullptr;
+    }
+    *plain_size = (ULONG)(data.left - pad);
+    return plain;
+}
+
+/* the password an import of an encrypted key gives, NCRYPTBUFFER_PKCS_SECRET. */
+static const WCHAR *import_secret(const void *params)
+{
+    const NCRYPT_BUFFER_DESC_ *desc = params;
+    if (!desc || !desc->pBuffers)
+        return nullptr;
+    for (ULONG i = 0; i < desc->cBuffers; i++)
+        if (desc->pBuffers[i].BufferType == 46 && desc->pBuffers[i].pvBuffer)
+            return desc->pBuffers[i].pvBuffer;
+    return nullptr;
+}
+
 SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE handle, NCRYPT_KEY_HANDLE unwrap, LPCWSTR type,
                                        void *params, NCRYPT_KEY_HANDLE *out, PBYTE input, DWORD size, DWORD flags)
 {
@@ -1032,6 +1520,23 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE handle, NCRYPT_KEY_HAN
     if (unwrap)
         return NTE_NOT_SUPPORTED;
     LPCWSTR algorithm = nullptr;
+    BYTE *converted = nullptr;
+    ULONG converted_size = 0;
+    if (!wcscmp(type, L"PKCS8_PRIVATEKEY")) {
+        LPCWSTR blob_type = nullptr;
+        ULONG plain_size = 0;
+        BYTE *plain = pkcs8_decrypt(input, size, import_secret(params), &plain_size);
+        converted = pkcs8_blob(plain ? plain : input, plain ? plain_size : size, &algorithm, &blob_type, &converted_size);
+        if (plain) {
+            SecureZeroMemory(plain, plain_size);
+            HeapFree(GetProcessHeap(), 0, plain);
+        }
+        if (!converted)
+            return NTE_BAD_DATA_;
+        input = converted;
+        size = converted_size;
+        type = blob_type;
+    }
     /* the legacy blobs of the legacy store and the generic ones are told apart by their magic. */
     BOOL legacy_rsa = !wcscmp(type, L"CAPIPUBLICBLOB") || !wcscmp(type, L"CAPIPRIVATEBLOB");
     BOOL generic = !wcscmp(type, L"PUBLICBLOB") || !wcscmp(type, L"PRIVATEBLOB");
@@ -1053,25 +1558,97 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE handle, NCRYPT_KEY_HAN
         else
             algorithm = dh ? L"ECDH_P521" : L"ECDSA_P521";
     }
-    if (!algorithm)
+    if (!algorithm) {
+        HeapFree(GetProcessHeap(), 0, converted);
         return NTE_NOT_SUPPORTED;
+    }
     KEY *key = new_object(KEY_MAGIC, sizeof(*key));
-    if (!key)
+    if (!key) {
+        HeapFree(GetProcessHeap(), 0, converted);
         return NTE_NO_MEMORY;
+    }
     key->provider = provider;
+    key->flags = flags & NCRYPT_MACHINE_KEY_FLAG;
     memcpy(key->algorithm, algorithm, (wcslen(algorithm) + 1) * sizeof(WCHAR));
     SECURITY_STATUS status = open_algorithm(algorithm, &key->alg);
     if (!status)
         status = g_bcrypt.import_pair ? normalize(g_bcrypt.import_pair(key->alg, nullptr, type, &key->key, input,
                                                                         size, 0))
                                       : NTE_NOT_SUPPORTED;
+    if (converted) {
+        SecureZeroMemory(converted, converted_size);
+        HeapFree(GetProcessHeap(), 0, converted);
+    }
+    /* a named import persists, now or when the caller finalizes it after setting its properties. */
+    LPCWSTR name = import_name(params);
+    if (!status && name) {
+        SIZE_T bytes = (wcslen(name) + 1) * sizeof(WCHAR);
+        key->name = HeapAlloc(GetProcessHeap(), 0, bytes);
+        if (key->name)
+            memcpy(key->name, name, bytes);
+        else
+            status = NTE_NO_MEMORY;
+        WCHAR path[MAX_PATH];
+        if (!status && !(flags & NCRYPT_OVERWRITE_KEY_FLAG) && key_path(name, key->flags, path) &&
+            GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+            status = NTE_EXISTS;
+    }
+    if (!status) {
+        int index = find_algorithm(algorithm);
+        key->length = index >= 0 ? g_algorithms[index].length : 0;
+        if (!wcscmp(algorithm, L"RSA") && size >= 8)
+            key->length = ((const ULONG *)input)[1];
+        key->key_usage = 3;
+    }
     if (status) {
         close_key(key);
         return status;
     }
-    key->finalized = TRUE;
+    key->imported = TRUE;
+    key->finalized = !(flags & NCRYPT_DO_NOT_FINALIZE_FLAG_);
+    if (key->finalized && key->name)
+        status = save_key(key);
+    if (status) {
+        close_key(key);
+        return status;
+    }
     *out = (NCRYPT_KEY_HANDLE)key;
     return ERROR_SUCCESS;
+}
+
+/*
+ * a key of an elliptic curve from a pfx or pkcs #8 is an ecdh key of the software provider, which signs as well: its
+ * pair signs as the ecdsa key of the same curve.
+ */
+static SECURITY_STATUS ecdh_sign(KEY *key, PBYTE hash, DWORD hash_size, PBYTE signature, DWORD size, ULONG *done)
+{
+    ULONG length = 0;
+    LONG status = g_bcrypt.export_key(key->key, nullptr, L"ECCPRIVATEBLOB", nullptr, 0, &length, 0);
+    if (status)
+        return normalize(status);
+    BYTE *blob = HeapAlloc(GetProcessHeap(), 0, length);
+    if (!blob)
+        return NTE_NO_MEMORY;
+    status = g_bcrypt.export_key(key->key, nullptr, L"ECCPRIVATEBLOB", blob, length, &length, 0);
+    BCRYPT_HANDLE alg = nullptr, pair = nullptr;
+    if (!status) {
+        /* ECKn becomes ECSn, the same curve. */
+        blob[2] = 'S';
+        status = open_algorithm(key->algorithm[6] == '2' ? L"ECDSA_P256" : key->algorithm[6] == '3' ? L"ECDSA_P384"
+                                                                                                      : L"ECDSA_P521",
+                                &alg);
+    }
+    if (!status)
+        status = g_bcrypt.import_pair(alg, nullptr, L"ECCPRIVATEBLOB", &pair, blob, length, 0);
+    if (!status)
+        status = g_bcrypt.sign(pair, nullptr, hash, hash_size, signature, size, done, 0);
+    if (pair)
+        g_bcrypt.destroy(pair);
+    if (alg && g_bcrypt.close)
+        g_bcrypt.close(alg, 0);
+    SecureZeroMemory(blob, length);
+    HeapFree(GetProcessHeap(), 0, blob);
+    return normalize(status);
 }
 
 SECURITY_STATUS WINAPI NCryptSignHash(NCRYPT_KEY_HANDLE handle, void *padding, PBYTE hash, DWORD hash_size,
@@ -1086,7 +1663,10 @@ SECURITY_STATUS WINAPI NCryptSignHash(NCRYPT_KEY_HANDLE handle, void *padding, P
     if (!g_bcrypt.sign)
         return NTE_NOT_SUPPORTED;
     ULONG done = 0;
-    status = normalize(g_bcrypt.sign(key->key, padding, hash, hash_size, signature, size, &done, flags));
+    if (!wcsncmp(key->algorithm, L"ECDH_", 5))
+        status = flags ? NTE_INVALID_PARAMETER : ecdh_sign(key, hash, hash_size, signature, size, &done);
+    else
+        status = normalize(g_bcrypt.sign(key->key, padding, hash, hash_size, signature, size, &done, flags));
     *result = done;
     return status;
 }
