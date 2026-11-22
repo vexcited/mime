@@ -49,4 +49,27 @@ FORCEINLINE UINT64 MimeVblankIndex(const MIME_VBLANK *info, UINT64 counter) { re
 
 FORCEINLINE UINT64 MimeVblankTime(const MIME_VBLANK *info, UINT64 index) { return index * info->period; }
 
+/*
+ * waits for a value of the counter. a sleep is as coarse as the clock of the system, 15.6 ms unless a program asked
+ * for better, and a blank comes every 6.9 ms on a panel of 144 Hz: the wait is on a timer of its own, as fine as
+ * the kernel makes them.
+ */
+FORCEINLINE void MimeSleepUntil(UINT64 counter)
+{
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    if ((UINT64)now.QuadPart >= counter)
+        return;
+    UINT64 left = counter - (UINT64)now.QuadPart;
+    LARGE_INTEGER due = {.QuadPart = -(LONGLONG)(left * 10000000 / (UINT64)frequency.QuadPart)};
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (timer && due.QuadPart && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+        WaitForSingleObject(timer, INFINITE);
+    else
+        Sleep((DWORD)(left * 1000 / (UINT64)frequency.QuadPart) + 1);
+    if (timer)
+        CloseHandle(timer);
+}
+
 #endif
