@@ -134,6 +134,7 @@ EXPORTS
     CredGetSessionTypes=_CredGetSessionTypes@8
     CredGetTargetInfoA=_CredGetTargetInfoA@12
     CredGetTargetInfoW=_CredGetTargetInfoW@12
+    CredIsMarshaledCredentialA=_CredIsMarshaledCredentialA@4
     CredIsMarshaledCredentialW=_CredIsMarshaledCredentialW@4
     CredIsProtectedA=_CredIsProtectedA@8
     CredIsProtectedW=_CredIsProtectedW@8
@@ -639,7 +640,7 @@ EXPORTS
     RegOpenKeyExW=kernelbase.RegOpenKeyExW
     RegOpenKeyW=_RegOpenKeyW@12
     RegOpenUserClassesRoot=kernelbase.RegOpenUserClassesRoot
-    RegOverridePredefKey=kernelbase.RegOverridePredefKey
+    RegOverridePredefKey=_RegOverridePredefKey@8
     RegQueryInfoKeyA=kernelbase.RegQueryInfoKeyA
     RegQueryInfoKeyW=kernelbase.RegQueryInfoKeyW
     RegQueryMultipleValuesA=kernelbase.RegQueryMultipleValuesA

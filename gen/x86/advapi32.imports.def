@@ -134,6 +134,7 @@ EXPORTS
     CredGetSessionTypes@8
     CredGetTargetInfoA@12
     CredGetTargetInfoW@12
+    CredIsMarshaledCredentialA@4
     CredIsMarshaledCredentialW@4
     CredIsProtectedA@8
     CredIsProtectedW@8
