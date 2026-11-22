@@ -1749,9 +1749,11 @@ NTSTATUS CmQueryValueUnlessBusy(PCWSTR key_path, PCWSTR name, PULONG type, PVOID
 NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length);
 NTSTATUS CmDeleteValue(PCWSTR key_path, PCWSTR name);
 NTSTATUS CmDeleteKey(PCWSTR key_path);
+NTSTATUS CmCheckAccess(PCWSTR key_path, ACCESS_MASK access);
 NTSTATUS CmEnumerateValues(PCWSTR key_path,
                            void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type, const void *data, ULONG length),
                            PVOID ctx);
+NTSTATUS CmEnumerateSubkeys(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars), PVOID ctx);
 
 /* io/fscache.c: the file data cache of the host backed volumes. */
 typedef struct _MIMEFS_CACHE MIMEFS_CACHE;

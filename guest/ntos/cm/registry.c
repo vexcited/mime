@@ -1628,6 +1628,26 @@ NTSTATUS CmDeleteKey(PCWSTR key_path)
     return status;
 }
 
+/* what an open of the key with this access answers to the thread when a driver forces the check. */
+NTSTATUS CmCheckAccess(PCWSTR key_path, ACCESS_MASK access)
+{
+    BOOLEAN required = SeAccessCheckRequired();
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    NTSTATUS status = node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+    if (node && required) {
+        SD_BLOB *sd;
+        status = effective_sd(node, &sd);
+        if (NT_SUCCESS(status)) {
+            ACCESS_MASK granted;
+            status = SeCheckAccess(sd, key_mapping(), access, 0, 0, &granted);
+            SeSdDereference(sd);
+        }
+    }
+    CmpUnlock();
+    return status;
+}
+
 NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type,
                                                         const void *data, ULONG length),
                            PVOID ctx)
@@ -1639,6 +1659,18 @@ NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, U
         for (CM_VALUE *v = node->Values; v; v = v->Next)
             fn(ctx, v->Name, v->NameLength, v->Type, v->Data, v->DataLength);
     }
+    CmpUnlock();
+    return node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+}
+
+NTSTATUS CmEnumerateSubkeys(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars), PVOID ctx)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    if (node && NT_SUCCESS(CmpLoadChildren(node)))
+        for (CM_NODE *c = node->Child; c; c = c->Next)
+            if (!(c->Flags & CM_NODE_DELETED))
+                fn(ctx, c->Name, c->NameLength);
     CmpUnlock();
     return node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
 }
