@@ -20,22 +20,20 @@
 
 #define INET_TLS_RAW 65536
 
+/* SCH_CREDENTIALS: schannel gives tls 1.3 to this form only. */
 typedef struct {
     DWORD dwVersion;
+    DWORD dwCredFormat;
     DWORD cCreds;
     void *paCred;
     void *hRootStore;
     DWORD cMappers;
     void *aphMappers;
-    DWORD cSupportedAlgs;
-    void *palgSupportedAlgs;
-    DWORD grbitEnabledProtocols;
-    DWORD dwMinimumCipherStrength;
-    DWORD dwMaximumCipherStrength;
     DWORD dwSessionLifespan;
     DWORD dwFlags;
-    DWORD dwCredFormat;
-} INET_SCHANNEL_CRED;
+    DWORD cTlsParameters;
+    void *pTlsParameters;
+} INET_SCH_CREDENTIALS;
 
 typedef struct {
     ULONG cbHeader;
@@ -268,9 +266,8 @@ DWORD InetTlsHandshake(INET_CONN *conn, LPCWSTR host, DWORD security_flags, DWOR
         return ERROR_NOT_ENOUGH_MEMORY;
     conn->RawSize = INET_TLS_RAW;
     conn->RawUsed = 0;
-    INET_SCHANNEL_CRED credentials = {0};
-    credentials.dwVersion = SCHANNEL_CRED_VERSION;
-    credentials.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
+    INET_SCH_CREDENTIALS credentials = {0};
+    credentials.dwVersion = 5;
     credentials.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_MANUAL_CRED_VALIDATION;
     SECURITY_STATUS status = Table->AcquireCredentialsHandleW(nullptr, (SEC_WCHAR *)UNISP_NAME_W, SECPKG_CRED_OUTBOUND,
                                                               nullptr, &credentials, nullptr, nullptr,

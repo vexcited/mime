@@ -201,6 +201,7 @@ void WhSessionCleanup(WH_OBJECT *session)
         session->Idle = conn->Next;
         WhConnClose(nullptr, conn);
     }
+    WhTlsSessionCleanup(session);
 }
 
 /* pool connections after a clean response end; close others. */
@@ -390,7 +391,8 @@ static DWORD Connect(WH_OBJECT *request, BOOL allow_reuse)
         if (via_proxy && (error = Tunnel(request, conn)))
             return error;
         DWORD failure = 0;
-        error = WhTlsHandshake(conn, request->Host, request->SecurityFlags, request->Timeouts.Connect, &failure);
+        error = WhTlsHandshake(session, conn, request->Host, request->SecurityFlags, request->SecureProtocols,
+                               request->ClientCertSet, request->ClientCert, request->Timeouts.Connect, &failure);
         if (error) {
             if (failure)
                 WhNotify(request, WINHTTP_CALLBACK_STATUS_SECURE_FAILURE, &failure, sizeof(failure));
@@ -467,14 +469,53 @@ static void Base64(const BYTE *data, DWORD length, char *out)
     out[o] = 0;
 }
 
-static void PutBasic(WH_OUT *out, const char *name, LPCWSTR user, LPCWSTR password)
+static BOOL VerbIs(WH_OBJECT *request, LPCWSTR verb)
+{
+    return !_wcsicmp(request->Verb, verb);
+}
+
+/*
+ * webio, measured in scratch/winhttp-headers: the verbs http.sys knows go out in capitals, the request headers it
+ * knows in HTTP_HEADER_ID order with their usual names, then the others in the order they were added, then the
+ * Content-Length and the Host webio adds itself. a verb that begins with POST or PUT, or BITS_POST, always says its
+ * length, 0 included.
+ */
+static const char *const KnownVerbs[] = {"OPTIONS", "GET",      "HEAD",      "POST",  "PUT",  "DELETE",
+                                         "TRACE",   "CONNECT",  "TRACK",     "MOVE",  "COPY", "PROPFIND",
+                                         "PROPPATCH", "MKCOL",  "LOCK",      "UNLOCK", "SEARCH"};
+
+static const char *const RequestOrder[] = {
+    "Cache-Control",     "Connection",      "Date",          "Keep-Alive",       "Pragma",
+    "Trailer",           "Transfer-Encoding", "Upgrade",     "Via",              "Warning",
+    "Allow",             "Content-Length",  "Content-Type",  "Content-Encoding", "Content-Language",
+    "Content-Location",  "Content-MD5",     "Content-Range", "Expires",          "Last-Modified",
+    "Accept",            "Accept-Charset",  "Accept-Encoding", "Accept-Language", "Authorization",
+    "Cookie",            "Expect",          "From",          "Host",             "If-Match",
+    "If-Modified-Since", "If-None-Match",   "If-Range",      "If-Unmodified-Since", "Max-Forwards",
+    "Proxy-Authorization", "Referer",       "Range",         "TE",               "Translate",
+    "User-Agent",
+};
+
+static int RequestSlot(const char *name)
+{
+    for (int i = 0; i < (int)ARRAYSIZE(RequestOrder); i++)
+        if (!lstrcmpiA(name, RequestOrder[i]))
+            return i;
+    return -1;
+}
+
+static BOOL SaysLength(WH_OBJECT *request)
+{
+    return !_wcsnicmp(request->Verb, L"POST", 4) || !_wcsnicmp(request->Verb, L"PUT", 3) ||
+           VerbIs(request, L"BITS_POST");
+}
+
+static char *BasicValue(LPCWSTR user, LPCWSTR password)
 {
     SIZE_T length = wcslen(user) + 1 + (password ? wcslen(password) : 0);
     PWSTR joined = WhAlloc((length + 1) * sizeof(WCHAR));
-    if (!joined) {
-        out->Failed = TRUE;
-        return;
-    }
+    if (!joined)
+        return nullptr;
     wsprintfW(joined, L"%s:%s", user, password ? password : L"");
     int bytes = WideCharToMultiByte(CP_UTF8, 0, joined, -1, nullptr, 0, nullptr, nullptr);
     char *utf8 = WhAlloc((SIZE_T)bytes);
@@ -483,24 +524,29 @@ static void PutBasic(WH_OUT *out, const char *name, LPCWSTR user, LPCWSTR passwo
         WideCharToMultiByte(CP_UTF8, 0, joined, -1, utf8, bytes, nullptr, nullptr);
         memcpy(encoded, "Basic ", 6);
         Base64((BYTE *)utf8, (DWORD)bytes - 1, encoded + 6);
-        PutHeader(out, name, encoded);
     } else {
-        out->Failed = TRUE;
+        WhFree(encoded);
+        encoded = nullptr;
     }
     WhFree(utf8);
-    WhFree(encoded);
     WhFree(joined);
-}
-
-static BOOL VerbIs(WH_OBJECT *request, LPCWSTR verb)
-{
-    return !_wcsicmp(request->Verb, verb);
+    return encoded;
 }
 
 static DWORD BuildRequest(WH_OBJECT *request, BOOL via_proxy, WH_OUT *out)
 {
     WH_HEADERS *headers = &request->Request;
-    PutWide(out, request->Verb);
+    const char *verb = nullptr;
+    for (DWORD i = 0; i < ARRAYSIZE(KnownVerbs) && !verb; i++) {
+        WCHAR wide[16];
+        MultiByteToWideChar(CP_ACP, 0, KnownVerbs[i], -1, wide, ARRAYSIZE(wide));
+        if (VerbIs(request, wide))
+            verb = KnownVerbs[i];
+    }
+    if (verb)
+        PutString(out, verb);
+    else
+        PutWide(out, request->Verb);
     Put(out, " ", 1);
     if (via_proxy && !request->Secure) {
         PutString(out, "http://");
@@ -515,23 +561,74 @@ static DWORD BuildRequest(WH_OBJECT *request, BOOL via_proxy, WH_OUT *out)
     char version[24];
     wsprintfA(version, " HTTP/%u.%u\r\n", request->Major, request->Minor);
     PutString(out, version);
-    if (!WhHeadersFind(headers, "Connection", 0))
-        PutHeader(out, "Connection",
-                  request->UpgradeRequested                                 ? "Upgrade"
-                  : request->DisableFeatures & WINHTTP_DISABLE_KEEP_ALIVE ? "Close"
-                                                                           : "Keep-Alive");
-    for (DWORD i = 0; i < headers->Count; i++)
-        PutHeader(out, headers->Items[i].Name, headers->Items[i].Value);
+
+    /* the headers webio adds when the program did not. */
+    WH_HEADERS added = {0};
+    BOOL ok = TRUE;
+    /* measured on Windows 11: a request for a protocol upgrade carries no Connection header of webio's. */
+    if (!request->ProtocolRequested && !WhHeadersFind(headers, "Connection", 0)) {
+        const char *connection = request->UpgradeRequested                                 ? "Upgrade"
+                                 : request->DisableFeatures & WINHTTP_DISABLE_KEEP_ALIVE ? "Close"
+                                                                                          : "Keep-Alive";
+        ok &= WhHeadersAppend(&added, "Connection", 10, connection, (DWORD)strlen(connection));
+    }
     if (request->Agent && *request->Agent && !WhHeadersFind(headers, "User-Agent", 0)) {
         char *agent = WhWideToAnsi(request->Agent, (DWORD)wcslen(request->Agent), nullptr);
-        if (agent)
-            PutHeader(out, "User-Agent", agent);
+        ok &= agent && WhHeadersAppend(&added, "User-Agent", 10, agent, (DWORD)strlen(agent));
         WhFree(agent);
     }
+    if (request->Decompression && !WhHeadersFind(headers, "Accept-Encoding", 0)) {
+        const char *encoding = (request->Decompression & WINHTTP_DECOMPRESSION_FLAG_ALL) == WINHTTP_DECOMPRESSION_FLAG_ALL
+                                   ? "gzip, deflate"
+                               : request->Decompression & WINHTTP_DECOMPRESSION_FLAG_GZIP ? "gzip"
+                                                                                          : "deflate";
+        ok &= WhHeadersAppend(&added, "Accept-Encoding", 15, encoding, (DWORD)strlen(encoding));
+    }
+    if (request->User && request->AuthScheme == WINHTTP_AUTH_SCHEME_BASIC && !WhHeadersFind(headers, "Authorization", 0)) {
+        char *value = BasicValue(request->User, request->Password);
+        ok &= value && WhHeadersAppend(&added, "Authorization", 13, value, (DWORD)strlen(value));
+        WhFree(value);
+    }
+    if (via_proxy && !request->Secure && request->ProxyUser && request->ProxyAuthScheme == WINHTTP_AUTH_SCHEME_BASIC &&
+        !WhHeadersFind(headers, "Proxy-Authorization", 0)) {
+        char *value = BasicValue(request->ProxyUser, request->ProxyPassword);
+        ok &= value && WhHeadersAppend(&added, "Proxy-Authorization", 19, value, (DWORD)strlen(value));
+        WhFree(value);
+    }
+    if (request->UpgradeRequested) {
+        if (!WhHeadersFind(headers, "Upgrade", 0))
+            ok &= WhHeadersAppend(&added, "Upgrade", 7, "websocket", 9);
+        if (!WhHeadersFind(headers, "Sec-WebSocket-Version", 0))
+            ok &= WhHeadersAppend(&added, "Sec-WebSocket-Version", 21, "13", 2);
+        if (!WhHeadersFind(headers, "Sec-WebSocket-Key", 0)) {
+            BYTE key[16];
+            char text[32];
+            ULONG seed = GetTickCount() ^ (ULONG)(ULONG_PTR)request;
+            for (DWORD i = 0; i < 16; i++)
+                key[i] = (BYTE)(RtlRandomEx(&seed) >> 8);
+            Base64(key, 16, text);
+            ok &= WhHeadersAppend(&added, "Sec-WebSocket-Key", 17, text, (DWORD)strlen(text));
+        }
+    }
+    if (!ok)
+        out->Failed = TRUE;
+
+    WH_HEADERS *lists[2] = {headers, &added};
+    for (int slot = 0; slot < (int)ARRAYSIZE(RequestOrder); slot++)
+        for (int l = 0; l < 2; l++)
+            for (DWORD i = 0; i < lists[l]->Count; i++)
+                if (RequestSlot(lists[l]->Items[i].Name) == slot)
+                    PutHeader(out, RequestOrder[slot], lists[l]->Items[i].Value);
+    for (int l = 0; l < 2; l++)
+        for (DWORD i = 0; i < lists[l]->Count; i++)
+            if (RequestSlot(lists[l]->Items[i].Name) < 0)
+                PutHeader(out, lists[l]->Items[i].Name, lists[l]->Items[i].Value);
+    WhHeadersClear(&added);
+
     if (!WhHeadersFind(headers, "Content-Length", 0) && !WhHeadersFind(headers, "Transfer-Encoding", 0)) {
         if (request->ChunkedUpload)
             PutHeader(out, "Transfer-Encoding", "chunked");
-        else if (request->TotalLength || VerbIs(request, L"POST") || VerbIs(request, L"PUT")) {
+        else if (request->TotalLength || SaysLength(request)) {
             char length[24], *p = length + sizeof(length) - 1;
             ULONGLONG value = request->TotalLength;
             *p = 0;
@@ -550,33 +647,6 @@ static DWORD BuildRequest(WH_OBJECT *request, BOOL via_proxy, WH_OUT *out)
             PutString(out, port);
         }
         Put(out, "\r\n", 2);
-    }
-    if (request->Decompression && !WhHeadersFind(headers, "Accept-Encoding", 0))
-        PutHeader(out, "Accept-Encoding",
-                  (request->Decompression & WINHTTP_DECOMPRESSION_FLAG_ALL) == WINHTTP_DECOMPRESSION_FLAG_ALL
-                      ? "gzip, deflate"
-                  : request->Decompression & WINHTTP_DECOMPRESSION_FLAG_GZIP ? "gzip"
-                                                                             : "deflate");
-    if (request->User && request->AuthScheme == WINHTTP_AUTH_SCHEME_BASIC &&
-        !WhHeadersFind(headers, "Authorization", 0))
-        PutBasic(out, "Authorization", request->User, request->Password);
-    if (via_proxy && !request->Secure && request->ProxyUser &&
-        request->ProxyAuthScheme == WINHTTP_AUTH_SCHEME_BASIC && !WhHeadersFind(headers, "Proxy-Authorization", 0))
-        PutBasic(out, "Proxy-Authorization", request->ProxyUser, request->ProxyPassword);
-    if (request->UpgradeRequested) {
-        if (!WhHeadersFind(headers, "Upgrade", 0))
-            PutHeader(out, "Upgrade", "websocket");
-        if (!WhHeadersFind(headers, "Sec-WebSocket-Version", 0))
-            PutHeader(out, "Sec-WebSocket-Version", "13");
-        if (!WhHeadersFind(headers, "Sec-WebSocket-Key", 0)) {
-            BYTE key[16];
-            char text[32];
-            ULONG seed = GetTickCount() ^ (ULONG)(ULONG_PTR)request;
-            for (DWORD i = 0; i < 16; i++)
-                key[i] = (BYTE)(RtlRandomEx(&seed) >> 8);
-            Base64(key, 16, text);
-            PutHeader(out, "Sec-WebSocket-Key", text);
-        }
     }
     Put(out, "\r\n", 2);
     return out->Failed ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;

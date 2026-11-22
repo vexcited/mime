@@ -279,6 +279,8 @@ void WhRelease(WH_OBJECT *object)
         CloseHandle(object->Worker);
     if (object->Wake)
         CloseHandle(object->Wake);
+    if (object->ClientCert)
+        WhTlsCertFree(object->ClientCert);
     WhHeadersClear(&object->Request);
     WhHeadersClear(&object->Response);
     WhFree(object->Agent);
@@ -950,12 +952,26 @@ static DWORD SetOption(WH_OBJECT *object, DWORD option, LPVOID buffer, DWORD len
             return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
         object->Context = *(DWORD_PTR *)buffer;
         return ERROR_SUCCESS;
-    case WINHTTP_OPTION_CLIENT_CERT_CONTEXT:
+    case WINHTTP_OPTION_CLIENT_CERT_CONTEXT: {
         if (!request)
             return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
         if (!object->Secure)
             return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+        /* no certificate is a decision too: a server that asks then gets none, instead of the request failing. */
+        const void *cert = nullptr;
+        if (buffer) {
+            if (length < 2 * sizeof(void *) + 2 * sizeof(DWORD))
+                return ERROR_INVALID_PARAMETER;
+            cert = WhTlsCertDuplicate(buffer);
+            if (!cert)
+                return ERROR_INVALID_PARAMETER;
+        }
+        if (object->ClientCert)
+            WhTlsCertFree(object->ClientCert);
+        object->ClientCert = cert;
+        object->ClientCertSet = TRUE;
         return ERROR_SUCCESS;
+    }
     case WINHTTP_OPTION_REQUEST_PRIORITY:
         if (!request)
             return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
@@ -1062,9 +1078,18 @@ static DWORD SetOption(WH_OBJECT *object, DWORD option, LPVOID buffer, DWORD len
             return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
         if (length)
             return ERROR_INVALID_PARAMETER;
-        if (object->UpgradeRequested || object->State)
+        if (object->UpgradeRequested || object->ProtocolRequested || object->State)
             return ERROR_INVALID_PARAMETER;
         object->UpgradeRequested = TRUE;
+        return ERROR_SUCCESS;
+    case WH_OPTION_UPGRADE_TO_PROTOCOL:
+        if (!request)
+            return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
+        if (length)
+            return ERROR_INVALID_PARAMETER;
+        if (object->UpgradeRequested || object->ProtocolRequested)
+            return ERROR_INVALID_PARAMETER;
+        object->ProtocolRequested = TRUE;
         return ERROR_SUCCESS;
     case WINHTTP_OPTION_WEB_SOCKET_CLOSE_TIMEOUT:
     case WINHTTP_OPTION_WEB_SOCKET_KEEPALIVE_INTERVAL:

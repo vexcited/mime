@@ -1,11 +1,16 @@
 /*
- * the connection, protocol and proxy settings exports that Windows keeps for its own components. the proxy discovery
- * service does not exist here, so what Windows asks of it fails with the error a service that cannot start gives.
+ * the connection, protocol and policy exports that Windows keeps for its own components. the proxy discovery service
+ * is no process here. every procedure of its interface that is served works as the caller it impersonates, so the
+ * caller does the same work itself and the registry answers its token as it would answer the service. what is not
+ * served fails with the error a service that cannot start gives.
  */
 #include "winhttp_private.h"
 #include <mime/ntrtl.h>
 #include <mime/ntrtlsec.h>
 
+#ifndef RPC_X_NULL_REF_POINTER
+#define RPC_X_NULL_REF_POINTER 1780L
+#endif
 #ifndef ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR
 #define ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR 12178L
 #endif
@@ -22,7 +27,7 @@ void WINAPI WinHttpSetSecureLegacyServersAppCompat(void)
 }
 
 /* the handle checks that come before every call to the service. */
-static DWORD ReferenceOfType(HINTERNET handle, DWORD type, WH_OBJECT **object)
+DWORD WhReferenceOfType(HINTERNET handle, DWORD type, WH_OBJECT **object)
 {
     *object = nullptr;
     if (!handle)
@@ -41,7 +46,7 @@ static DWORD ReferenceOfType(HINTERNET handle, DWORD type, WH_OBJECT **object)
 static DWORD SessionService(HINTERNET handle)
 {
     WH_OBJECT *session;
-    DWORD error = ReferenceOfType(handle, WH_SESSION, &session);
+    DWORD error = WhReferenceOfType(handle, WH_SESSION, &session);
     if (error)
         return error;
     WhRelease(session);
@@ -62,21 +67,81 @@ typedef struct {
     DWORD Count;
 } WH_POLICY_LIST;
 
+/* WxIsSidBufferParamsValid of winhttp 26300. Its failure is ERROR_INVALID_SID. */
 static BOOL SidBufferValid(DWORD length, PSID sid)
 {
-    return sid && length && RtlValidSid(sid) && RtlLengthSid(sid) == length;
+    return length >= 8 && sid && RtlLengthSid(sid) == length && RtlValidSid(sid);
 }
 
+#define DNSCACHE_KEY L"SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters"
+#define CONNECTION_POLICY_KEY DNSCACHE_KEY L"\\DnsConnections"
+#define CONNECTION_INTERFACES_KEY DNSCACHE_KEY L"\\DnsActiveIfs"
+
+static DWORD Session(HINTERNET handle)
+{
+    WH_OBJECT *session;
+    DWORD error = WhReferenceOfType(handle, WH_SESSION, &session);
+    if (!error)
+        WhRelease(session);
+    return error;
+}
+
+/*
+ * the service has the DNS client delete the rules, DnsConnectionManager::ConnectionDeletePolicyEntriesRegistry of
+ * dnsapi 26300: the key of the rules is made and opened for writing, then each rule with the tag goes, a rule
+ * without a tag counting as one with it, and the default tag 0 takes them all. the last failure is the answer.
+ */
 DWORD WINAPI WinHttpConnectionDeletePolicyEntries(HINTERNET handle, DWORD tag)
 {
-    return SessionService(handle);
+    DWORD error = Session(handle);
+    if (error)
+        return error;
+    HKEY rules;
+    if ((error = RegCreateKeyExW(HKEY_LOCAL_MACHINE, CONNECTION_POLICY_KEY, 0, nullptr, 0, KEY_READ | KEY_WRITE, nullptr, &rules,
+                                 nullptr)))
+        return error;
+    WCHAR name[261];
+    DWORD index = 0, length = 261;
+    while (!RegEnumKeyExW(rules, index, name, &length, nullptr, nullptr, nullptr, nullptr)) {
+        HKEY rule;
+        DWORD opened = RegOpenKeyExW(rules, name, 0, KEY_READ, &rule);
+        if (opened) {
+            error = opened;
+            break;
+        }
+        DWORD type = 0, found = tag, size = sizeof(found);
+        if (RegQueryValueExW(rule, L"PolicyTag", nullptr, &type, (BYTE *)&found, &size) || type != REG_DWORD)
+            found = tag;
+        RegCloseKey(rule);
+        length = 261;
+        if (tag && found != tag) {
+            index++;
+            continue;
+        }
+        DWORD deleted = RegDeleteKeyExW(rules, name, 0, 0);
+        if (deleted) {
+            error = deleted;
+            index++;
+        }
+    }
+    RegCloseKey(rules);
+    return error;
 }
 
+/* the rules of an application are found in the memory of the DNS client, which holds none here: the key is opened as above. */
 DWORD WINAPI WinHttpConnectionDeletePolicyEntriesByAppSid(HINTERNET handle, DWORD length, PSID sid)
 {
     if (!SidBufferValid(length, sid))
-        return ERROR_INVALID_PARAMETER;
-    return SessionService(handle);
+        return ERROR_INVALID_SID;
+    DWORD error = Session(handle);
+    if (error)
+        return error;
+    HKEY rules;
+    if ((error = RegCreateKeyExW(HKEY_LOCAL_MACHINE, CONNECTION_POLICY_KEY, 0, nullptr, 0, KEY_READ | KEY_WRITE, nullptr, &rules,
+                                 nullptr)))
+        return error;
+    RegCloseKey(rules);
+    return ERROR_SUCCESS;
 }
 
 DWORD WINAPI WinHttpConnectionSetPolicyEntries(HINTERNET handle, DWORD tag, WH_POLICY_LIST *list)
@@ -94,9 +159,60 @@ DWORD WINAPI WinHttpConnectionSetPolicyEntries(HINTERNET handle, DWORD tag, WH_P
     return SessionService(handle);
 }
 
-DWORD WINAPI WinHttpConnectionUpdateIfIndexTable(HINTERNET handle, DWORD_PTR table)
+typedef struct {
+    LPCWSTR Connection;
+    DWORD Interface;
+} WH_INTERFACE_ENTRY;
+
+typedef struct {
+    WH_INTERFACE_ENTRY *Entries;
+    DWORD Count;
+} WH_INTERFACE_LIST;
+
+/*
+ * the table is a reference pointer of the interface, so the call without one ends in the stub with
+ * RPC_X_NULL_REF_POINTER. the service has the DNS client replace its table,
+ * DnsConnectionManager::WriteConnectionIfIndexTable of dnsapi 26300: a volatile key for each connection and interface.
+ */
+DWORD WINAPI WinHttpConnectionUpdateIfIndexTable(HINTERNET handle, WH_INTERFACE_LIST *table)
 {
-    return SessionService(handle);
+    DWORD error = Session(handle);
+    if (error)
+        return error;
+    if (!table)
+        return RPC_X_NULL_REF_POINTER;
+    if (table->Count && !table->Entries)
+        return RPC_X_NULL_REF_POINTER;
+    HKEY interfaces;
+    if (!RegOpenKeyExW(HKEY_LOCAL_MACHINE, CONNECTION_INTERFACES_KEY, 0, KEY_READ | KEY_WRITE, &interfaces)) {
+        RegDeleteTreeW(interfaces, nullptr);
+        RegCloseKey(interfaces);
+    }
+    if ((error = RegCreateKeyExW(HKEY_LOCAL_MACHINE, CONNECTION_INTERFACES_KEY, 0, nullptr, 0, KEY_READ | KEY_WRITE, nullptr,
+                                 &interfaces, nullptr)))
+        return error;
+    for (DWORD i = 0; !error && i < table->Count; i++) {
+        const WH_INTERFACE_ENTRY *entry = &table->Entries[i];
+        WCHAR name[300];
+        if (!entry->Connection || wcslen(entry->Connection) >= 260) {
+            error = ERROR_INVALID_PARAMETER;
+            break;
+        }
+        wsprintfW(name, L"%s_%u", entry->Connection, entry->Interface);
+        HKEY key;
+        if ((error = RegCreateKeyExW(interfaces, name, 0, nullptr, REG_OPTION_VOLATILE, KEY_READ | KEY_WRITE, nullptr, &key,
+                                     nullptr)))
+            break;
+        error = RegSetValueExW(key, L"Connection", 0, REG_SZ, (const BYTE *)entry->Connection,
+                               (DWORD)((wcslen(entry->Connection) + 1) * sizeof(WCHAR)));
+        if (!error)
+            error = RegSetValueExW(key, L"ActiveInterfaces", 0, REG_DWORD, (const BYTE *)&entry->Interface, sizeof(DWORD));
+        RegCloseKey(key);
+    }
+    if (error)
+        RegDeleteTreeW(interfaces, nullptr);
+    RegCloseKey(interfaces);
+    return error;
 }
 
 /* proxies of a connection, kept in the registry as the DNS client keeps them. */
@@ -393,7 +509,7 @@ void WINAPI WinHttpConnectionFreeNameList(WH_CONNECTION_NAME_LIST *list)
 static const WNF_STATE_NAME ProxyConfigChange = {{0xA3BC0875, 0x1192063A}};
 static const WNF_STATE_NAME ProxyChange2 = {{0xA3BC1875, 0x1192063A}};
 
-static void NotifyProxyConfigChange(void)
+void WhNotifyProxyConfigChange(void)
 {
     RtlPublishWnfStateData(ProxyConfigChange, nullptr, nullptr, 0, nullptr);
 }
@@ -517,8 +633,24 @@ DWORD WINAPI WinHttpUnregisterProxyChangeNotification(PVOID registration)
     return ERROR_SUCCESS;
 }
 
+/*
+ * measured on Windows 11: a caller that may not write the proxies of the machine is refused before its arguments are
+ * looked at, and a change of them is told to nobody.
+ */
+static DWORD ProxiesWritable(void)
+{
+    HKEY root;
+    DWORD error = OpenProxies(KEY_READ | KEY_WRITE, TRUE, &root);
+    if (!error)
+        RegCloseKey(root);
+    return error;
+}
+
 DWORD WINAPI WinHttpConnectionSetProxyInfo(LPCWSTR name, DWORD type, const WH_CONNECTION_PROXY_INFO *info)
 {
+    DWORD refused = ProxiesWritable();
+    if (refused)
+        return refused;
     if (!name || !info)
         return ERROR_INVALID_PARAMETER;
     if (info->FriendlyName && wcslen(info->FriendlyName) > 0x40)
@@ -594,14 +726,14 @@ DWORD WINAPI WinHttpConnectionSetProxyInfo(LPCWSTR name, DWORD type, const WH_CO
             SET_STRING(L"Username", info->Username);
     }
     RegCloseKey(key);
-    if (error)
-        return error;
-    NotifyProxyConfigChange();
-    return ERROR_SUCCESS;
+    return error;
 }
 
 DWORD WINAPI WinHttpConnectionDeleteProxyInfo(LPCWSTR name, DWORD type)
 {
+    DWORD refused = ProxiesWritable();
+    if (refused)
+        return refused;
     if (!name)
         return ERROR_INVALID_PARAMETER;
     WCHAR path[300], number[12];
@@ -627,63 +759,16 @@ DWORD WINAPI WinHttpConnectionDeleteProxyInfo(LPCWSTR name, DWORD type)
             RegCloseKey(connection);
     }
     RegCloseKey(root);
-    if (!error)
-        NotifyProxyConfigChange();
     return error;
 }
 
-/* proxy settings. */
-
-typedef struct {
-    DWORD StructSize;
-    DWORD Flags;
-    DWORD CurrentSettingsVersion;
-    PWSTR ConnectionName;
-    PWSTR Proxy;
-    PWSTR ProxyBypass;
-    PWSTR AutoconfigUrl;
-    PWSTR AutoconfigSecondaryUrl;
-    DWORD AutoDiscoveryFlags;
-    PWSTR LastKnownGoodAutoConfigUrl;
-    DWORD AutoconfigReloadDelayMins;
-    FILETIME LastKnownDetectTime;
-    DWORD DetectedInterfaceIpCount;
-    PDWORD DetectedInterfaceIp;
-    DWORD NetworkKeyCount;
-    PVOID NetworkKeys;
-} WH_PROXY_SETTINGS;
-
-#define PROXY_SETTINGS_SIZE ((DWORD)sizeof(WH_PROXY_SETTINGS))
-
-typedef void(WINAPI *WH_COTASKMEMFREE)(PVOID);
+/* the settings of a proxy resolver handle, which only the service fills. */
 
 static void TaskFree(PVOID *pointer)
 {
-    static WH_COTASKMEMFREE free_memory;
-    if (!*pointer)
-        return;
-    if (!free_memory) {
-        HMODULE ole32 = LoadLibraryW(L"ole32.dll");
-        free_memory = ole32 ? (WH_COTASKMEMFREE)GetProcAddress(ole32, "CoTaskMemFree") : nullptr;
-    }
     PVOID memory = *pointer;
     *pointer = nullptr;
-    if (free_memory)
-        free_memory(memory);
-}
-
-void WINAPI WinHttpFreeProxySettings(WH_PROXY_SETTINGS *settings)
-{
-    if (!settings)
-        return;
-    TaskFree((PVOID *)&settings->ConnectionName);
-    TaskFree((PVOID *)&settings->Proxy);
-    TaskFree((PVOID *)&settings->ProxyBypass);
-    TaskFree((PVOID *)&settings->LastKnownGoodAutoConfigUrl);
-    TaskFree((PVOID *)&settings->AutoconfigUrl);
-    TaskFree((PVOID *)&settings->AutoconfigSecondaryUrl);
-    TaskFree((PVOID *)&settings->DetectedInterfaceIp);
-    TaskFree(&settings->NetworkKeys);
+    WhTaskFree(memory);
 }
 
 typedef struct {
@@ -713,60 +798,6 @@ DWORD WINAPI WinHttpFreeProxySettingsEx(DWORD type, WH_PROXY_SETTINGS_EX *settin
     return ERROR_SUCCESS;
 }
 
-DWORD WINAPI WinHttpGetProxySettingsVersion(HINTERNET handle, DWORD *version)
-{
-    if (!version)
-        return ERROR_INVALID_PARAMETER;
-    *version = 0;
-    WH_OBJECT *session;
-    DWORD error = ReferenceOfType(handle, WH_SESSION, &session);
-    if (!error)
-        WhRelease(session);
-    return error;
-}
-
-DWORD WINAPI WinHttpReadProxySettings(HINTERNET handle, LPCWSTR connection, BOOL fall_back, BOOL auto_discover,
-                                      DWORD *version, BOOL *defaults, WH_PROXY_SETTINGS *settings)
-{
-    if (defaults)
-        *defaults = FALSE;
-    if (!version || !settings || !defaults || settings->StructSize != PROXY_SETTINGS_SIZE)
-        return ERROR_INVALID_PARAMETER;
-    memset(settings, 0, PROXY_SETTINGS_SIZE);
-    settings->StructSize = PROXY_SETTINGS_SIZE;
-    return SessionService(handle);
-}
-
-DWORD WINAPI WinHttpReadProxySettingsHvsi(HINTERNET handle, LPCWSTR connection, BOOL fall_back, BOOL auto_discover,
-                                          int force_default, DWORD *version, BOOL *defaults,
-                                          WH_PROXY_SETTINGS *settings)
-{
-    if (!version || !settings || !defaults)
-        return ERROR_INVALID_PARAMETER;
-    *version = 0;
-    *defaults = FALSE;
-    memset(settings, 0, PROXY_SETTINGS_SIZE);
-    settings->StructSize = PROXY_SETTINGS_SIZE;
-    return WinHttpReadProxySettings(handle, force_default ? L"DefaultConnectionSettings" : connection, fall_back,
-                                    auto_discover, version, defaults, settings);
-}
-
-DWORD WINAPI WinHttpWriteProxySettings(HINTERNET handle, BOOL force_update, WH_PROXY_SETTINGS *settings)
-{
-    if (!settings || settings->StructSize != PROXY_SETTINGS_SIZE)
-        return ERROR_INVALID_PARAMETER;
-    return SessionService(handle);
-}
-
-DWORD WINAPI WinHttpSetProxySettingsPerUser(DWORD flags)
-{
-    HINTERNET session = WinHttpOpen(nullptr, WINHTTP_ACCESS_TYPE_NO_PROXY, nullptr, nullptr, 0);
-    if (!session)
-        return GetLastError();
-    WinHttpCloseHandle(session);
-    return ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR;
-}
-
 DWORD WINAPI WinHttpGetProxySettingsEx(HINTERNET resolver, DWORD type, PVOID options, DWORD_PTR context)
 {
     if (!resolver)
@@ -774,7 +805,7 @@ DWORD WINAPI WinHttpGetProxySettingsEx(HINTERNET resolver, DWORD type, PVOID opt
     if (type < 1 || type > 3)
         return ERROR_INVALID_PARAMETER;
     WH_OBJECT *object;
-    DWORD error = ReferenceOfType(resolver, WH_RESOLVER, &object);
+    DWORD error = WhReferenceOfType(resolver, WH_RESOLVER, &object);
     if (error)
         return error;
     WhRelease(object);
@@ -788,7 +819,7 @@ DWORD WINAPI WinHttpGetProxySettingsResultEx(HINTERNET resolver, WH_PROXY_SETTIN
     if (!resolver)
         return ERROR_INVALID_HANDLE;
     WH_OBJECT *object;
-    DWORD error = ReferenceOfType(resolver, WH_RESOLVER, &object);
+    DWORD error = WhReferenceOfType(resolver, WH_RESOLVER, &object);
     if (error)
         return error;
     WhRelease(object);
@@ -803,6 +834,9 @@ DWORD WINAPI WinHttpGetProxyForUrlHvsi(HINTERNET handle, LPCWSTR url, PVOID opti
     if (script)
         *script = nullptr;
     if (!url || !options || !session_options || (size == 0) != (buffer == nullptr) || !scheme || !result || !script)
+        return ERROR_INVALID_PARAMETER;
+    /* The options are checked before the handle is looked at. */
+    if (!WhValidAutoProxyOptions(options))
         return ERROR_INVALID_PARAMETER;
     return SessionService(handle);
 }
@@ -839,39 +873,6 @@ DWORD WINAPI WinHttpSaveProxyCredentials(int scheme, LPWSTR target, LPWSTR user,
     credential.Persist = CRED_PERSIST_ENTERPRISE_VALUE;
     credential.Type = scheme == 1 || scheme == 8 ? 1 : 2;
     return write(&credential, 0) ? ERROR_SUCCESS : GetLastError();
-}
-
-/* the objects of the proxy list interfaces are internal to the Windows components that exchange them. */
-
-DWORD WINAPI WinHttpCreateProxyList(ULONGLONG a, ULONGLONG b, PVOID *list)
-{
-    return list ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
-}
-
-DWORD WINAPI WinHttpCreateProxyManager(DWORD flags, DWORD options, PVOID list, PVOID *resolver)
-{
-    return resolver ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
-}
-
-DWORD WINAPI WinHttpCreateProxyResult(DWORD a, DWORD b, DWORD c, LPCWSTR proxy, int direct, PVOID *result)
-{
-    return result ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
-}
-
-DWORD WINAPI WinHttpCreateUiCompatibleProxyString(LPCWSTR proxy, LPWSTR *text)
-{
-    return proxy && text ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
-}
-
-DWORD WINAPI WinHttpRefreshProxySettings(PVOID resolver, int flags, PVOID callback, PVOID context)
-{
-    return resolver ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
-}
-
-DWORD WINAPI WinHttpResolverGetProxyForUrl(DWORD flags, PVOID resolver, PVOID url, PVOID context, PVOID callback,
-                                           PVOID callback_context, PVOID *result)
-{
-    return result && resolver && url ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
 }
 
 DWORD WINAPI WinHttpProbeConnectivity(HINTERNET handle, LPCWSTR user, LPCWSTR password, LPWSTR buffer, int *a, int *b)
@@ -931,20 +932,22 @@ DWORD WINAPI WinHttpGetTunnelSocket(HINTERNET handle, ULONGLONG *socket, BYTE **
     if (!socket || !data || !length)
         return ERROR_INVALID_PARAMETER;
     WH_OBJECT *request;
-    DWORD error = ReferenceOfType(handle, WH_REQUEST, &request);
+    DWORD error = WhReferenceOfType(handle, WH_REQUEST, &request);
     if (error)
         return error;
     WhRelease(request);
-    return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    /* a request that is no tunnel, as every request here, is no handle for the call. */
+    return ERROR_INVALID_HANDLE;
 }
 
+/* measured on Windows 11: a request that is no tunnel fails with the internal error. */
 HINTERNET WINAPI WinHttpConnectionOnlyConvert(HINTERNET handle, DWORD_PTR context)
 {
     WH_OBJECT *request;
-    DWORD error = ReferenceOfType(handle, WH_REQUEST, &request);
+    DWORD error = WhReferenceOfType(handle, WH_REQUEST, &request);
     if (!error) {
         WhRelease(request);
-        error = ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+        error = ERROR_WINHTTP_INTERNAL_ERROR;
     }
     SetLastError(error);
     return nullptr;
@@ -977,19 +980,24 @@ DWORD WINAPI WinHttpConnectionOnlyReceive(HINTERNET handle, BYTE *data, DWORD le
     return NoConnectionOnlyHandle(handle);
 }
 
-/* an upgraded request becomes a handle that carries the raw bytes of the connection. */
+/*
+ * an upgraded request becomes a handle that carries the raw bytes of the connection. the request must have asked for
+ * a protocol with option 207 and got its 101. measured on Windows 11: a request whose connection went to a protocol
+ * handle already fails with the internal error.
+ */
 
 HINTERNET WINAPI WinHttpProtocolCompleteUpgrade(HINTERNET handle, DWORD_PTR context)
 {
     WH_OBJECT *request;
-    DWORD error = ReferenceOfType(handle, WH_REQUEST, &request);
+    DWORD error = WhReferenceOfType(handle, WH_REQUEST, &request);
     if (error) {
         SetLastError(error);
         return nullptr;
     }
-    if (!request->UpgradeRequested || request->State != 2 || request->StatusCode != 101 || !request->Conn) {
+    if (!request->ProtocolRequested || request->State != 2 || request->StatusCode != 101 || !request->Conn) {
+        BOOL moved = request->ProtocolRequested && request->State == 2 && request->StatusCode == 101;
         WhRelease(request);
-        SetLastError(ERROR_WINHTTP_INCORRECT_HANDLE_STATE);
+        SetLastError(moved ? ERROR_WINHTTP_INTERNAL_ERROR : ERROR_WINHTTP_INCORRECT_HANDLE_STATE);
         return nullptr;
     }
     WH_OBJECT *protocol = WhCreate(WH_PROTOCOL, request);
@@ -1056,7 +1064,7 @@ static DWORD WINAPI ProtocolWorker(LPVOID parameter)
 static DWORD ProtocolTransfer(HINTERNET handle, BOOL send, BYTE *buffer, DWORD length, DWORD *done)
 {
     WH_OBJECT *protocol;
-    DWORD error = ReferenceOfType(handle, WH_PROTOCOL, &protocol);
+    DWORD error = WhReferenceOfType(handle, WH_PROTOCOL, &protocol);
     if (error)
         return error;
     if (!WhIsAsync(protocol)) {

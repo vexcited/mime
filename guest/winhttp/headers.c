@@ -455,6 +455,25 @@ static BOOL RequestLine(WH_OBJECT *request, WH_TEXT *text)
 }
 
 /* raw headers: a status or request line, then the headers, NUL or CRLF separated. */
+/*
+ * webio keeps the response headers http.sys knows in an array by HTTP_HEADER_ID, so the raw headers list them in that
+ * order with their usual names, measured in scratch/winhttp-headers. the others follow as the server sent them.
+ */
+static const char *const ResponseOrder[] = {
+    "Cache-Control",    "Connection",       "Date",          "Keep-Alive",    "Pragma",
+    "Trailer",          "Transfer-Encoding", "Upgrade",      "Via",           "Warning",
+    "Allow",            "Content-Length",   "Content-Type",  "Content-Encoding", "Content-Language",
+    "Content-Location", "Content-MD5",      "Content-Range", "Expires",       "Last-Modified",
+    "Accept-Ranges",    "Age",              "ETag",          "Location",      "Proxy-Authenticate",
+    "Retry-After",      "Server",           "Set-Cookie",    "Vary",          "WWW-Authenticate",
+};
+
+static BOOL AddHeader(WH_TEXT *text, const char *name, const char *value, const char *separator, DWORD length)
+{
+    return TextAddString(text, name) && TextAdd(text, ": ", 2) && TextAddString(text, value) &&
+           TextAdd(text, separator, length);
+}
+
 static BOOL RawHeaders(WH_OBJECT *request, BOOL request_headers, BOOL crlf, WH_TEXT *text)
 {
     const char *separator = crlf ? "\r\n" : "";
@@ -468,12 +487,26 @@ static BOOL RawHeaders(WH_OBJECT *request, BOOL request_headers, BOOL crlf, WH_T
     if (!TextAdd(text, separator, separator_length))
         return FALSE;
     WH_HEADERS *headers = request_headers ? &request->Request : &request->Response;
-    for (DWORD i = 0; i < headers->Count; i++) {
-        if (!TextAddString(text, headers->Items[i].Name) || !TextAdd(text, ": ", 2) ||
-            !TextAddString(text, headers->Items[i].Value) || !TextAdd(text, separator, separator_length))
-            return FALSE;
+    if (request_headers) {
+        for (DWORD i = 0; i < headers->Count; i++)
+            if (!AddHeader(text, headers->Items[i].Name, headers->Items[i].Value, separator, separator_length))
+                return FALSE;
+    } else {
+        for (DWORD k = 0; k < ARRAYSIZE(ResponseOrder); k++)
+            for (DWORD i = 0; i < headers->Count; i++)
+                if (!lstrcmpiA(headers->Items[i].Name, ResponseOrder[k]) &&
+                    !AddHeader(text, ResponseOrder[k], headers->Items[i].Value, separator, separator_length))
+                    return FALSE;
+        for (DWORD i = 0; i < headers->Count; i++) {
+            BOOL known = FALSE;
+            for (DWORD k = 0; k < ARRAYSIZE(ResponseOrder) && !known; k++)
+                known = !lstrcmpiA(headers->Items[i].Name, ResponseOrder[k]);
+            if (!known && !AddHeader(text, headers->Items[i].Name, headers->Items[i].Value, separator, separator_length))
+                return FALSE;
+        }
     }
-    return TextAdd(text, separator, separator_length);
+    /* the crlf form ends with an empty line; the other ends with its double null, the last one not counted. */
+    return crlf ? TextAdd(text, separator, separator_length) : TRUE;
 }
 
 static DWORD ReturnString(const char *data, DWORD length, LPVOID buffer, LPDWORD size, BOOL wire)
