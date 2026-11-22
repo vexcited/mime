@@ -295,6 +295,8 @@ typedef struct IDWriteFontFallback IDWriteFontFallback;
 typedef struct IDWriteTextAnalysisSource IDWriteTextAnalysisSource;
 typedef struct IDWriteNumberSubstitution IDWriteNumberSubstitution;
 typedef struct IDWriteBitmapRenderTarget IDWriteBitmapRenderTarget;
+typedef struct IDWriteBitmapRenderTarget1 IDWriteBitmapRenderTarget1;
+typedef struct IDWriteBitmapRenderTarget2 IDWriteBitmapRenderTarget2;
 typedef struct IDWriteGeometrySink IDWriteGeometrySink;
 typedef struct IDWriteTextFormat IDWriteTextFormat;
 typedef struct IDWriteTextLayout IDWriteTextLayout;
@@ -1879,6 +1881,37 @@ MIME_COM_INTERFACE(IDWriteFontCollection3)
                                                           IDWriteFontSet **subset);
 MIME_COM_INTERFACE(IDWriteGdiInterop1)
 
+typedef struct DWRITE_BITMAP_DATA_BGRA32 {
+    UINT32 width;
+    UINT32 height;
+    UINT32 *pixels;
+} DWRITE_BITMAP_DATA_BGRA32;
+
+#define IDWriteBitmapRenderTarget_METHODS(T)                                                                           \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *DrawGlyphRun)(T * This, FLOAT origin_x, FLOAT origin_y,                                 \
+                                             DWRITE_MEASURING_MODE measuring, const DWRITE_GLYPH_RUN *run,             \
+                                             IDWriteRenderingParams *params, COLORREF color, RECT *black_box);         \
+    HDC(STDMETHODCALLTYPE *GetMemoryDC)(T * This);                                                                     \
+    FLOAT(STDMETHODCALLTYPE *GetPixelsPerDip)(T * This);                                                               \
+    HRESULT(STDMETHODCALLTYPE *SetPixelsPerDip)(T * This, FLOAT pixels_per_dip);                                       \
+    HRESULT(STDMETHODCALLTYPE *GetCurrentTransform)(T * This, DWRITE_MATRIX * transform);                              \
+    HRESULT(STDMETHODCALLTYPE *SetCurrentTransform)(T * This, const DWRITE_MATRIX *transform);                         \
+    HRESULT(STDMETHODCALLTYPE *GetSize)(T * This, SIZE * size);                                                        \
+    HRESULT(STDMETHODCALLTYPE *Resize)(T * This, UINT32 width, UINT32 height);
+MIME_COM_INTERFACE(IDWriteBitmapRenderTarget)
+
+#define IDWriteBitmapRenderTarget1_METHODS(T)                                                                          \
+    IDWriteBitmapRenderTarget_METHODS(T)                                                                               \
+    DWRITE_TEXT_ANTIALIAS_MODE(STDMETHODCALLTYPE *GetTextAntialiasMode)(T * This);                                     \
+    HRESULT(STDMETHODCALLTYPE *SetTextAntialiasMode)(T * This, DWRITE_TEXT_ANTIALIAS_MODE mode);
+MIME_COM_INTERFACE(IDWriteBitmapRenderTarget1)
+
+#define IDWriteBitmapRenderTarget2_METHODS(T)                                                                          \
+    IDWriteBitmapRenderTarget1_METHODS(T)                                                                              \
+    HRESULT(STDMETHODCALLTYPE *GetBitmapData)(T * This, DWRITE_BITMAP_DATA_BGRA32 * data);
+MIME_COM_INTERFACE(IDWriteBitmapRenderTarget2)
+
 /* the color glyph runs of versions four and eight are only named here: Mime's fonts have no color layers. */
 #define IDWriteFactory4_METHODS(T)                                                                                     \
     IDWriteFactory3_METHODS(T)                                                                                         \
@@ -2018,6 +2051,9 @@ MIME_DEFINE_GUID(IID_IDWriteRenderingParams1, 0x94413cf4, 0xa6fc, 0x4248, 0x8b, 
                  0xd3);
 MIME_DEFINE_GUID(IID_IDWriteRenderingParams2, 0xf9d711c3, 0x9777, 0x40ae, 0x87, 0xe8, 0x3e, 0x5a, 0xf9, 0xbf, 0x09,
                  0x48);
+MIME_DEFINE_GUID(IID_IDWriteBitmapRenderTarget, 0x5e5a32a3, 0x8dff, 0x4773, 0x9f, 0xf6, 0x06, 0x96, 0xea, 0xb7, 0x72, 0x67);
+MIME_DEFINE_GUID(IID_IDWriteBitmapRenderTarget1, 0x791e8298, 0x3ef3, 0x4230, 0x98, 0x80, 0xc9, 0xbd, 0xec, 0xc4, 0x20, 0x64);
+MIME_DEFINE_GUID(IID_IDWriteBitmapRenderTarget2, 0xc553a742, 0xfc01, 0x44da, 0xa6, 0x6e, 0xb8, 0xb9, 0xed, 0x6c, 0x39, 0x95);
 MIME_DEFINE_GUID(IID_IDWriteGdiInterop, 0x1edd9491, 0x9853, 0x4299, 0x89, 0x8f, 0x64, 0x32, 0x98, 0x3b, 0x6f, 0x3a);
 MIME_DEFINE_GUID(IID_IDWriteGlyphRunAnalysis, 0x7d97dbf7, 0xe085, 0x42d4, 0x81, 0xe3, 0x6a, 0x88, 0x3b, 0xde, 0xd1,
                  0x18);

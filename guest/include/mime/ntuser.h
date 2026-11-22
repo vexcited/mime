@@ -445,8 +445,8 @@ enum {
 #define MIME_EXTENT_VIEWPORT 1
 
 /*
- * NtGdiEnumFonts output: one record per matching face, back to back. the buffer size is in bytes and receives
- * the size needed.
+ * what win32k gathers for each face NtGdiEnumFonts lists. the program gets ENUMFONTDATAW records made of it, see
+ * enum_data in guest/win32k/gdi/fontsvc.c; the buffer size is in bytes and receives the size needed.
  */
 typedef struct MIME_FONT_ENUM_RECORD {
     ENUMLOGFONTEXW Font;

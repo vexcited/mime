@@ -5,6 +5,7 @@
 #include "../win32k.h"
 
 const char *const g_catalog_font_names[] = {
+    "8514oem",
     "aharoni",
     "aldhabi",
     "andalus",
@@ -44,6 +45,7 @@ const char *const g_catalog_font_names[] = {
     "corbel light",
     "cordia new",
     "cordiaupc",
+    "courier",
     "courier new",
     "daunpenh",
     "david",
@@ -59,6 +61,7 @@ const char *const g_catalog_font_names[] = {
     "eucrosiaupc",
     "euphemia",
     "fangsong",
+    "fixedsys",
     "franklin gothic medium",
     "frankruehl",
     "freesiaupc",
@@ -142,6 +145,8 @@ const char *const g_catalog_font_names[] = {
     "ms mincho",
     "ms pgothic",
     "ms pmincho",
+    "ms sans serif",
+    "ms serif",
     "ms ui gothic",
     "mv boli",
     "myanmar text",
@@ -190,9 +195,12 @@ const char *const g_catalog_font_names[] = {
     "simsun-extg",
     "sitka",
     "sitka text",
+    "small fonts",
     "sylfaen",
     "symbol",
+    "system",
     "tahoma",
+    "terminal",
     "times new roman",
     "traditional arabic",
     "trebuchet ms",
@@ -228,4 +236,4 @@ const char *const g_catalog_font_names[] = {
     "yu mincho light",
 };
 
-const unsigned g_catalog_font_name_count = 221;
+const unsigned g_catalog_font_name_count = 229;

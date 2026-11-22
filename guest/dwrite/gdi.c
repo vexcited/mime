@@ -142,12 +142,242 @@ static HRESULT WINAPI interop_face_from_hdc(IDWriteGdiInterop *This, HDC dc, IDW
     return hr;
 }
 
+/*
+ * IDWriteBitmapRenderTarget: a memory dc with a 32-bit bitmap that glyph runs are drawn into, measured with brt.c of
+ * scratch/steam/vgui in the research repository. the bitmap starts black, its first row is the top one. cleartype
+ * blends each color with its own coverage and leaves the fourth byte alone, grayscale blends all four bytes. the
+ * black box is the one of the run, not cut to the bitmap.
+ */
+typedef struct DwTarget {
+    const IDWriteBitmapRenderTarget2Vtbl *lpVtbl;
+    LONG refs;
+    HDC dc;
+    HBITMAP bitmap, initial;
+    UINT32 *bits;
+    UINT32 width, height;
+    FLOAT pixels_per_dip;
+    DWRITE_MATRIX transform;
+    DWRITE_TEXT_ANTIALIAS_MODE antialias;
+} DwTarget;
+
+static HRESULT WINAPI target_query(IDWriteBitmapRenderTarget2 *This, REFIID riid, void **out)
+{
+    if (!out)
+        return E_POINTER;
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteBitmapRenderTarget) ||
+        IsEqualGUID(riid, &IID_IDWriteBitmapRenderTarget1) || IsEqualGUID(riid, &IID_IDWriteBitmapRenderTarget2)) {
+        *out = This;
+        This->lpVtbl->AddRef(This);
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI target_addref(IDWriteBitmapRenderTarget2 *This) { return InterlockedIncrement(&((DwTarget *)This)->refs); }
+
+static ULONG WINAPI target_release(IDWriteBitmapRenderTarget2 *This)
+{
+    DwTarget *t = (DwTarget *)This;
+    ULONG refs = InterlockedDecrement(&t->refs);
+    if (!refs) {
+        if (t->dc) {
+            if (t->initial)
+                SelectObject(t->dc, t->initial);
+            DeleteDC(t->dc);
+        }
+        if (t->bitmap)
+            DeleteObject(t->bitmap);
+        DwFree(t);
+    }
+    return refs;
+}
+
+/* a bitmap of no size keeps one pixel behind it, as a dc must hold a bitmap. */
+static HRESULT target_set_bitmap(DwTarget *t, UINT32 width, UINT32 height)
+{
+    if (width > 0x4000 || height > 0x4000)
+        return E_INVALIDARG;
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = width ? (LONG)width : 1;
+    info.bmiHeader.biHeight = -(height ? (LONG)height : 1);
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    void *bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(t->dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bitmap || !bits)
+        return E_OUTOFMEMORY;
+    HGDIOBJ old = SelectObject(t->dc, bitmap);
+    if (!t->initial)
+        t->initial = old;
+    if (t->bitmap)
+        DeleteObject(t->bitmap);
+    t->bitmap = bitmap;
+    t->bits = bits;
+    t->width = width;
+    t->height = height;
+    return S_OK;
+}
+
+static HRESULT WINAPI target_draw(IDWriteBitmapRenderTarget2 *This, FLOAT origin_x, FLOAT origin_y,
+                                  DWRITE_MEASURING_MODE measuring, const DWRITE_GLYPH_RUN *run,
+                                  IDWriteRenderingParams *params, COLORREF color, RECT *black_box)
+{
+    DwTarget *t = (DwTarget *)This;
+    if (black_box)
+        memset(black_box, 0, sizeof(*black_box));
+    if (!run || !run->fontFace || !params)
+        return E_INVALIDARG;
+    DWRITE_RENDERING_MODE mode = params->lpVtbl->GetRenderingMode(params);
+    if (mode == DWRITE_RENDERING_MODE_DEFAULT) {
+        HRESULT hr = run->fontFace->lpVtbl->GetRecommendedRenderingMode(run->fontFace, run->fontEmSize, t->pixels_per_dip,
+                                                                       measuring, params, &mode);
+        if (FAILED(hr))
+            return hr;
+    }
+    IDWriteGlyphRunAnalysis *analysis;
+    HRESULT hr = DwGlyphRunAnalysisCreate(run, t->pixels_per_dip, &t->transform, mode, measuring, t->antialias, origin_x,
+                                          origin_y, &analysis);
+    if (FAILED(hr))
+        return hr;
+    BOOL cleartype = t->antialias == DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE && mode != DWRITE_RENDERING_MODE_ALIASED;
+    DWRITE_TEXTURE_TYPE type = cleartype ? DWRITE_TEXTURE_CLEARTYPE_3x1 : DWRITE_TEXTURE_ALIASED_1x1;
+    RECT bounds;
+    hr = analysis->lpVtbl->GetAlphaTextureBounds(analysis, type, &bounds);
+    LONG w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
+    if (SUCCEEDED(hr) && w > 0 && h > 0) {
+        if (black_box)
+            *black_box = bounds;
+        UINT32 step = cleartype ? 3 : 1;
+        BYTE *texture = DwAlloc((SIZE_T)w * h * step);
+        if (!texture)
+            hr = E_OUTOFMEMORY;
+        else
+            hr = analysis->lpVtbl->CreateAlphaTexture(analysis, type, &bounds, texture, (UINT32)(w * h * step));
+        UINT32 src[3] = {GetRValue(color), GetGValue(color), GetBValue(color)};
+        LONG x0 = bounds.left < 0 ? -bounds.left : 0, y0 = bounds.top < 0 ? -bounds.top : 0;
+        LONG x1 = bounds.right > (LONG)t->width ? (LONG)t->width - bounds.left : w;
+        LONG y1 = bounds.bottom > (LONG)t->height ? (LONG)t->height - bounds.top : h;
+        for (LONG y = y0; SUCCEEDED(hr) && y < y1; y++) {
+            const BYTE *c = texture + ((SIZE_T)y * w + x0) * step;
+            UINT32 *dst = t->bits + (SIZE_T)(bounds.top + y) * t->width + bounds.left + x0;
+            for (LONG x = x0; x < x1; x++, c += step, dst++) {
+                UINT32 d = *dst, r = (d >> 16) & 255, g = (d >> 8) & 255, b = d & 255, a = d >> 24;
+                UINT32 cr = c[0], cg = cleartype ? c[1] : c[0], cb = cleartype ? c[2] : c[0];
+                if (!(cr | cg | cb))
+                    continue;
+                r = (r * (255 - cr) + src[0] * cr + 127) / 255;
+                g = (g * (255 - cg) + src[1] * cg + 127) / 255;
+                b = (b * (255 - cb) + src[2] * cb + 127) / 255;
+                if (!cleartype)
+                    a = (a * (255 - cr) + 255 * cr + 127) / 255;
+                *dst = (a << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        DwFree(texture);
+    }
+    analysis->lpVtbl->Release(analysis);
+    return hr;
+}
+
+static HDC WINAPI target_dc(IDWriteBitmapRenderTarget2 *This) { return ((DwTarget *)This)->dc; }
+
+static FLOAT WINAPI target_dip(IDWriteBitmapRenderTarget2 *This) { return ((DwTarget *)This)->pixels_per_dip; }
+
+static HRESULT WINAPI target_set_dip(IDWriteBitmapRenderTarget2 *This, FLOAT pixels_per_dip)
+{
+    if (!(pixels_per_dip > 0))
+        return E_INVALIDARG;
+    ((DwTarget *)This)->pixels_per_dip = pixels_per_dip;
+    return S_OK;
+}
+
+static HRESULT WINAPI target_transform(IDWriteBitmapRenderTarget2 *This, DWRITE_MATRIX *transform)
+{
+    if (!transform)
+        return E_INVALIDARG;
+    *transform = ((DwTarget *)This)->transform;
+    return S_OK;
+}
+
+static HRESULT WINAPI target_set_transform(IDWriteBitmapRenderTarget2 *This, const DWRITE_MATRIX *transform)
+{
+    static const DWRITE_MATRIX identity = {1, 0, 0, 1, 0, 0};
+    ((DwTarget *)This)->transform = transform ? *transform : identity;
+    return S_OK;
+}
+
+static HRESULT WINAPI target_size(IDWriteBitmapRenderTarget2 *This, SIZE *size)
+{
+    DwTarget *t = (DwTarget *)This;
+    if (!size)
+        return E_INVALIDARG;
+    size->cx = (LONG)t->width;
+    size->cy = (LONG)t->height;
+    return S_OK;
+}
+
+static HRESULT WINAPI target_resize(IDWriteBitmapRenderTarget2 *This, UINT32 width, UINT32 height)
+{
+    DwTarget *t = (DwTarget *)This;
+    if (width == t->width && height == t->height)
+        return S_OK;
+    return target_set_bitmap(t, width, height);
+}
+
+static DWRITE_TEXT_ANTIALIAS_MODE WINAPI target_antialias(IDWriteBitmapRenderTarget2 *This)
+{
+    return ((DwTarget *)This)->antialias;
+}
+
+static HRESULT WINAPI target_set_antialias(IDWriteBitmapRenderTarget2 *This, DWRITE_TEXT_ANTIALIAS_MODE mode)
+{
+    if (mode != DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE && mode != DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE)
+        return E_INVALIDARG;
+    ((DwTarget *)This)->antialias = mode;
+    return S_OK;
+}
+
+static HRESULT WINAPI target_data(IDWriteBitmapRenderTarget2 *This, DWRITE_BITMAP_DATA_BGRA32 *data)
+{
+    DwTarget *t = (DwTarget *)This;
+    if (!data)
+        return E_INVALIDARG;
+    data->width = t->width;
+    data->height = t->height;
+    data->pixels = t->bits;
+    return S_OK;
+}
+
+static const IDWriteBitmapRenderTarget2Vtbl g_target_vtbl = {
+    target_query,   target_addref,        target_release, target_draw,   target_dc,        target_dip,
+    target_set_dip, target_transform,     target_set_transform, target_size, target_resize, target_antialias,
+    target_set_antialias, target_data,
+};
+
 static HRESULT WINAPI interop_render_target(IDWriteGdiInterop *This, HDC dc, UINT32 width, UINT32 height,
                                             IDWriteBitmapRenderTarget **target)
 {
-    if (target)
-        *target = nullptr;
-    return E_NOTIMPL;
+    if (!target)
+        return E_INVALIDARG;
+    *target = nullptr;
+    DwTarget *t = DwAllocZero(sizeof(*t));
+    if (!t)
+        return E_OUTOFMEMORY;
+    t->lpVtbl = &g_target_vtbl;
+    t->refs = 1;
+    t->pixels_per_dip = 1.0f;
+    t->transform.m11 = t->transform.m22 = 1.0f;
+    t->antialias = DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE;
+    t->dc = CreateCompatibleDC(dc);
+    HRESULT hr = t->dc ? target_set_bitmap(t, width, height) : E_FAIL;
+    if (FAILED(hr)) {
+        target_release((IDWriteBitmapRenderTarget2 *)t);
+        return hr;
+    }
+    *target = (IDWriteBitmapRenderTarget *)t;
+    return S_OK;
 }
 
 static HRESULT WINAPI interop_from_logfont1(IDWriteGdiInterop *This, const LOGFONTW *lf,

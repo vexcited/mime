@@ -152,6 +152,7 @@ static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, L
     }
     if (st->TextAlign & TA_UPDATECP)
         st->CurrentPos.x += width;
+    DcAccumulateBounds(dc, &dirty, clip);
     dirty.left -= 2;
     dirty.top -= 2;
     dirty.right += 2;
@@ -198,7 +199,8 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
     } else {
         width = text_positions(dc, fi, text, count, (options & ETO_GLYPH_INDEX) != 0, pos);
     }
-    if (st->HasXform || st->HasPage) {
+    /* a raster font is not transformed, only where it is drawn. */
+    if ((st->HasXform || st->HasPage) && !fi->Face->Raster) {
         TextDrawTransformed(dc, fi, &clip, x, y, options, text, count, pos, width);
         RgnFree(&clip);
         W32Free(pos);
@@ -249,6 +251,7 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
     RECT dirty = box;
     if (rect && (options & ETO_OPAQUE))
         RectUnion(&dirty, &dirty, &opaque);
+    DcAccumulateBounds(dc, &dirty, &clip);
     /* glyphs can overhang their advance box. */
     LONG slack = fi->EmPixels / 2 + 2;
     dirty.left -= slack;
@@ -288,7 +291,7 @@ BOOL NTAPI NtGdiExtTextOutW(HDC hdc, int x, int y, UINT options, const RECT *use
             for (int i = 0; i < count; i++)
                 dx[i] = dx[2 * i];
         }
-        UserEnter();
+        UserEnterRead();
         DC *dc = DcLookup(hdc);
         if (dc) {
             if (dc->Surface)
@@ -311,7 +314,7 @@ static BOOL text_extent(HDC hdc, LPCWSTR user_text, ULONG count, BOOLEAN indices
         W32Free(text);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     *size = (SIZE){0, 0};
@@ -374,7 +377,7 @@ BOOL NTAPI NtGdiGetTextMetricsW(HDC hdc, TEXTMETRICW *metrics, ULONG size)
     if (size < sizeof(TMW_INTERNAL))
         return FALSE;
     TMW_INTERNAL tmi = {};
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     if (fi) {
@@ -390,12 +393,12 @@ BOOL NTAPI NtGdiGetTextMetricsW(HDC hdc, TEXTMETRICW *metrics, ULONG size)
 /* the count copied, its terminating nul included, or the count a buffer needs. */
 int NTAPI NtGdiGetTextFaceW(HDC hdc, int count, LPWSTR name, BOOL alias)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     WCHAR face[LF_FACESIZE] = {};
     if (fi)
-        FontGetFaceName(fi, face, LF_FACESIZE);
+        FontGetFaceName(fi, dc->State.Font->Logical.lfFaceName, face, LF_FACESIZE);
     UserLeave();
     if (!fi)
         return 0;
@@ -422,7 +425,7 @@ BOOL NTAPI NtGdiGetCharWidthW(HDC hdc, UINT first, UINT count, PWCHAR user_chars
     PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR)) : nullptr;
     BOOL ok = FALSE;
     if (widths && (!user_chars || (chars && NT_SUCCESS(MimeCopyFromUser(chars, user_chars, count * sizeof(WCHAR)))))) {
-        UserEnter();
+        UserEnterRead();
         DC *dc = DcLookup(hdc);
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
@@ -463,7 +466,7 @@ BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_
     PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR)) : nullptr;
     BOOL ok = FALSE;
     if (abc && (!user_chars || (chars && NT_SUCCESS(MimeCopyFromUser(chars, user_chars, count * sizeof(WCHAR)))))) {
-        UserEnter();
+        UserEnterRead();
         DC *dc = DcLookup(hdc);
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
@@ -497,8 +500,8 @@ BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_
 
 /*
  * FONT_REALIZATION_INFO of 16, 24 or 812 bytes. FontHasWesternScript of gdi32full keys its cache on the file id at
- * 12, uniscribe hashes the realization id at 8 with it. 4 is the technology, 3 for truetype outlines, and 1; 16 is 1
- * for every face measured, 20 the linked faces and 22 the simulations: 1 bold, 2 italic.
+ * 12, uniscribe hashes the realization id at 8 with it. 4 is the technology, 3 for truetype outlines and 1 for a
+ * raster face; 16 is 1 for every face measured, 20 the linked faces and 22 the simulations: 1 bold, 2 italic.
  */
 BOOL NTAPI NtGdiGetRealizationInfo(HDC hdc, PVOID user_info)
 {
@@ -508,17 +511,20 @@ BOOL NTAPI NtGdiGetRealizationInfo(HDC hdc, PVOID user_info)
     UCHAR *info = W32Alloc(812);
     if (!info)
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     if (fi) {
         *(ULONG *)info = size;
-        info[4] = 3;
+        info[4] = fi->Face->Raster ? 1 : 3;
         info[5] = 1;
         *(ULONG *)(info + 8) = fi->Id;
         *(ULONG *)(info + 12) = FontFaceId(fi->Face);
         *(ULONG *)(info + 16) = 1;
         *(USHORT *)(info + 22) = (USHORT)((fi->SimBold ? 1 : 0) | (fi->SimItalic ? 2 : 0));
+        /* a raster face stretched, Small Fonts at -60 five times, says by how much. */
+        if (fi->Face->Raster && fi->ScaleY > 1)
+            *(USHORT *)(info + 20) = (USHORT)fi->ScaleY;
     }
     UserLeave();
     BOOL ok = fi && NT_SUCCESS(MimeCopyToUser(user_info, info, size));
@@ -540,7 +546,7 @@ BOOL NTAPI NtGdiAnyLinkedFonts(void)
 
 BOOL NTAPI NtGdiFontIsLinked(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     BOOL linked = fi && FontHasSystemLink(fi->Face);
@@ -554,7 +560,7 @@ BOOL NTAPI NtGdiFontIsLinked(HDC hdc)
  */
 DWORD NTAPI NtGdiGetCharSet(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     DWORD value = DEFAULT_CHARSET << 16;
@@ -568,7 +574,7 @@ DWORD NTAPI NtGdiGetCharSet(HDC hdc)
 
 int NTAPI NtGdiGetTextCharsetInfo(HDC hdc, FONTSIGNATURE *user_signature, DWORD flags)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     int charset = DEFAULT_CHARSET;

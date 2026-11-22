@@ -1541,39 +1541,118 @@ static const FEATURE_FONT fonts34[] = {
      .Sha1 = "03bc1a5bf19b5e71ac7661c542e884c1fed62cb5", .Size = 5085196, .Families = f34_2},
 };
 
-static const char *const f35_0[] = {"Cascadia Code", nullptr};
-static const char *const f35_1[] = {"Cascadia Code", nullptr};
-static const char *const f35_2[] = {"Cascadia Code", nullptr};
-static const char *const f35_3[] = {"Cascadia Code", nullptr};
-static const char *const f35_4[] = {"Cascadia Mono", nullptr};
-static const char *const f35_5[] = {"Cascadia Mono", nullptr};
-static const char *const f35_6[] = {"Cascadia Mono", nullptr};
-static const char *const f35_7[] = {"Cascadia Mono", nullptr};
+static const char *const f35_0[] = {"Fixedsys", nullptr};
+static const char *const f35_1[] = {"8514oem", nullptr};
+static const char *const f35_2[] = {"System", nullptr};
+static const char *const f35_3[] = {"Terminal", nullptr};
+static const char *const f35_4[] = {"Terminal", nullptr};
+static const char *const f35_5[] = {"Courier", nullptr};
+static const char *const f35_6[] = {"Courier", nullptr};
+static const char *const f35_7[] = {"Terminal", nullptr};
+static const char *const f35_8[] = {"Terminal", nullptr};
+static const char *const f35_9[] = {"Terminal", nullptr};
+static const char *const f35_10[] = {"MS Serif", nullptr};
+static const char *const f35_11[] = {"MS Serif", nullptr};
+static const char *const f35_12[] = {"Small Fonts", "MS Serif", nullptr};
+static const char *const f35_13[] = {"Small Fonts", nullptr};
+static const char *const f35_14[] = {"MS Sans Serif", nullptr};
+static const char *const f35_15[] = {"MS Sans Serif", nullptr};
+static const char *const f35_16[] = {"Fixedsys", nullptr};
+static const char *const f35_17[] = {"Terminal", nullptr};
+static const char *const f35_18[] = {"System", nullptr};
 static const FEATURE_FONT fonts35[] = {
+    {.File = "8514fix.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "9d79657757c94d0c8ce4de56f4a3b9faa8087d651961dbea9eaa201513c05389",
+     .Sha1 = "31f7652e3287f5d1796e69b505a934625f52a866", .Size = 10976, .Families = f35_0},
+    {.File = "8514oem.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "7e2d2fd03615a83a8246efb5d3df60c120f23a9ae0e31f73c44721ce57cea83e",
+     .Sha1 = "1bcb5c413aad3d3eea4e881aea3c90fadd5126f7", .Size = 12288, .Families = f35_1},
+    {.File = "8514sys.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "dc7e1c9bb168e22b7a8b1a10c5d9555d71ea8486dc0d628fa17d117698bae61b",
+     .Sha1 = "78e8897326882c540ad1550d400e4533a1edd78e", .Size = 9280, .Families = f35_2},
+    {.File = "cga40woa.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "32482989159a4d10af71599300b99e7c618d768e97832bf7013b78e52fcea4e9",
+     .Sha1 = "4c30f5a0be47d5803a0a17453005412e29086049", .Size = 6336, .Families = f35_3},
+    {.File = "cga80woa.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "93e7c6c123d9b53a2d933f63093b4b85302023517f56abf057f9ef8a94d83b8b",
+     .Sha1 = "a0e28adf40a9d06710d20071dcaba2569b91b1dd", .Size = 4304, .Families = f35_4},
+    {.File = "coure.fon", .Member = nullptr, .Registry = "Courier 10,12,15",
+     .Sha256 = "e81d15ef094f997d48cb144375866fb2f5d988b0b93b43c38cf58985e27acf45",
+     .Sha1 = "559f151af9c40750a24cdc96ada16922b0c0d4d4", .Size = 23408, .Families = f35_5},
+    {.File = "courf.fon", .Member = nullptr, .Registry = "Courier 10,12,15 (120)",
+     .Sha256 = "cd5169425701d19edc3d0c73f6974d1f77a28777fc079a4c09fdeee07484777d",
+     .Sha1 = "628390de9ac415e13378ff678d642fe46b4eb189", .Size = 31712, .Families = f35_6},
+    {.File = "dosapp.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "0da0d4ed89fd1e8810c7f2cdb5372abfb02cb3d031acacc1a5bbc853f879c2bd",
+     .Sha1 = "61dccd934eeaf49b9dfe4385e5ba12ea8eaaa35c", .Size = 36656, .Families = f35_7},
+    {.File = "ega40woa.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "a0e5dbe96d1cae29501b481cd98a1eac5f0f662aa367aa9712a419c3c32f4284",
+     .Sha1 = "33738efa553c7dcb30a94055b24fd1a16616bc27", .Size = 8368, .Families = f35_8},
+    {.File = "ega80woa.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "6e7a86167874f989433a264345e5ea6c0e000861cbca8153858b23d7d35d5ecc",
+     .Sha1 = "e640903a5fa2a800a27b74c73a02ea855dcbd953", .Size = 5312, .Families = f35_9},
+    {.File = "serife.fon", .Member = nullptr, .Registry = "MS Serif 8,10,12,14,18,24",
+     .Sha256 = "19bfe5865332ca1f1392bf77950f79dbb7d9e5600f79bc546397567310364fe2",
+     .Sha1 = "f245385d652d1891cfc6615b5687c5508e3bc266", .Size = 57936, .Families = f35_10},
+    {.File = "seriff.fon", .Member = nullptr, .Registry = "MS Serif 8,10,12,14,18,24 (120)",
+     .Sha256 = "03a22afa8a2eb02d21c601fa575ddcc9e0496a2658c1dc73b8029566dc432e00",
+     .Sha1 = "e3d72ce1959702eaf90a97005d52fdbd41cfe62e", .Size = 81728, .Families = f35_11},
+    {.File = "smalle.fon", .Member = nullptr, .Registry = "Small Fonts",
+     .Sha256 = "de416395301da32c96bf34625483ea6ecdcdaaeb9ff72cdca00b5af4d7092da9",
+     .Sha1 = "f696b1221ce83c5b9a01ffc53a4a07e10fa31226", .Size = 26112, .Families = f35_12},
+    {.File = "smallf.fon", .Member = nullptr, .Registry = "Small Fonts (120)",
+     .Sha256 = "371c8f75993177f8ffbba9e6ba0b910ec5c88ee2f8edba23b3e08a20f861dcb3",
+     .Sha1 = "762d6784161fe161d8b63766b7d246e460b0394a", .Size = 21504, .Families = f35_13},
+    {.File = "sserife.fon", .Member = nullptr, .Registry = "MS Sans Serif 8,10,12,14,18,24",
+     .Sha256 = "28877eee4ccda2a33e0fac39da7f3effdea061e4fd9cc019f00d82405b9f9682",
+     .Sha1 = "c278252d15c47c16ee1742095e20610018a2b53b", .Size = 64656, .Families = f35_14},
+    {.File = "sseriff.fon", .Member = nullptr, .Registry = "MS Sans Serif 8,10,12,14,18,24 (120)",
+     .Sha256 = "3c71cc8c20932ff14d89b4489bc83f2fb015d134db0e537e859a80af34d7b242",
+     .Sha1 = "e1266f56f2f2f24a232fac34fb0a42a673fa08d4", .Size = 89856, .Families = f35_15},
+    {.File = "vgafix.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "57402d1e89dc0d8368cde612d720ab4a6a813bfe5e243e9da2775013e06f2b0f",
+     .Sha1 = "76d18128bcfd1d24a17ccf11806d2242dc85b3a3", .Size = 5360, .Families = f35_16},
+    {.File = "vgaoem.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "011326f65e151d83c157ef6fdd23a2d851e8d0f2662d8409ea0b4a142e343a13",
+     .Sha1 = "cf7252f08718a7c3b7e2012183222db6fdae83ac", .Size = 5168, .Families = f35_17},
+    {.File = "vgasys.fon", .Member = nullptr, .Registry = nullptr,
+     .Sha256 = "7baefa14ef8ef2355374d0b5061043dd5f4f8c33ff57680366e4a725f91646f8",
+     .Sha1 = "293a0ed46897a6dc4d502e92a1dd40a7f1c6762f", .Size = 7280, .Families = f35_18},
+};
+
+static const char *const f36_0[] = {"Cascadia Code", nullptr};
+static const char *const f36_1[] = {"Cascadia Code", nullptr};
+static const char *const f36_2[] = {"Cascadia Code", nullptr};
+static const char *const f36_3[] = {"Cascadia Code", nullptr};
+static const char *const f36_4[] = {"Cascadia Mono", nullptr};
+static const char *const f36_5[] = {"Cascadia Mono", nullptr};
+static const char *const f36_6[] = {"Cascadia Mono", nullptr};
+static const char *const f36_7[] = {"Cascadia Mono", nullptr};
+static const FEATURE_FONT fonts36[] = {
     {.File = "CascadiaCode-Bold.ttf", .Member = "ttf/static/CascadiaCode-Bold.ttf", .Registry = "Cascadia Code Bold (TrueType)",
      .Sha256 = "58197c5c3ba2967d4780b0ef8aee72d0cbbfa42885ddede9ec96fa7a1df5aead",
-     .Sha1 = nullptr, .Size = 604696, .Families = f35_0},
+     .Sha1 = nullptr, .Size = 604696, .Families = f36_0},
     {.File = "CascadiaCode-BoldItalic.ttf", .Member = "ttf/static/CascadiaCode-BoldItalic.ttf", .Registry = "Cascadia Code Bold Italic (TrueType)",
      .Sha256 = "aff1984cbbdd990137691ae9567b87e7b1190f6a4e146017c6a0893ca4b000e7",
-     .Sha1 = nullptr, .Size = 458632, .Families = f35_1},
+     .Sha1 = nullptr, .Size = 458632, .Families = f36_1},
     {.File = "CascadiaCode-Italic.ttf", .Member = "ttf/static/CascadiaCode-Italic.ttf", .Registry = "Cascadia Code Italic (TrueType)",
      .Sha256 = "1f0676937792fe550effeafb7f4622080c2a5d62715d1245d471258fa1a23b8c",
-     .Sha1 = nullptr, .Size = 453184, .Families = f35_2},
+     .Sha1 = nullptr, .Size = 453184, .Families = f36_2},
     {.File = "CascadiaCode-Regular.ttf", .Member = "ttf/static/CascadiaCode-Regular.ttf", .Registry = "Cascadia Code Regular (TrueType)",
      .Sha256 = "c33ef522cdfeff99907fb54f3e97152bb18bfb9b56ec2fef4d4ceec51c8974a4",
-     .Sha1 = nullptr, .Size = 598060, .Families = f35_3},
+     .Sha1 = nullptr, .Size = 598060, .Families = f36_3},
     {.File = "CascadiaMono-Bold.ttf", .Member = "ttf/static/CascadiaMono-Bold.ttf", .Registry = "Cascadia Mono Bold (TrueType)",
      .Sha256 = "b22cb603ed23cac36e8444846e1841caca21719a5e852780a8d37ae7a49b0a36",
-     .Sha1 = nullptr, .Size = 581704, .Families = f35_4},
+     .Sha1 = nullptr, .Size = 581704, .Families = f36_4},
     {.File = "CascadiaMono-BoldItalic.ttf", .Member = "ttf/static/CascadiaMono-BoldItalic.ttf", .Registry = "Cascadia Mono Bold Italic (TrueType)",
      .Sha256 = "ecaeab55e6334408f8ff1fde78a99ddaeb3bb7fad4fcd177df8475c88a7d240f",
-     .Sha1 = nullptr, .Size = 439072, .Families = f35_5},
+     .Sha1 = nullptr, .Size = 439072, .Families = f36_5},
     {.File = "CascadiaMono-Italic.ttf", .Member = "ttf/static/CascadiaMono-Italic.ttf", .Registry = "Cascadia Mono Italic (TrueType)",
      .Sha256 = "8d98a33e7617c14dd1d200b4900bc6c2d5d7165abb5c09e9d2fd51c38ce9c9ff",
-     .Sha1 = nullptr, .Size = 435820, .Families = f35_6},
+     .Sha1 = nullptr, .Size = 435820, .Families = f36_6},
     {.File = "CascadiaMono-Regular.ttf", .Member = "ttf/static/CascadiaMono-Regular.ttf", .Registry = "Cascadia Mono Regular (TrueType)",
      .Sha256 = "06520d032ec274fa5040b22c6f4a1d829081b24ba40b2da56dae89bf10c7b481",
-     .Sha1 = nullptr, .Size = 575912, .Families = f35_7},
+     .Sha1 = nullptr, .Size = 575912, .Families = f36_7},
 };
 
 const FEATURE_DEF g_font_features[] = {
@@ -2081,6 +2160,19 @@ const FEATURE_DEF g_font_features[] = {
         .Fonts = fonts34, .FontCount = 3,
     },
     {
+        .Name = "Fonts.System",
+        .DisplayName = "System, Terminal, Fixedsys, Courier, MS Sans Serif, MS Serif and Small Fonts",
+        .Version = "10.0.26100.4349",
+        .Vendor = "Microsoft Corporation",
+        .Url = {[FEATURE_ARCH_X64] = "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/009d9a0d-8e1a-45ce-9540-21377534803e/26100.4349.250607-1500.ge_release_svc_refresh_CLIENTCONSUMER_RET_x64FRE_en-us.esd"},
+        .Format = FEATURE_FORMAT_WIM,
+        .MinSize = 0ull, .MaxSize = 1099511627776ull,
+        .DownloadMB = 54,
+        .Handler = FEATURE_HANDLER_FONTS,
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
+        .Fonts = fonts35, .FontCount = 19,
+    },
+    {
         .Name = "Fonts.Cascadia",
         .DisplayName = "Cascadia Code and Cascadia Mono",
         .Version = "2407.24",
@@ -2091,7 +2183,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 3,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "Cascadia is free software under the SIL Open Font License.",
-        .Fonts = fonts35, .FontCount = 8,
+        .Fonts = fonts36, .FontCount = 8,
     },
 };
 

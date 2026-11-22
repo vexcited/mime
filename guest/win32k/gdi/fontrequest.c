@@ -109,7 +109,7 @@ static BOOLEAN is_the_service(void)
 
 static BOOLEAN installed(PCWSTR family)
 {
-    UserEnter();
+    UserEnterRead();
     BOOLEAN there = FontFamilyInstalled(family);
     UserLeave();
     return there;
@@ -121,12 +121,16 @@ void FontAskFor(PCWSTR face)
     static const MIME_FONT_SUBSTITUTE substitutes[] = {MIME_FONT_SUBSTITUTES};
     if (!face || !face[0])
         return;
+    static const MIME_FONT_CHARSET_SUBSTITUTE charset_substitutes[] = {MIME_FONT_CHARSET_SUBSTITUTES};
     PCWSTR family = face;
     for (ULONG i = 0; i < RTL_NUMBER_OF(substitutes); i++)
         if (!_wcsicmp(family, substitutes[i].From)) {
             family = substitutes[i].To;
             break;
         }
+    for (ULONG i = 0; family == face && i < RTL_NUMBER_OF(charset_substitutes); i++)
+        if (!_wcsicmp(family, charset_substitutes[i].From))
+            family = charset_substitutes[i].To;
     if (!in_catalog(family) || installed(family) || is_the_service() || !first_time(family))
         return;
     WCHAR line[200];

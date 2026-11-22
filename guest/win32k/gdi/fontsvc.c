@@ -56,14 +56,17 @@ static ULONG kerning_pairs(FONT_FACE *f)
     return (be16(head + 8) >> 8) == 0 ? be16(head + 10) : 0;
 }
 
+/* FLI_GLYPHS for an outline face, nothing for a raster one, which has no kerning either. */
 ULONG FontLanguageInfo(FONT_INSTANCE *fi)
 {
+    if (fi->Face->Raster)
+        return 0;
     return 0x40000 | (kerning_pairs(fi->Face) ? 8 : 0);
 }
 
 ULONG NTAPI NtGdiGetFontData(HDC hdc, DWORD table, DWORD offset, PVOID buffer, ULONG size)
 {
-    UserEnter();
+    UserEnterRead();
     FONT_FACE *face = dc_face(hdc);
     ULONG length = 0;
     BOOLEAN ok = face && FontReadTable(face, swap32(table), 0, nullptr, 0, &length);
@@ -79,7 +82,7 @@ ULONG NTAPI NtGdiGetFontData(HDC hdc, DWORD table, DWORD offset, PVOID buffer, U
     PUCHAR copy = W32Alloc(n);
     if (!copy)
         return GDI_ERROR;
-    UserEnter();
+    UserEnterRead();
     ok = FontReadTable(face, swap32(table), offset, copy, n, nullptr);
     UserLeave();
     if (ok)
@@ -132,9 +135,12 @@ ULONG NTAPI NtGdiGetOutlineTextMetricsInternalW(HDC hdc, ULONG size, OUTLINETEXT
     }
     if (!size)
         user_otm = nullptr;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
+    /* a raster font has no outline metrics. */
+    if (fi && fi->Face->Raster)
+        fi = nullptr;
     if (fi) {
         FONT_FACE *f = fi->Face;
         const MimeTtfMetrics *m = &f->Metrics;
@@ -233,6 +239,13 @@ ULONG NTAPI NtGdiGetOutlineTextMetricsInternalW(HDC hdc, ULONG size, OUTLINETEXT
 
 /* ------------------------------------------------------------------ unicode coverage and glyph indices */
 
+/* a character of a raster face: its byte in code page 1252 is in the range of the font. */
+static BOOLEAN raster_has(const FONT_FACE *f, WCHAR c)
+{
+    int b = FntFromUnicode(1252, c);
+    return b >= f->Fnt.FirstChar && b <= f->Fnt.LastChar;
+}
+
 static BOOLEAN build_ranges(FONT_FACE *f)
 {
     if (f->Ranges)
@@ -243,7 +256,7 @@ static BOOLEAN build_ranges(FONT_FACE *f)
         total = 0;
         LONG start = -1;
         for (ULONG c = 0; c <= 0x10000; c++) {
-            BOOLEAN has = c < 0x10000 && mime_ttf_glyph_index(&f->Ttf, c) != 0;
+            BOOLEAN has = c < 0x10000 && (f->Raster ? raster_has(f, (WCHAR)c) : mime_ttf_glyph_index(&f->Ttf, c) != 0);
             if (has && start < 0)
                 start = (LONG)c;
             if ((!has || c - (ULONG)start >= 0xFFFF) && start >= 0) {
@@ -270,7 +283,7 @@ static BOOLEAN build_ranges(FONT_FACE *f)
 
 DWORD NTAPI NtGdiGetFontUnicodeRanges(HDC hdc, LPGLYPHSET user_set)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     FONT_FACE *f = fi ? fi->Face : nullptr;
@@ -283,7 +296,7 @@ DWORD NTAPI NtGdiGetFontUnicodeRanges(HDC hdc, LPGLYPHSET user_set)
             if (copy) {
                 GLYPHSET *gs = (GLYPHSET *)copy;
                 gs->cbThis = size;
-                gs->flAccel = 0;
+                gs->flAccel = f->Raster ? GS_8BIT_INDICES : 0;
                 gs->cGlyphsSupported = f->GlyphsSupported;
                 gs->cRanges = f->RangeCount;
                 memcpy(gs->ranges, f->Ranges, f->RangeCount * sizeof(WCRANGE));
@@ -307,13 +320,15 @@ DWORD NTAPI NtGdiGetGlyphIndicesW(HDC hdc, LPCWSTR user_text, int count, LPWORD 
     WORD *indices = W32Alloc((SIZE_T)count * sizeof(WORD) + 2);
     DWORD result = GDI_ERROR;
     if (text && indices && NT_SUCCESS(MimeCopyFromUser(text, user_text, (SIZE_T)count * sizeof(WCHAR)))) {
-        UserEnter();
+        UserEnterRead();
         DC *dc = DcLookup(hdc);
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
             for (int i = 0; i < count; i++) {
                 USHORT g = FontGlyphIndex(fi, text[i]);
-                indices[i] = !g && (flags & GGI_MARK_NONEXISTING_GLYPHS) ? 0xFFFF : g;
+                /* a raster face has no glyph 0: a character out of its code page is the one missing. */
+                BOOLEAN missing = fi->Face->Raster ? !raster_has(fi->Face, text[i]) : !g;
+                indices[i] = missing && (flags & GGI_MARK_NONEXISTING_GLYPHS) ? 0xFFFF : g;
             }
             result = (DWORD)count;
         }
@@ -413,6 +428,8 @@ static void outline_free(OUTLINE *o)
 static BOOLEAN outline_load_ex(FONT_INSTANCE *fi, USHORT glyph, BOOLEAN hinted, OUTLINE *o)
 {
     memset(o, 0, sizeof(*o));
+    if (fi->Face->Raster)
+        return FALSE;
     MimeTtfSink sink = {outline_point, outline_end, o};
     MimeTtfHinter *h = hinted ? FontHinter(fi) : nullptr;
     if (h) {
@@ -726,6 +743,8 @@ UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LO
     float a11 = m->eM11, a12 = -m->eM12, a21 = -m->eM21, a22 = m->eM22;
     float sx = fi->ScaleX, sy = fi->ScaleY, shear = fi->SimItalic ? 0.2f : 0.0f;
     UCHAR *cov = nullptr;
+    if (fi->Face->Raster)
+        return nullptr;
     if (a12 == 0 && a11 > 0 && a22 > 0) {
         MimeTtfRenderParams params = {sx * a11, sy * a22, 0, 0, (shear * a11 + a21) / a22,
                                       fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
@@ -790,10 +809,11 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
         return GDI_ERROR;
     float m11 = fixed_to_float(mat.eM11), m12 = fixed_to_float(mat.eM12), m21 = fixed_to_float(mat.eM21),
           m22 = fixed_to_float(mat.eM22);
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
-    if (!fi) {
+    /* GetGlyphOutline is for outline fonts. */
+    if (!fi || fi->Face->Raster) {
         UserLeave();
         return GDI_ERROR;
     }
@@ -989,60 +1009,163 @@ typedef struct CHARSET_INFO {
     PCWSTR Script;
 } CHARSET_INFO;
 
+/* the charsets in the order EnumFontFamiliesEx lists those of a face, measured with enum3.c of scratch/steam. */
 static const CHARSET_INFO g_charsets[] = {
-    {ANSI_CHARSET, 0, L"Western"},          {EASTEUROPE_CHARSET, 1, L"Central European"},
-    {RUSSIAN_CHARSET, 2, L"Cyrillic"},      {GREEK_CHARSET, 3, L"Greek"},
-    {TURKISH_CHARSET, 4, L"Turkish"},       {HEBREW_CHARSET, 5, L"Hebrew"},
-    {ARABIC_CHARSET, 6, L"Arabic"},         {BALTIC_CHARSET, 7, L"Baltic"},
-    {VIETNAMESE_CHARSET, 8, L"Vietnamese"}, {THAI_CHARSET, 16, L"Thai"},
-    {SHIFTJIS_CHARSET, 17, L"Japanese"},    {GB2312_CHARSET, 18, L"CHINESE_GB2312"},
-    {HANGUL_CHARSET, 19, L"Hangul"},        {CHINESEBIG5_CHARSET, 20, L"CHINESE_BIG5"},
-    {JOHAB_CHARSET, 21, L"Johab"},          {SYMBOL_CHARSET, 31, L"Symbol"},
+    {ANSI_CHARSET, 0, L"Western"},         {SHIFTJIS_CHARSET, 17, L"Japanese"},
+    {HANGUL_CHARSET, 19, L"Hangul"},       {JOHAB_CHARSET, 21, L"Johab"},
+    {GB2312_CHARSET, 18, L"CHINESE_GB2312"}, {CHINESEBIG5_CHARSET, 20, L"CHINESE_BIG5"},
+    {HEBREW_CHARSET, 5, L"Hebrew"},        {ARABIC_CHARSET, 6, L"Arabic"},
+    {GREEK_CHARSET, 3, L"Greek"},          {TURKISH_CHARSET, 4, L"Turkish"},
+    {BALTIC_CHARSET, 7, L"Baltic"},        {EASTEUROPE_CHARSET, 1, L"Central European"},
+    {RUSSIAN_CHARSET, 2, L"Cyrillic"},     {THAI_CHARSET, 16, L"Thai"},
+    {VIETNAMESE_CHARSET, 8, L"Vietnamese"}, {SYMBOL_CHARSET, 31, L"Symbol"},
 };
 
-static const CHARSET_INFO *face_charset(FONT_FACE *f, ULONG wanted)
+/* a TrueType face has the OEM charset of code page 437, listed only when it is asked for. */
+static const CHARSET_INFO g_oem_charset = {OEM_CHARSET, 63, L"OEM/DOS"};
+
+static BOOLEAN face_has_charset(FONT_FACE *f, const CHARSET_INFO *c)
 {
+    if (f->Raster)
+        return f->Fnt.CharSet == c->Charset;
+    return c->Bit < 32 ? (f->Signature.fsCsb[0] & (1u << c->Bit)) != 0
+                       : (f->Signature.fsCsb[1] & (1u << (c->Bit - 32))) != 0;
+}
+
+/* the index-th charset of a face that a request for wanted takes, null past the last. */
+static const CHARSET_INFO *face_charset_at(FONT_FACE *f, ULONG wanted, ULONG index)
+{
+    if (wanted == OEM_CHARSET || (f->Raster && f->Fnt.CharSet == OEM_CHARSET))
+        return (wanted == OEM_CHARSET || wanted == DEFAULT_CHARSET) && face_has_charset(f, &g_oem_charset) && !index
+                   ? &g_oem_charset
+                   : nullptr;
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_charsets); i++) {
         const CHARSET_INFO *c = &g_charsets[i];
-        if (wanted != DEFAULT_CHARSET && wanted != c->Charset)
+        if ((wanted != DEFAULT_CHARSET && wanted != c->Charset) || !face_has_charset(f, c))
             continue;
-        if (f->Signature.fsCsb[0] & (1u << c->Bit))
+        if (!index--)
             return c;
     }
     return nullptr;
 }
 
-/* metrics for a cell height of 16 pixels, computed from the registration data without loading the file. */
+static const CHARSET_INFO *face_charset(FONT_FACE *f, ULONG wanted)
+{
+    return face_charset_at(f, wanted, 0);
+}
+
+static const CHARSET_INFO *charset_info(UCHAR charset)
+{
+    if (charset == OEM_CHARSET)
+        return &g_oem_charset;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_charsets); i++)
+        if (g_charsets[i].Charset == charset)
+            return &g_charsets[i];
+    return &g_charsets[0];
+}
+
+/* a raster face is listed at its own size, with the metrics of its header. */
+static void raster_record(FONT_FACE *f, const CHARSET_INFO *cs, MIME_FONT_ENUM_RECORD *r)
+{
+    const FNT_INFO *fnt = &f->Fnt;
+    NEWTEXTMETRICW *tm = &r->Metrics.ntmTm;
+    tm->tmHeight = fnt->PixHeight;
+    tm->tmAscent = fnt->Ascent;
+    tm->tmDescent = fnt->PixHeight - fnt->Ascent;
+    tm->tmInternalLeading = fnt->InternalLeading;
+    tm->tmExternalLeading = fnt->ExternalLeading;
+    tm->tmAveCharWidth = fnt->AvgWidth;
+    tm->tmMaxCharWidth = fnt->MaxWidth;
+    tm->tmWeight = f->Weight;
+    tm->tmDigitizedAspectX = fnt->HorizRes;
+    tm->tmDigitizedAspectY = fnt->VertRes;
+    tm->tmFirstChar = f->FirstChar;
+    tm->tmLastChar = f->LastChar;
+    tm->tmDefaultChar = f->DefaultChar;
+    tm->tmBreakChar = f->BreakChar;
+    tm->tmItalic = f->Italic ? 255 : 0;
+    tm->tmPitchAndFamily = fnt->PitchAndFamily;
+    tm->tmCharSet = cs->Charset;
+    tm->ntmFlags = (f->Weight >= FW_SEMIBOLD ? NTM_BOLD : 0) | (f->Italic ? NTM_ITALIC : 0);
+    if (!tm->ntmFlags)
+        tm->ntmFlags = NTM_REGULAR;
+    tm->ntmCellHeight = fnt->PixHeight;
+    tm->ntmAvgWidth = fnt->AvgWidth;
+    LOGFONTW *lf = &r->Font.elfLogFont;
+    lf->lfHeight = fnt->PixHeight;
+    lf->lfWidth = fnt->AvgWidth;
+    lf->lfWeight = f->Weight;
+    lf->lfItalic = f->Italic;
+    lf->lfCharSet = cs->Charset;
+    lf->lfOutPrecision = 1; /* OUT_STRING_PRECIS */
+    lf->lfClipPrecision = 2; /* CLIP_STROKE_PRECIS */
+    lf->lfQuality = DRAFT_QUALITY;
+    lf->lfPitchAndFamily = (f->Fixed ? FIXED_PITCH : VARIABLE_PITCH) | f->PitchFamily;
+    wcscpy(lf->lfFaceName, f->Family);
+    wcscpy(r->Font.elfFullName, f->FullName);
+    wcscpy(r->Font.elfStyle, f->Style);
+    wcscpy(r->Font.elfScript, cs->Script);
+    r->Type = RASTER_FONTTYPE;
+}
+
+static LONG scale_round(LONG v, LONG em)
+{
+    return W32MulDiv(v, 32, em);
+}
+
+/*
+ * a TrueType face is listed at 32 pixels to the em, from the registration data without loading the file: the ascent
+ * and descent of the VDMX table when it has that size, the width of the bounding box and the characters of the cmap.
+ */
 static void enum_record(FONT_FACE *f, const CHARSET_INFO *cs, MIME_FONT_ENUM_RECORD *r)
 {
     memset(r, 0, sizeof(*r));
-    LONG cell = f->WinAscent + f->WinDescent;
-    if (cell <= 0)
-        cell = f->UnitsPerEm;
-    LONG height = 16;
+    if (f->Raster) {
+        raster_record(f, cs, r);
+        return;
+    }
+    LONG em = f->UnitsPerEm ? f->UnitsPerEm : 2048;
+    LONG ascent = f->EnumAscent >= 0 ? f->EnumAscent : scale_round(f->WinAscent, em);
+    LONG descent = f->EnumDescent >= 0 ? f->EnumDescent : scale_round(f->WinDescent, em);
     NEWTEXTMETRICW *tm = &r->Metrics.ntmTm;
-    tm->tmHeight = height;
-    tm->tmAscent = W32MulDiv(f->WinAscent, height, cell);
-    tm->tmDescent = height - tm->tmAscent;
-    tm->tmInternalLeading = W32Max(0, height - W32MulDiv(f->UnitsPerEm, height, cell));
-    tm->tmExternalLeading = W32MulDiv(f->LineGap, height, cell);
-    tm->tmAveCharWidth = W32MulDiv(f->AvgWidth, height, cell);
-    tm->tmMaxCharWidth = W32MulDiv(f->MaxAdvance, height, cell);
+    tm->tmHeight = ascent + descent;
+    tm->tmAscent = ascent;
+    tm->tmDescent = descent;
+    tm->tmInternalLeading = W32Max(0, tm->tmHeight - 32);
+    tm->tmExternalLeading = scale_round(f->LineGap, em);
+    tm->tmAveCharWidth = scale_round(f->AvgWidth, em);
+    tm->tmMaxCharWidth = scale_round(f->XMax - f->XMin, em);
     tm->tmWeight = f->Weight;
     tm->tmDigitizedAspectX = 96;
     tm->tmDigitizedAspectY = 96;
-    tm->tmFirstChar = f->Symbol ? 0x20 : 0x1E;
-    tm->tmLastChar = f->Symbol ? 0xFF : 0xFFFC;
-    tm->tmDefaultChar = 0x1F;
-    tm->tmBreakChar = 0x20;
+    if (f->Symbol) {
+        tm->tmFirstChar = 0;
+        tm->tmLastChar = 0xF0FF;
+        tm->tmDefaultChar = 0x1F;
+        tm->tmBreakChar = 0x20;
+    } else if (f->CharsKnown) {
+        tm->tmFirstChar = f->FirstChar;
+        tm->tmLastChar = f->LastChar;
+        tm->tmDefaultChar = f->DefaultChar;
+        tm->tmBreakChar = f->BreakChar;
+    } else {
+        WCHAR first = f->CmapFirst, brk = first < 2 ? 2 : first;
+        tm->tmFirstChar = first;
+        tm->tmLastChar = f->CmapLast ? f->CmapLast : 0xFFFC;
+        tm->tmDefaultChar = (WCHAR)(brk - 1);
+        tm->tmBreakChar = brk;
+    }
     tm->tmItalic = f->Italic ? 255 : 0;
     tm->tmPitchAndFamily = (f->Fixed ? 0 : TMPF_FIXED_PITCH) | TMPF_VECTOR | TMPF_TRUETYPE | f->PitchFamily;
     tm->tmCharSet = cs->Charset;
     tm->ntmFlags = (f->Weight >= FW_SEMIBOLD ? NTM_BOLD : 0) | (f->Italic ? NTM_ITALIC : 0);
     if (!tm->ntmFlags)
         tm->ntmFlags = NTM_REGULAR;
-    tm->ntmSizeEM = f->UnitsPerEm;
-    tm->ntmCellHeight = (UINT)cell;
+    /* a signed face is taken for an OpenType one with TrueType outlines. */
+    if (f->Signed)
+        tm->ntmFlags |= 0x200000 /* NTM_DSIG */ | 0x40000 /* NTM_TT_OPENTYPE */;
+    tm->ntmSizeEM = (UINT)em;
+    tm->ntmCellHeight = (UINT)(f->WinAscent + f->WinDescent);
     tm->ntmAvgWidth = (UINT)f->AvgWidth;
     r->Metrics.ntmFontSig = f->Signature;
     LOGFONTW *lf = &r->Font.elfLogFont;
@@ -1068,6 +1191,136 @@ static LONG regular_distance(FONT_FACE *f)
     return (f->Weight > FW_NORMAL ? f->Weight - FW_NORMAL : FW_NORMAL - f->Weight) + (f->Italic ? 1000 : 0);
 }
 
+/*
+ * the ENUMFONTDATAW records gdi32full walks in EnumFontsInternalW, as cjCopyFontDataW of win32kfull 26300 writes
+ * them: the size of the record, where its NTMW_INTERNAL is, the font type, the ENUMLOGFONTEXDVW with a design vector
+ * of no axes, then the TMDIFF of the ansi characters, the ENUMTEXTMETRICW and an axes list of none. the callback
+ * gets the logical font at 12 and the metrics 8 bytes into the NTMW_INTERNAL.
+ */
+#define EFD_LOGFONT 12
+#define EFD_DESIGN_VECTOR 360
+#define EFD_NTMI 368
+#define EFD_METRICS (EFD_NTMI + 8)
+#define EFD_AXES (EFD_METRICS + 100)
+#define EFD_SIZE (EFD_AXES + 8)
+#define STAMP_DESIGNVECTOR 0x08007664u
+#define STAMP_AXESLIST 0x08006561u
+
+static void enum_data(const MIME_FONT_ENUM_RECORD *r, const FONT_FACE *f, PUCHAR out)
+{
+    memset(out, 0, EFD_SIZE);
+    *(PULONG)out = EFD_SIZE;
+    *(PULONG)(out + 4) = EFD_NTMI;
+    *(PULONG)(out + 8) = r->Type;
+    memcpy(out + EFD_LOGFONT, &r->Font, sizeof(ENUMLOGFONTEXW));
+    *(PULONG)(out + EFD_DESIGN_VECTOR) = STAMP_DESIGNVECTOR;
+    const NEWTEXTMETRICW *tm = &r->Metrics.ntmTm;
+    PUCHAR diff = out + EFD_NTMI + 4;
+    if (f->CharsKnown) {
+        memcpy(diff, f->AnsiChars, 4);
+    } else {
+        diff[0] = (UCHAR)W32Min(0xFF, tm->tmFirstChar);
+        diff[1] = (UCHAR)W32Min(0xFF, tm->tmLastChar);
+        diff[2] = (UCHAR)W32Min(0xFF, tm->tmDefaultChar);
+        diff[3] = (UCHAR)W32Min(0xFF, tm->tmBreakChar);
+    }
+    memcpy(out + EFD_METRICS, &r->Metrics, sizeof(NEWTEXTMETRICEXW));
+    *(PULONG)(out + EFD_AXES) = STAMP_AXESLIST;
+}
+
+typedef struct ENUM_LIST {
+    MIME_FONT_ENUM_RECORD *Records;
+    FONT_FACE **Owners;
+    ULONG Count, Capacity;
+} ENUM_LIST;
+
+static MIME_FONT_ENUM_RECORD *enum_add(ENUM_LIST *l, FONT_FACE *f)
+{
+    if (l->Count == l->Capacity) {
+        ULONG capacity = l->Capacity ? l->Capacity * 2 : 64;
+        MIME_FONT_ENUM_RECORD *records = W32Alloc(capacity * sizeof(MIME_FONT_ENUM_RECORD));
+        FONT_FACE **owners = W32Alloc(capacity * sizeof(FONT_FACE *));
+        if (!records || !owners) {
+            W32Free(records);
+            W32Free(owners);
+            return nullptr;
+        }
+        if (l->Count) {
+            memcpy(records, l->Records, l->Count * sizeof(MIME_FONT_ENUM_RECORD));
+            memcpy(owners, l->Owners, l->Count * sizeof(FONT_FACE *));
+        }
+        W32Free(l->Records);
+        W32Free(l->Owners);
+        l->Records = records;
+        l->Owners = owners;
+        l->Capacity = capacity;
+    }
+    l->Owners[l->Count] = f;
+    return &l->Records[l->Count++];
+}
+
+/* the face a family is listed by when no face is named: the one nearest regular, the first of those. */
+static BOOLEAN family_representative(ULONG index)
+{
+    FONT_FACE *f = FontFaceAt(index);
+    for (ULONG j = 0; j < FontFaceCount(); j++) {
+        FONT_FACE *g = FontFaceAt(j);
+        if (j == index || !FontFaceVisible(g) || g->File->Hidden || _wcsicmp(g->Family, f->Family) ||
+            g->Raster != f->Raster)
+            continue;
+        LONG a = regular_distance(g), b = regular_distance(f);
+        if (a < b || (a == b && j < index))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * the records of a face. EnumFontFamiliesEx, type 3, lists a face in each of its charsets with the name of its script.
+ * EnumFontFamilies and EnumFonts list it once, then again under each FontSubstitutes name that names a charset of it,
+ * "Arial CE" for Arial in Central European, and give no script: cjCopyFontDataW writes it for type 3 only.
+ */
+static void enum_face(ENUM_LIST *l, FONT_FACE *f, ULONG type, ULONG charset)
+{
+    if (type == 3) {
+        const CHARSET_INFO *cs;
+        for (ULONG k = 0; (cs = face_charset_at(f, charset, k)) != nullptr; k++) {
+            MIME_FONT_ENUM_RECORD *r = enum_add(l, f);
+            if (r)
+                enum_record(f, cs, r);
+        }
+        return;
+    }
+    const CHARSET_INFO *cs = face_charset(f, charset);
+    if (!cs)
+        return;
+    MIME_FONT_ENUM_RECORD *r = enum_add(l, f);
+    if (!r)
+        return;
+    enum_record(f, cs, r);
+    r->Font.elfScript[0] = 0;
+    MIME_FONT_ENUM_RECORD base = *r;
+    PCWSTR alias;
+    UCHAR alias_charset;
+    for (ULONG k = 0; FontCharsetAlias(f->Family, k, &alias, &alias_charset); k++) {
+        BOOLEAN seen = FALSE;
+        for (ULONG j = 0; j < k && !seen; j++) {
+            PCWSTR other;
+            UCHAR other_charset;
+            seen = FontCharsetAlias(f->Family, j, &other, &other_charset) && !_wcsicmp(other, alias);
+        }
+        if (seen || (alias_charset != ANSI_CHARSET && !face_has_charset(f, charset_info(alias_charset))))
+            continue;
+        if (!(r = enum_add(l, f)))
+            return;
+        *r = base;
+        if (wcslen(alias) < LF_FACESIZE)
+            wcscpy(r->Font.elfLogFont.lfFaceName, alias);
+        r->Font.elfLogFont.lfCharSet = alias_charset;
+        r->Metrics.ntmTm.tmCharSet = alias_charset;
+    }
+}
+
 ULONG NTAPI NtGdiEnumFonts(HDC hdc, ULONG type, ULONG flags, ULONG face_chars, LPCWSTR user_face, ULONG charset,
                            ULONG *user_size, PVOID user_buffer)
 {
@@ -1078,56 +1331,31 @@ ULONG NTAPI NtGdiEnumFonts(HDC hdc, ULONG type, ULONG flags, ULONG face_chars, L
     if (face_chars && (!user_face || !NT_SUCCESS(MimeCopyFromUser(face, user_face, face_chars * sizeof(WCHAR)))))
         return 0;
     face[face_chars] = 0;
-    UserEnter();
+    UserEnterRead();
+    ENUM_LIST list = {};
     ULONG total = FontFaceCount();
-    ULONG count = 0;
-    MIME_FONT_ENUM_RECORD *records = W32Alloc((total ? total : 1) * sizeof(MIME_FONT_ENUM_RECORD));
-    if (records) {
-        for (ULONG i = 0; i < total; i++) {
-            FONT_FACE *f = FontFaceAt(i);
-            if (!FontFaceVisible(f) || f->File->Hidden)
-                continue;
-            const CHARSET_INFO *cs = face_charset(f, charset);
-            if (!cs)
-                continue;
-            if (face[0]) {
-                if (_wcsicmp(f->Family, face) && _wcsicmp(f->TypoFamily, face))
-                    continue;
-            } else {
-                /* one face per family: keep the one closest to regular. */
-                BOOLEAN replaced = FALSE, seen = FALSE;
-                for (ULONG k = 0; k < count; k++) {
-                    if (_wcsicmp(records[k].Font.elfLogFont.lfFaceName, f->Family))
-                        continue;
-                    seen = TRUE;
-                    FONT_FACE *other = nullptr;
-                    for (ULONG j = 0; j < i && !other; j++) {
-                        FONT_FACE *g = FontFaceAt(j);
-                        if (!_wcsicmp(g->Family, f->Family) && !_wcsicmp(g->FullName, records[k].Font.elfFullName))
-                            other = g;
-                    }
-                    if (other && regular_distance(f) < regular_distance(other)) {
-                        enum_record(f, cs, &records[k]);
-                        replaced = TRUE;
-                    }
-                    break;
-                }
-                if (seen || replaced)
-                    continue;
-            }
-            enum_record(f, cs, &records[count++]);
-        }
+    for (ULONG i = 0; i < total; i++) {
+        FONT_FACE *f = FontFaceAt(i);
+        if (!FontFaceVisible(f) || f->File->Hidden)
+            continue;
+        if (face[0] ? _wcsicmp(f->Family, face) != 0 : !family_representative(i))
+            continue;
+        enum_face(&list, f, type, charset);
     }
+    ULONG count = list.Count, size = count * EFD_SIZE;
+    PUCHAR data = size ? W32Alloc(size) : nullptr;
+    for (ULONG i = 0; data && i < count; i++)
+        enum_data(&list.Records[i], list.Owners[i], data + (SIZE_T)i * EFD_SIZE);
     UserLeave();
-    ULONG size = count * (ULONG)sizeof(MIME_FONT_ENUM_RECORD);
-    BOOLEAN ok = records != nullptr;
+    BOOLEAN ok = data || !size;
     if (ok && user_buffer && capacity >= size && size)
-        ok = NT_SUCCESS(MimeCopyToUser(user_buffer, records, size));
+        ok = NT_SUCCESS(MimeCopyToUser(user_buffer, data, size));
     if (ok)
         ok = NT_SUCCESS(MimeCopyToUser(user_size, &size, sizeof(size)));
-    W32Free(records);
+    W32Free(list.Records);
+    W32Free(list.Owners);
+    W32Free(data);
     (void)hdc;
-    (void)type;
     (void)flags;
     return ok ? count : 0;
 }
@@ -1157,7 +1385,7 @@ int NTAPI NtGdiAddFontResourceW(LPCWSTR files, ULONG chars, ULONG files_count, U
     PWSTR path = capture_path(files, chars);
     if (!path)
         return 0;
-    UserEnter();
+    UserEnterRead();
     HANDLE owner = (flags & FR_PRIVATE_FLAG) ? PsGetCurrentProcessId() : nullptr;
     int added = 0;
     /* a file added twice by the same owner is counted again without a second registration. */
@@ -1183,7 +1411,7 @@ BOOL NTAPI NtGdiRemoveFontResourceW(LPCWSTR files, ULONG chars, ULONG files_coun
     PWSTR path = capture_path(files, chars);
     if (!path)
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     HANDLE owner = (flags & FR_PRIVATE_FLAG) ? PsGetCurrentProcessId() : nullptr;
     BOOL found = FALSE;
     for (ULONG i = 0; i < FontFaceCount(); i++) {
@@ -1222,7 +1450,7 @@ HANDLE NTAPI NtGdiAddFontMemResourceEx(PVOID data, DWORD size, PVOID dv, ULONG d
         W32SetLastError(ERROR_NOACCESS);
         return nullptr;
     }
-    UserEnter();
+    UserEnterRead();
     HANDLE handle = nullptr;
     FONT_FILE *file = nullptr;
     DWORD count = 0;
@@ -1255,7 +1483,7 @@ BOOL NTAPI NtGdiRemoveFontMemResourceEx(HANDLE handle)
     ULONG slot = (ULONG)(v & 0xFFFF) - 1;
     if ((v & 0xFF000000u) != 0x4D000000u || slot >= MAX_MEM_FONTS)
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     FONT_FILE *file = g_mem_fonts[slot];
     BOOL ok = file && file->OwnerPid == PsGetCurrentProcessId() && !file->Removed;
     if (ok) {

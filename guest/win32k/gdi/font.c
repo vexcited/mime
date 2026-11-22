@@ -166,6 +166,32 @@ static BOOLEAN read_table(const FONT_SOURCE *src, const TABLE_REF *t, PUCHAR buf
     return source_read(src, t->Offset, buffer, size);
 }
 
+/* the first and the last character of a format 4 subtable, the unicode cmap of windows. */
+static void cmap_range(const FONT_SOURCE *src, const TABLE_REF *cmap, ULONG offset, FONT_FACE *face)
+{
+    UCHAR h[14];
+    if (offset + sizeof(h) > cmap->Length || !source_read(src, cmap->Offset + offset, h, sizeof(h)) || be16(h) != 4)
+        return;
+    ULONG segments = be16(h + 6) / 2;
+    if (!segments || segments > 8192 || offset + 16 + 4ull * segments > cmap->Length)
+        return;
+    UCHAR *table = ExAllocatePool2(POOL_FLAG_NON_PAGED, 4ull * segments + 2, FONT_TAG);
+    if (!table)
+        return;
+    /* the end codes, a pad and the start codes. */
+    if (source_read(src, cmap->Offset + offset + 14, table, 4 * segments + 2)) {
+        const UCHAR *ends = table, *starts = table + 2 * segments + 2;
+        face->CmapFirst = be16(starts);
+        for (ULONG i = 0; i < segments; i++) {
+            USHORT start = be16(starts + 2 * i), end = be16(ends + 2 * i);
+            if (start == 0xFFFF)
+                break;
+            face->CmapLast = end;
+        }
+    }
+    ExFreePool(table);
+}
+
 static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_offset, ULONG face_index)
 {
     UCHAR header[12];
@@ -180,8 +206,8 @@ static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_o
     UCHAR dir[64 * 16];
     if (!source_read(src, dir_offset + 12, dir, tables * 16u))
         return;
-    TABLE_REF name = {0, 0}, os2 = {0, 0}, head = {0, 0}, hhea = {0, 0}, cmap = {0, 0}, post = {0, 0};
-    BOOLEAN glyf = FALSE;
+    TABLE_REF name = {0, 0}, os2 = {0, 0}, head = {0, 0}, hhea = {0, 0}, cmap = {0, 0}, post = {0, 0}, vdmx = {0, 0};
+    BOOLEAN glyf = FALSE, dsig = FALSE;
     for (USHORT i = 0; i < tables; i++) {
         const UCHAR *t = dir + i * 16;
         ULONG tag = be32(t);
@@ -207,6 +233,12 @@ static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_o
             break;
         case 0x676C7966: /* glyf */
             glyf = TRUE;
+            break;
+        case 0x56444D58: /* VDMX */
+            vdmx = ref;
+            break;
+        case 0x44534947: /* DSIG */
+            dsig = TRUE;
             break;
         }
     }
@@ -236,6 +268,26 @@ static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_o
             USHORT mac_style = be16(h + 44);
             face->Weight = (mac_style & 1) ? FW_BOLD : FW_NORMAL;
             face->Italic = (mac_style & 2) != 0;
+            face->XMin = (SHORT)be16(h + 36);
+            face->XMax = (SHORT)be16(h + 40);
+        }
+        face->Signed = dsig;
+        face->EnumAscent = face->EnumDescent = -1;
+        if (vdmx.Length && vdmx.Length <= 64 * 1024) {
+            UCHAR *v = ExAllocatePool2(POOL_FLAG_NON_PAGED, vdmx.Length, FONT_TAG);
+            MimeTtfFont t;
+            int y_max, y_min;
+            memset(&t, 0, sizeof(t));
+            if (v && source_read(src, vdmx.Offset, v, vdmx.Length)) {
+                t.vdmx.data = v;
+                t.vdmx.size = vdmx.Length;
+                if (mime_ttf_vdmx(&t, 1, 1, 32, &y_max, &y_min) && y_max >= 0 && y_min <= 0) {
+                    face->EnumAscent = (SHORT)y_max;
+                    face->EnumDescent = (SHORT)-y_min;
+                }
+            }
+            if (v)
+                ExFreePool(v);
         }
         LONG ascender = 0, descender = 0, gap = 0;
         UCHAR hh[36];
@@ -288,9 +340,12 @@ static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_o
             if (n > 16)
                 n = 16;
             if (cmap.Length >= 4u + 8u * n && source_read(src, cmap.Offset + 4, c + 4, 8u * n))
-                for (USHORT k = 0; k < n; k++)
+                for (USHORT k = 0; k < n; k++) {
                     if (be16(c + 4 + 8 * k) == 3 && be16(c + 6 + 8 * k) == 0)
                         face->Symbol = TRUE;
+                    if (be16(c + 4 + 8 * k) == 3 && be16(c + 6 + 8 * k) == 1)
+                        cmap_range(src, &cmap, be32(c + 8 + 8 * k), face);
+                }
         }
         if (face->Symbol)
             face->Signature.fsCsb[0] |= 0x80000000u;
@@ -303,6 +358,57 @@ static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_o
 /* counts the fonts added, after which the characters of the linked fonts are looked up again: a font may come first. */
 static ULONG g_font_generation;
 
+static void raster_chars(FONT_FACE *f);
+
+/* a face for each size of a .fon file, which is small enough to read whole. */
+static void register_raster(FONT_FILE *file, const FONT_SOURCE *src)
+{
+    SIZE_T size = src->Data ? src->Size : (SIZE_T)file_size(src->File);
+    if (!size || size > 1024 * 1024)
+        return;
+    UCHAR *data = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, FONT_TAG);
+    if (!data)
+        return;
+    ULONG offsets[32], sizes[32];
+    ULONG count = source_read(src, 0, data, (ULONG)size) ? FntList(data, size, offsets, sizes, 32) : 0;
+    for (ULONG i = 0; i < count && g_face_count < MAX_FACES; i++) {
+        FONT_FACE *face = &g_faces[g_face_count];
+        memset(face, 0, sizeof(*face));
+        if (!FntRead(data + offsets[i], sizes[i], &face->Fnt))
+            continue;
+        const FNT_INFO *fnt = &face->Fnt;
+        for (ULONG c = 0; fnt->Face[c]; c++)
+            face->Family[c] = (UCHAR)fnt->Face[c];
+        wcscpy(face->TypoFamily, face->Family);
+        wcscpy(face->FullName, face->Family);
+        wcscpy(face->Style, fnt->Weight >= FW_SEMIBOLD ? (fnt->Italic ? L"Bold Italic" : L"Bold")
+                            : fnt->Italic              ? L"Italic"
+                                                       : L"Regular");
+        face->File = file;
+        face->FaceIndex = i;
+        face->DirOffset = offsets[i];
+        face->Raster = TRUE;
+        face->Weight = fnt->Weight ? fnt->Weight : FW_NORMAL;
+        face->Italic = fnt->Italic != 0;
+        /* the low bit of the pitch is set for a font of variable pitch, as in TEXTMETRIC. */
+        face->Fixed = !(fnt->PitchAndFamily & 1);
+        face->PitchFamily = fnt->PitchAndFamily & 0xF0;
+        face->Symbol = fnt->CharSet == SYMBOL_CHARSET;
+        face->UnitsPerEm = fnt->PixHeight;
+        face->WinAscent = fnt->Ascent;
+        face->WinDescent = fnt->PixHeight - fnt->Ascent;
+        face->AvgWidth = fnt->AvgWidth;
+        face->MaxAdvance = fnt->MaxWidth;
+        face->LineGap = fnt->ExternalLeading;
+        raster_chars(face);
+        face->CharsKnown = TRUE;
+        /* a raster face has no font signature, GetTextCharsetInfo gives it zeros. */
+        file->FaceCount++;
+        g_face_count++;
+    }
+    ExFreePool(data);
+}
+
 static void register_source(FONT_FILE *file, const FONT_SOURCE *src)
 {
     UCHAR header[12];
@@ -310,7 +416,9 @@ static void register_source(FONT_FILE *file, const FONT_SOURCE *src)
     file->FirstFace = g_face_count;
     if (!source_read(src, 0, header, sizeof(header)))
         return;
-    if (be32(header) == 0x74746366) { /* ttcf */
+    if (header[0] == 'M' && header[1] == 'Z') {
+        register_raster(file, src);
+    } else if (be32(header) == 0x74746366) { /* ttcf */
         ULONG count = be32(header + 8);
         if (count > 32)
             count = 32;
@@ -430,8 +538,35 @@ static BOOLEAN has_suffix(PCWSTR name, ULONG chars, PCWSTR suffix)
     return chars >= n && !_wcsnicmp(name + chars - n, suffix, n);
 }
 
+/*
+ * the stock files load first, as win32kfull loads them when the session starts: those of LargeFont above 108 dpi,
+ * then those of SmallFont, each in the order FONTS.FON, OEMFONT.FON and FIXEDFON.FON. the first loaded wins a tie of
+ * the mapper and comes first in an enumeration.
+ */
+static const PCWSTR g_stock_files[] = {L"8514sys.fon", L"8514oem.fon", L"8514fix.fon",
+                                       L"vgasys.fon",  L"vgaoem.fon",  L"vgafix.fon"};
+
+static BOOLEAN stock_file(PCWSTR name, ULONG chars)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_stock_files); i++)
+        if (chars == wcslen(g_stock_files[i]) && !_wcsicmp(name, g_stock_files[i]))
+            return TRUE;
+    return FALSE;
+}
+
+static void scan_stock_fonts(void)
+{
+    for (ULONG i = GdiLargeStockFonts() ? 0 : 3; i < RTL_NUMBER_OF(g_stock_files); i++) {
+        WCHAR path[MAX_PATH];
+        wcscpy(path, L"\\SystemRoot\\Fonts\\");
+        wcscat(path, g_stock_files[i]);
+        register_file(path, nullptr, FALSE);
+    }
+}
+
 static void scan_fonts(void)
 {
+    scan_stock_fonts();
     UNICODE_STRING dir_name = RTL_CONSTANT_STRING(L"\\SystemRoot\\Fonts");
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, &dir_name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
@@ -456,7 +591,8 @@ static void scan_fonts(void)
         for (;;) {
             ULONG chars = info->FileNameLength / sizeof(WCHAR);
             if (has_suffix(info->FileName, chars, L".ttf") || has_suffix(info->FileName, chars, L".ttc") ||
-                has_suffix(info->FileName, chars, L".otf")) {
+                has_suffix(info->FileName, chars, L".otf") ||
+                (has_suffix(info->FileName, chars, L".fon") && !stock_file(info->FileName, chars))) {
                 WCHAR path[MAX_PATH];
                 wcscpy(path, L"\\SystemRoot\\Fonts\\");
                 ULONG base = (ULONG)wcslen(path);
@@ -507,6 +643,9 @@ void FontInitialize(void)
 
 BOOLEAN FontReadTable(FONT_FACE *f, ULONG tag, ULONG offset, PVOID buffer, ULONG size, ULONG *table_size)
 {
+    /* GetFontData fails for a raster font. */
+    if (f->Raster)
+        return FALSE;
     FONT_FILE *file = f->File;
     HANDLE h = nullptr;
     FONT_SOURCE src = {nullptr, file->Data, file->Size};
@@ -561,15 +700,277 @@ BOOLEAN FontReadTable(FONT_FACE *f, ULONG tag, ULONG offset, PVOID buffer, ULONG
 
 /* ------------------------------------------------------------------ matching */
 
-/* the FontSubstitutes registry key of windows, plus bitmap faces mapped to outline ones. */
+/* the FontSubstitutes registry key of windows. */
 static const MIME_FONT_SUBSTITUTE g_substitutes[] = {MIME_FONT_SUBSTITUTES};
 
-static PCWSTR substitute(PCWSTR name)
+/*
+ * the raster faces of windows come with a feature, and the stock fonts name them: until it is installed they are
+ * drawn with an outline face. a program that names one asks for the feature itself, see FontAskFor.
+ */
+static const MIME_FONT_SUBSTITUTE g_raster_standins[] = {
+    {L"MS Sans Serif", L"Microsoft Sans Serif"}, {L"MS Serif", L"Times New Roman"}, {L"Courier", L"Courier New"},
+    {L"System", L"Segoe UI"},  {L"Fixedsys", L"Consolas"}, {L"Terminal", L"Consolas"}, {L"Small Fonts", L"Segoe UI"},
+};
+
+static const MIME_FONT_CHARSET_SUBSTITUTE g_charset_substitutes[] = {MIME_FONT_CHARSET_SUBSTITUTES};
+
+/* the face a name stands for in a charset, the name itself when it stands for none. */
+static PCWSTR substitute_in(PCWSTR name, UCHAR charset)
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_substitutes); i++)
         if (!_wcsicmp(name, g_substitutes[i].From))
             return g_substitutes[i].To;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_charset_substitutes); i++)
+        if (!_wcsicmp(name, g_charset_substitutes[i].From) &&
+            (charset == DEFAULT_CHARSET || charset == g_charset_substitutes[i].FromCharset))
+            return g_charset_substitutes[i].To;
     return name;
+}
+
+static PCWSTR substitute(PCWSTR name)
+{
+    return substitute_in(name, DEFAULT_CHARSET);
+}
+
+/* the names of a face in one charset, for EnumFontFamilies: the index-th, null past the last. */
+BOOLEAN FontCharsetAlias(PCWSTR family, ULONG index, PCWSTR *name, UCHAR *charset)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_charset_substitutes); i++) {
+        if (_wcsicmp(family, g_charset_substitutes[i].To))
+            continue;
+        if (index--)
+            continue;
+        *name = g_charset_substitutes[i].From;
+        *charset = g_charset_substitutes[i].FromCharset;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static PCWSTR raster_standin(PCWSTR name)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_raster_standins); i++)
+        if (!_wcsicmp(name, g_raster_standins[i].From))
+            return g_raster_standins[i].To;
+    return nullptr;
+}
+
+/*
+ * how near a size of a raster family is to a logical font, as MAPPER::bNearMatch of win32kfull weighs it, lower is
+ * nearer. a face is stretched by a whole factor, up to 8 times in height and 5 in width.
+ */
+static LONG abs_of(LONG v)
+{
+    return v < 0 ? -v : v;
+}
+
+typedef struct RASTER_FIT {
+    LONG Penalty;
+    LONG Kx, Ky;
+    BOOLEAN SimBold;
+} RASTER_FIT;
+
+/* the cell for a positive height, the character for a negative one, and 16 for none. */
+static LONG raster_wish(const LOGFONTW *lf)
+{
+    return lf->lfHeight < 0 ? -lf->lfHeight : lf->lfHeight ? lf->lfHeight : 16;
+}
+
+static LONG raster_height(const FONT_FACE *f, const LOGFONTW *lf)
+{
+    return lf->lfHeight < 0 ? f->Fnt.PixHeight - f->Fnt.InternalLeading : f->Fnt.PixHeight;
+}
+
+/* the System of vgasys.fon, the face the mapper falls back to, which its height never rules out. */
+static BOOLEAN raster_emergency(const FONT_FACE *f)
+{
+    ULONG n = (ULONG)wcslen(f->File->Path);
+    return n >= 10 && !_wcsicmp(f->File->Path + n - 10, L"vgasys.fon");
+}
+
+static BOOLEAN raster_fit(const FONT_FACE *f, const LOGFONTW *lf, RASTER_FIT *fit)
+{
+    const FNT_INFO *fnt = &f->Fnt;
+    LONG penalty = 0;
+    BOOLEAN variable = (fnt->PitchAndFamily & 1) != 0;
+    UCHAR pitch = lf->lfPitchAndFamily & 3;
+    if (pitch == FIXED_PITCH && variable)
+        penalty += 15000;
+    else if (pitch == VARIABLE_PITCH && !variable)
+        penalty += 350;
+    else if (pitch == DEFAULT_PITCH && !variable)
+        penalty += 1;
+    /* a family not asked for is taken for swiss, against the family of the face. */
+    UCHAR face_family = fnt->PitchAndFamily & 0x70, family = lf->lfPitchAndFamily & 0x70;
+    if (!family)
+        family = lf->lfCharSet == SYMBOL_CHARSET ? face_family : face_family ? FF_SWISS : 0;
+    if (family != face_family)
+        penalty += !face_family ? 8000 : 9000 + ((family > FF_MODERN) != (face_family > FF_MODERN) ? 50 : 0);
+    /* a charset asked for rules out a face of another, the default one costs a little against ansi. */
+    if (lf->lfCharSet != DEFAULT_CHARSET && lf->lfCharSet != fnt->CharSet)
+        return FALSE;
+    if (lf->lfCharSet == DEFAULT_CHARSET && fnt->CharSet != ANSI_CHARSET)
+        penalty += 2;
+    LONG wish = raster_wish(lf), height = raster_height(f, lf), ky = 1, cost = 0;
+    if (height > 0 && height < wish && wish > 7 * height / 4) {
+        ky = W32Min((wish + height / 4) / height, 8);
+        if (ky > 1) {
+            if (ky + 2 >= height)
+                return FALSE;
+            height *= ky;
+            cost = (20 * ky) | (5 * (ky - 1));
+        }
+    }
+    cost += height > wish ? 150 * (height - wish + 4) : 150 * (wish - height);
+    penalty += cost;
+    if (cost >= 10000 && !raster_emergency(f))
+        return FALSE;
+    if (lf->lfItalic)
+        penalty += f->Italic ? 0 : 1;
+    else if (f->Italic)
+        penalty += 4;
+    LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL, d = f->Weight - weight;
+    fit->SimBold = FALSE;
+    if (d < 0) {
+        d = -d;
+        if (d > 150) {
+            fit->SimBold = TRUE;
+            d -= 120;
+        }
+    }
+    penalty += (73 * d) >> 8;
+    /* the width asked for, or else the aspect of the face against the square pixels of the display. */
+    LONG kx = 1, avg = fnt->AvgWidth;
+    if (lf->lfWidth) {
+        LONG want = lf->lfWidth < 0 ? -lf->lfWidth : lf->lfWidth, extra = 0;
+        if (avg && want > avg)
+            kx = W32Min((want - (avg + 1) / 2) / avg + 1, 5);
+        if (kx > 1)
+            extra = (kx - 1) | (20 * kx);
+        penalty += 50 * abs_of(want - avg * kx) + extra;
+    } else if (fnt->VertRes) {
+        LONG aspect = 100 * fnt->HorizRes / fnt->VertRes, extra = 0;
+        BOOLEAN square = fnt->HorizRes == fnt->VertRes;
+        if (square && ky > 1) {
+            kx = W32Min(ky, 5);
+            extra = 20 * kx;
+        } else if (!square && 100 > (3 * (aspect / ky)) >> 1) {
+            if (!(aspect / ky))
+                return FALSE;
+            kx = W32Min(100 / (aspect / ky), 5);
+            extra = 20 * kx;
+        }
+        if (!square || kx != ky)
+            extra += 30 * abs_of(100 - kx * aspect / ky);
+        penalty += extra;
+    }
+    if (kx > 1 || ky > 1) {
+        penalty += 50;
+        if (kx > ky)
+            penalty += 4 * (ky == 1 ? 100 * kx : (100 * kx + ky / 2) / ky);
+        else if (kx < ky)
+            penalty += 4 * (kx == 1 ? 100 * ky : (100 * ky + kx / 2) / kx);
+    }
+    fit->Penalty = penalty;
+    fit->Kx = kx;
+    fit->Ky = ky;
+    return TRUE;
+}
+
+/* the stock files load as the session starts, before the others, and the first loaded wins a tie. */
+static ULONG raster_serial(const FONT_FACE *f)
+{
+    static const PCWSTR stock[] = {L"vgasys.fon", L"vgafix.fon", L"vgaoem.fon",
+                                   L"8514sys.fon", L"8514fix.fon", L"8514oem.fon"};
+    ULONG n = (ULONG)wcslen(f->File->Path), index = (ULONG)(f - g_faces);
+    for (ULONG i = 0; i < RTL_NUMBER_OF(stock); i++) {
+        ULONG m = (ULONG)wcslen(stock[i]);
+        if (n >= m && !_wcsicmp(f->File->Path + n - m, stock[i]))
+            return index;
+    }
+    return index + MAX_FACES;
+}
+
+/* the nearest size of a raster family, null when the mapper rules out every one. */
+static FONT_FACE *raster_best(PCWSTR family, const LOGFONTW *lf)
+{
+    FONT_FACE *best = nullptr;
+    LONG best_penalty = 0;
+    for (ULONG i = 0; i < g_face_count; i++) {
+        FONT_FACE *f = &g_faces[i];
+        RASTER_FIT fit;
+        if (!f->Raster || !FontFaceVisible(f) || _wcsicmp(f->Family, family) || !raster_fit(f, lf, &fit))
+            continue;
+        if (!best || fit.Penalty < best_penalty ||
+            (fit.Penalty == best_penalty && raster_serial(f) < raster_serial(best))) {
+            best_penalty = fit.Penalty;
+            best = f;
+        }
+    }
+    return best;
+}
+
+/*
+ * the FontMapper key of windows: when the face asked for is not there, bGetFaceName takes the bitmap face of the
+ * kind of font asked for when it has the very size, else the TrueType one. the value is the ansi charset, 0x8000 for
+ * a fixed pitch, 0x4000 for roman, 0x1000 for the first bitmap face and 0x800 for the second.
+ */
+static const struct {
+    USHORT Key;
+    PCWSTR Face;
+} g_font_mapper[] = {
+    {0x0000, L"Arial"},         {0x8800, L"Courier"},     {0x8000, L"Courier New"}, {0x9000, L"Fixedsys"},
+    {0x8080, L"MS Gothic"},     {0x0080, L"MS PGothic"},  {0x1000, L"MS Sans Serif"}, {0x5000, L"MS Serif"},
+    {0x8086, L"NSimSun"},       {0x0086, L"SimSun"},      {0x0800, L"Small Fonts"}, {0x4002, L"Symbol"},
+    {0x4000, L"Times New Roman"}, {0x0002, L"Wingdings"},
+};
+
+static PCWSTR mapper_face(USHORT key)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_font_mapper); i++)
+        if (g_font_mapper[i].Key == key)
+            return g_font_mapper[i].Face;
+    return nullptr;
+}
+
+/* MAPPER::bFindBitmapFont: a size of the family of just the height asked for, and of the width when one is asked. */
+static BOOLEAN bitmap_exact(PCWSTR family, const LOGFONTW *lf)
+{
+    LONG wish = raster_wish(lf);
+    for (ULONG i = 0; i < g_face_count; i++) {
+        FONT_FACE *f = &g_faces[i];
+        if (!f->Raster || !FontFaceVisible(f) || _wcsicmp(f->Family, family))
+            continue;
+        LONG height = raster_height(f, lf);
+        if ((height == wish || (wish == 2 && height == 3)) && (!lf->lfWidth || lf->lfWidth == f->Fnt.AvgWidth))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static FONT_FACE *match_family(PCWSTR name, LONG weight, BOOLEAN italic);
+
+static FONT_FACE *mapper_default(const LOGFONTW *lf)
+{
+    UCHAR charset = lf->lfCharSet == DEFAULT_CHARSET ? ANSI_CHARSET : lf->lfCharSet;
+    UCHAR pitch = lf->lfPitchAndFamily & 3, family = lf->lfPitchAndFamily & 0x70;
+    USHORT key = charset;
+    if (pitch == FIXED_PITCH || (pitch == DEFAULT_PITCH && family == FF_MODERN))
+        key |= 0x8000;
+    if (family == FF_ROMAN)
+        key |= 0x4000;
+    if (charset == ANSI_CHARSET && lf->lfEscapement % 900 == 0) {
+        static const USHORT bitmaps[] = {0x1000, 0x800};
+        for (ULONG i = 0; i < RTL_NUMBER_OF(bitmaps); i++) {
+            PCWSTR face = mapper_face(key | bitmaps[i]);
+            FONT_FACE *f = face && bitmap_exact(face, lf) ? raster_best(face, lf) : nullptr;
+            if (f)
+                return f;
+        }
+    }
+    PCWSTR face = mapper_face(key);
+    FONT_FACE *f = face ? match_family(face, lf->lfWeight ? lf->lfWeight : FW_NORMAL, lf->lfItalic != 0) : nullptr;
+    return f && f->Raster ? raster_best(face, lf) : f;
 }
 
 /* the best face of a family for the weight and slant asked for, null when the family has none. without a name, the
@@ -612,15 +1013,23 @@ BOOLEAN FontFamilyInstalled(PCWSTR name)
 }
 
 /*
- * a face that is not installed is stood in for by the generic family the request names, then by a face the process
- * added for itself, then by whatever is installed. the face is never given the name asked.
+ * a raster family takes its nearest size. a raster face that is not installed is stood in for by an outline one, and
+ * a face that is not there at all by the FontMapper face of the kind asked for, then by the generic family the
+ * request names, a face the process added for itself and whatever is installed.
  */
 FONT_FACE *FontMatchFace(const LOGFONTW *lf)
 {
     wait_scanned();
     LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL;
     BOOLEAN italic = lf->lfItalic != 0;
-    FONT_FACE *best = lf->lfFaceName[0] ? match_family(substitute(lf->lfFaceName), weight, italic) : nullptr;
+    PCWSTR name = lf->lfFaceName[0] ? substitute_in(lf->lfFaceName, lf->lfCharSet) : nullptr;
+    FONT_FACE *best = name ? match_family(name, weight, italic) : nullptr;
+    if (best && best->Raster)
+        best = raster_best(best->Family, lf);
+    else if (!best && name && raster_standin(name))
+        best = match_family(raster_standin(name), weight, italic);
+    if (!best)
+        best = mapper_default(lf);
     if (!best) {
         PCWSTR generic = (lf->lfPitchAndFamily & 3) == FIXED_PITCH || (lf->lfPitchAndFamily & 0xF0) == FF_MODERN
                              ? L"Consolas"
@@ -641,6 +1050,10 @@ BOOLEAN FontLoadFace(FONT_FACE *f)
         return TRUE;
     if (!load_file(f->File))
         return FALSE;
+    if (f->Raster) {
+        f->Loaded = f->File->Size >= (SIZE_T)f->DirOffset + f->Fnt.Size;
+        return f->Loaded;
+    }
     if (!mime_ttf_open(&f->Ttf, f->File->Data, f->File->Size, f->FaceIndex))
         return FALSE;
     mime_ttf_metrics(&f->Ttf, &f->Metrics);
@@ -658,11 +1071,35 @@ static LONG round_f(float v)
  * of its cmap, the break character the first one but at least 2 and the default character the one before. a symbol
  * face covers 0 to 0xf0ff and its ansi characters start at 0x20. measured with textm.c of scratch/dlls/gdibatch.
  */
+/*
+ * the characters of a raster face, as windows 11 gives them: its bytes read in code page 1252 whatever its charset,
+ * the last character the highest of them, the default and the break characters counted from the first.
+ */
+static void raster_chars(FONT_FACE *f)
+{
+    const FNT_INFO *fnt = &f->Fnt;
+    WCHAR last = 0;
+    for (ULONG c = fnt->FirstChar; c <= fnt->LastChar; c++)
+        last = (WCHAR)W32Max(last, FntToUnicode(1252, (UCHAR)c));
+    f->FirstChar = FntToUnicode(1252, fnt->FirstChar);
+    f->LastChar = last;
+    f->DefaultChar = FntToUnicode(1252, (UCHAR)(fnt->FirstChar + fnt->DefaultChar));
+    f->BreakChar = FntToUnicode(1252, (UCHAR)(fnt->FirstChar + fnt->BreakChar));
+    f->AnsiChars[0] = fnt->FirstChar;
+    f->AnsiChars[1] = fnt->LastChar;
+    f->AnsiChars[2] = (UCHAR)(fnt->FirstChar + fnt->DefaultChar);
+    f->AnsiChars[3] = (UCHAR)(fnt->FirstChar + fnt->BreakChar);
+}
+
 static void face_chars(FONT_FACE *f)
 {
     if (f->CharsKnown)
         return;
     f->CharsKnown = TRUE;
+    if (f->Raster) {
+        raster_chars(f);
+        return;
+    }
     if (f->Symbol) {
         ULONG first = 0xF000, last = 0xF0FF;
         while (first < last && !mime_ttf_glyph_index(&f->Ttf, first))
@@ -735,6 +1172,8 @@ UINT FontCharSetCodePage(UCHAR charset)
 /* the charset asked for when the face has it, else ansi, else the first the face has. */
 static UCHAR resolve_charset(FONT_FACE *face, UCHAR asked)
 {
+    if (face->Raster)
+        return face->Fnt.CharSet;
     if (face->Symbol)
         return SYMBOL_CHARSET;
     ULONG ranges = face->Signature.fsCsb[0];
@@ -811,6 +1250,81 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
     fi->StrikeoutPos = round_f((float)m->strikeout_position * fi->ScaleY);
 }
 
+/*
+ * the metrics of a raster face stretched by whole factors. a simulated bold is a pixel wider, a simulated italic
+ * leans by half the height, which is its overhang.
+ */
+static void raster_metrics(FONT_INSTANCE *fi)
+{
+    const FNT_INFO *fnt = &fi->Face->Fnt;
+    LONG kx = (LONG)fi->ScaleX, ky = (LONG)fi->ScaleY, bold = fi->SimBold ? 1 : 0;
+    TEXTMETRICW *tm = &fi->Metrics;
+    memset(tm, 0, sizeof(*tm));
+    tm->tmHeight = fnt->PixHeight * ky;
+    tm->tmAscent = fnt->Ascent * ky;
+    tm->tmDescent = tm->tmHeight - tm->tmAscent;
+    tm->tmInternalLeading = fnt->InternalLeading * ky;
+    tm->tmExternalLeading = fnt->ExternalLeading * ky;
+    /* a bold face leaning is a pixel wider on average as well, as System is on windows 11. */
+    LONG lean_bold = fi->SimItalic && fi->Face->Weight >= FW_SEMIBOLD ? 1 : 0;
+    tm->tmAveCharWidth = fnt->AvgWidth * kx + bold + lean_bold;
+    tm->tmMaxCharWidth = fnt->MaxWidth * kx + bold + lean_bold;
+    tm->tmWeight = fi->SimBold ? FW_BOLD : fi->Face->Weight;
+    tm->tmOverhang = bold + (fi->SimItalic ? (tm->tmHeight - 1) / 2 : 0);
+    tm->tmDigitizedAspectX = fnt->HorizRes;
+    tm->tmDigitizedAspectY = fnt->VertRes;
+    face_chars(fi->Face);
+    tm->tmFirstChar = fi->Face->FirstChar;
+    tm->tmLastChar = fi->Face->LastChar;
+    tm->tmDefaultChar = fi->Face->DefaultChar;
+    tm->tmBreakChar = fi->Face->BreakChar;
+    tm->tmItalic = fi->Italic ? 255 : 0;
+    tm->tmUnderlined = fi->Underline ? 255 : 0;
+    tm->tmStruckOut = fi->StrikeOut ? 255 : 0;
+    tm->tmPitchAndFamily = fnt->PitchAndFamily;
+    tm->tmCharSet = fnt->CharSet;
+    fi->UnderlinePos = ky;
+    fi->UnderlineSize = ky;
+    fi->StrikeoutPos = tm->tmAscent / 3;
+}
+
+static FONT_INSTANCE *realize_raster(FONT_FACE *face, const LOGFONTW *lf)
+{
+    RASTER_FIT fit = {.Kx = 1, .Ky = 1};
+    if (!raster_fit(face, lf, &fit))
+        fit.Kx = fit.Ky = 1;
+    LONG kx = fit.Kx, ky = fit.Ky;
+    LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL;
+    LONG em = face->Fnt.PixHeight * ky;
+    for (PLIST_ENTRY e = g_instances.Flink; e != &g_instances; e = e->Flink) {
+        FONT_INSTANCE *fi = CONTAINING_RECORD(e, FONT_INSTANCE, Links);
+        if (fi->Face == face && fi->EmPixels == em && fi->ScaleX == (float)kx && fi->Weight == weight &&
+            fi->Italic == !!lf->lfItalic && fi->Underline == !!lf->lfUnderline && fi->StrikeOut == !!lf->lfStrikeOut)
+            return fi;
+    }
+    FONT_INSTANCE *fi = W32Alloc(sizeof(FONT_INSTANCE));
+    if (!fi)
+        return nullptr;
+    fi->Face = face;
+    fi->EmPixels = em;
+    fi->Smooth = FONT_SMOOTH_ALIASED;
+    fi->Width = lf->lfWidth;
+    fi->Weight = weight;
+    fi->Italic = lf->lfItalic != 0;
+    fi->Underline = lf->lfUnderline != 0;
+    fi->StrikeOut = lf->lfStrikeOut != 0;
+    fi->SimBold = fit.SimBold;
+    fi->SimItalic = lf->lfItalic && !face->Italic;
+    fi->CharSet = face->Fnt.CharSet;
+    static ULONG next_raster_id = 0x80000000u;
+    fi->Id = ++next_raster_id;
+    fi->ScaleX = (float)kx;
+    fi->ScaleY = (float)ky;
+    raster_metrics(fi);
+    InsertTailList(&g_instances, &fi->Links);
+    return fi;
+}
+
 /* how text of a logical font is smoothed: the quality asks for it, or the settings of the system decide. */
 static UCHAR smooth_of(const LOGFONTW *lf)
 {
@@ -834,6 +1348,8 @@ static FONT_INSTANCE *realize_face(FONT_FACE *face, const LOGFONTW *lf, UINT dpi
 {
     if (!face || !FontLoadFace(face))
         return nullptr;
+    if (face->Raster)
+        return realize_raster(face, lf);
     const MimeTtfMetrics *m = &face->Metrics;
     LONG em;
     if (lf->lfHeight < 0)
@@ -956,6 +1472,14 @@ static FONT_INSTANCE *linked(FONT_INSTANCE *fi, ULONG slot)
 /* the glyph + 1 of a character with the linked font that has it from bit 17, 0 for none. */
 static ULONG link_entry(FONT_INSTANCE *fi, ULONG codepoint)
 {
+    if (fi->Face->Raster) {
+        /* the byte in code page 1252, or the default character, with no font linked. */
+        const FNT_INFO *fnt = &fi->Face->Fnt;
+        int b = codepoint <= 0xFFFF ? FntFromUnicode(1252, (WCHAR)codepoint) : -1;
+        if (b < fnt->FirstChar || b > fnt->LastChar)
+            b = fnt->FirstChar + fnt->DefaultChar;
+        return (ULONG)b + 1;
+    }
     USHORT index = mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
     if (index || fi->Face->Symbol || codepoint < 0x20 || (codepoint >= 0xD800 && codepoint < 0xE000))
         return (ULONG)index + 1;
@@ -1023,6 +1547,8 @@ USHORT FontLinkedGlyph(FONT_INSTANCE *fi, ULONG codepoint, FONT_INSTANCE **owner
 /* the interpreter for the size of an instance, null when the size is drawn unhinted. */
 MimeTtfHinter *FontHinter(FONT_INSTANCE *fi)
 {
+    if (fi->Face->Raster)
+        return nullptr;
     if (!fi->HinterTried) {
         fi->HinterTried = TRUE;
         if (fi->ScaleX == fi->ScaleY && fi->EmPixels >= 1 && fi->EmPixels <= 1024 && mime_ttf_has_outlines(&fi->Face->Ttf))
@@ -1034,6 +1560,8 @@ MimeTtfHinter *FontHinter(FONT_INSTANCE *fi)
 
 MimeTtfHinter *FontHinterAliased(FONT_INSTANCE *fi)
 {
+    if (fi->Face->Raster)
+        return nullptr;
     if (!fi->HinterAliasedTried) {
         fi->HinterAliasedTried = TRUE;
         if (FontHinter(fi))
@@ -1058,6 +1586,8 @@ static BOOLEAN smooths_down(FONT_INSTANCE *fi)
 /* the interpreter for ClearType text, null when the size is drawn unhinted. */
 MimeTtfHinter *FontHinterClearType(FONT_INSTANCE *fi)
 {
+    if (fi->Face->Raster)
+        return nullptr;
     if (!fi->HinterCtTried) {
         fi->HinterCtTried = TRUE;
         fi->CtVertical = smooths_down(fi);
@@ -1075,8 +1605,27 @@ MimeTtfHinter *FontHinterClearType(FONT_INSTANCE *fi)
  * the device advance of a glyph. the hdmx table wins when it has the size, then glyphs the LTSH table calls linear
  * are scaled and rounded once, and the rest take the width the instructions leave.
  */
+static const UCHAR *raster_data(FONT_INSTANCE *fi)
+{
+    return fi->Face->File->Data + fi->Face->DirOffset;
+}
+
+/* a glyph index out of the range of a raster face draws its default character. */
+static USHORT raster_index(const FONT_INSTANCE *fi, USHORT index)
+{
+    const FNT_INFO *fnt = &fi->Face->Fnt;
+    return index < fnt->FirstChar || index > fnt->LastChar ? (USHORT)(fnt->FirstChar + fnt->DefaultChar) : index;
+}
+
 LONG FontGlyphAdvance(FONT_INSTANCE *fi, USHORT index)
 {
+    if (fi->Face->Raster) {
+        index = raster_index(fi, index);
+        ULONG width, bits;
+        if (!FntGlyph(raster_data(fi), &fi->Face->Fnt, index, &width, &bits))
+            return 0;
+        return (LONG)width * (LONG)fi->ScaleX + (fi->SimBold ? 1 : 0);
+    }
     const MimeTtfFont *ttf = &fi->Face->Ttf;
     int advance, lsb;
     mime_ttf_glyph_hmetrics(ttf, index, &advance, &lsb);
@@ -1170,8 +1719,55 @@ static BOOLEAN render_aliased(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
     return TRUE;
 }
 
+/*
+ * a character of a raster face, its whole cell: each pixel stretched by the factors, a simulated bold is the bitmap
+ * over itself a pixel to the right and a simulated italic moves row r of a cell of height h by (h - r) / 2 to the
+ * right, as windows 11 draws them.
+ */
+static BOOLEAN render_raster(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
+{
+    const FNT_INFO *fnt = &fi->Face->Fnt;
+    const UCHAR *data = raster_data(fi);
+    ULONG width, bits;
+    g->Index = index;
+    g->Advance = (SHORT)FontGlyphAdvance(fi, index);
+    if (!FntGlyph(data, fnt, raster_index(fi, index), &width, &bits)) {
+        g->Width = g->Height = 0;
+        return TRUE;
+    }
+    LONG kx = (LONG)fi->ScaleX, ky = (LONG)fi->ScaleY, bold = fi->SimBold ? 1 : 0;
+    LONG w = (LONG)width * kx, h = fnt->PixHeight * ky, lean = fi->SimItalic ? (h - 1) / 2 : 0;
+    LONG out_w = w + bold + lean;
+    if (out_w <= 0 || h <= 0 || out_w > 4096 || h > 4096) {
+        g->Width = g->Height = 0;
+        return TRUE;
+    }
+    UCHAR *cov = W32Alloc((SIZE_T)out_w * (SIZE_T)h);
+    if (!cov)
+        return FALSE;
+    for (LONG y = 0; y < h; y++) {
+        LONG shift = fi->SimItalic ? (h - y) / 2 : 0;
+        for (LONG x = 0; x < out_w; x++) {
+            BOOLEAN on = FALSE;
+            for (LONG b = 0; b <= bold && !on; b++) {
+                LONG sx = x - shift - b;
+                on = sx >= 0 && sx < w && FntPixel(data, fnt, bits, (ULONG)(sx / kx), (ULONG)(y / ky));
+            }
+            cov[y * out_w + x] = on ? 255 : 0;
+        }
+    }
+    g->Left = 0;
+    g->Top = (SHORT)-(fnt->Ascent * ky);
+    g->Width = (USHORT)out_w;
+    g->Height = (USHORT)h;
+    g->Coverage = cov;
+    return TRUE;
+}
+
 static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
 {
+    if (fi->Face->Raster)
+        return render_raster(fi, index, g);
     FONT_FACE *face = fi->Face;
     MimeTtfRenderParams params = {fi->ScaleX, fi->ScaleY, 0, 0, fi->SimItalic ? 0.2f : 0.0f,
                                   fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
@@ -1211,6 +1807,8 @@ static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
 /* the face's own glyph, without the linked fonts, as GetGlyphIndices gives it. */
 USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint)
 {
+    if (codepoint > 0xFFFF && fi->Face->Raster)
+        return (USHORT)(char_entry(fi, codepoint) - 1);
     if (codepoint > 0xFFFF)
         return mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
     ULONG entry = char_entry(fi, codepoint);
@@ -1244,14 +1842,21 @@ const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint)
     return FontGetGlyphIndex(owner, index);
 }
 
-void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars)
+/*
+ * GrepGetTextFaceW gives the face name of the logical font when the mapper took the face through a FontSubstitutes
+ * name, so MS Shell Dlg stays MS Shell Dlg, and the family of the face otherwise.
+ */
+void FontGetFaceName(FONT_INSTANCE *fi, PCWSTR requested, PWSTR name, ULONG chars)
 {
     if (!chars)
         return;
-    ULONG n = (ULONG)wcslen(fi->Face->Family);
+    PCWSTR face = fi->Face->Family;
+    if (requested && requested[0] && substitute(requested) != requested && !_wcsicmp(substitute(requested), face))
+        face = requested;
+    ULONG n = (ULONG)wcslen(face);
     if (n >= chars)
         n = chars - 1;
-    memcpy(name, fi->Face->Family, n * sizeof(WCHAR));
+    memcpy(name, face, n * sizeof(WCHAR));
     name[n] = 0;
 }
 

@@ -140,6 +140,7 @@ UCHAR GdiHandleType(HANDLE handle);
 void GdiDeleteObject(GDI_OBJECT *object);
 void GdiReleaseProcessObjects(HANDLE pid);
 GDI_OBJECT *GdiStockObject(int index);
+BOOLEAN GdiLargeStockFonts(void);
 HANDLE GdiStockHandle(int index);
 void GdiInitializeStockObjects(void);
 /*
@@ -518,7 +519,7 @@ LONG FontGlyphAdvance(FONT_INSTANCE *fi, USHORT index);
 UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
                              LONG *height);
 void FontReleaseProcess(HANDLE pid);
-void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars);
+void FontGetFaceName(FONT_INSTANCE *fi, PCWSTR requested, PWSTR name, ULONG chars);
 LONG FontTextWidth(FONT_INSTANCE *fi, PCWSTR text, ULONG count, LONG extra);
 void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR text, ULONG count, const INT *dx);
 extern LOGFONTW W32SystemFont;  /* default GUI font for the system dpi. */
