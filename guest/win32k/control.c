@@ -255,8 +255,7 @@ int NTAPI NtUserSetScrollInfo(HWND hwnd, int bar, const SCROLLINFO *user_info, B
                 WndSetPos(w, nullptr, 0, 0, 0, 0,
                           SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             } else if (redraw && shown) {
-                w->Flags |= WNDF_FRAME_DIRTY;
-                WndInvalidateRegion(w, nullptr, RDW_FRAME | RDW_INVALIDATE);
+                ScrollRedraw(w);
             }
         }
     }
@@ -284,7 +283,7 @@ BOOL NTAPI NtUserSBGetParms(HWND hwnd, int bar, PVOID data, SCROLLINFO *user_inf
             si.nPage = d->Page;
         if (si.fMask & SIF_POS)
             si.nPos = d->Pos;
-        if (si.fMask & SIF_TRACKPOS)
+        if ((si.fMask & SIF_TRACKPOS) && !ScrollTrackPos(w, bar, (LONG *)&si.nTrackPos))
             si.nTrackPos = d->Pos;
     } else {
         W32SetLastError(1447); /* ERROR_NO_SCROLLBARS */
@@ -353,19 +352,7 @@ BOOL NTAPI NtUserGetScrollBarInfo(HWND hwnd, LONG object, SCROLLBARINFO *user_in
         return (BOOL)NtUserMessageCall(hwnd, SBM_GETSCROLLBARINFO, 0, (LPARAM)user_info, 0, FNID_SENDMESSAGE, FALSE);
     }
     if (w && (object == OBJID_VSCROLL || object == OBJID_HSCROLL)) {
-        BOOLEAN vert = object == OBJID_VSCROLL;
-        memset(&info, 0, sizeof(info));
-        info.cbSize = sizeof(info);
-        RECT r = w->WindowRect, client = w->ClientRect;
-        LONG thick = MetricsGet(vert ? SM_CXVSCROLL : SM_CYHSCROLL, WndGetDpi(w));
-        if (vert)
-            info.rcScrollBar = (RECT){client.right, client.top, client.right + thick, client.bottom};
-        else
-            info.rcScrollBar = (RECT){client.left, client.bottom, client.right, client.bottom + thick};
-        info.dxyLineButton = thick;
-        if (!(w->Style & (vert ? WS_VSCROLL : WS_HSCROLL)))
-            info.rgstate[0] = STATE_SYSTEM_INVISIBLE;
-        (void)r;
+        ScrollBarInfo(w, object == OBJID_VSCROLL ? SB_VERT : SB_HORZ, &info);
         ok = TRUE;
     }
     UserLeave();

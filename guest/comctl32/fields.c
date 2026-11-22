@@ -165,13 +165,37 @@ static void combo_paint_item(HWND hwnd, HDC dc, HTHEME theme, const COMBOBOXINFO
         SelectObject(dc, old);
 }
 
+/*
+ * the box as the control of the common controls 6 lays it out, measured on windows 11 with v6.c of the research
+ * repository: the button is two pixels narrower than a scroll bar and one pixel inside the right, top and bottom
+ * edges, where the control of user32 keeps it inside its sunken edge.
+ */
+static BOOL combo_info(HWND hwnd, COMBOBOXINFO *info)
+{
+    if (!combo_base(hwnd, CB_GETCOMBOBOXINFO, 0, (LPARAM)info))
+        return FALSE;
+    if ((GetWindowLongW(hwnd, GWL_STYLE) & 3) == CBS_SIMPLE || !CcClassTheme(hwnd, L"Combobox"))
+        return TRUE;
+    RECT client;
+    GetClientRect(hwnd, &client);
+    int width = GetSystemMetricsForDpi(SM_CXVSCROLL, GetDpiForWindow(hwnd)) - 2;
+    BOOL left = info->rcButton.left < info->rcItem.left;
+    info->rcButton.top = 1;
+    info->rcButton.bottom = info->rcButton.top + (info->rcItem.bottom - info->rcItem.top) + 4;
+    if (info->rcButton.bottom > client.bottom - 1)
+        info->rcButton.bottom = client.bottom - 1;
+    info->rcButton.left = left ? 1 : client.right - 1 - width;
+    info->rcButton.right = info->rcButton.left + width;
+    return TRUE;
+}
+
 static BOOL combo_paint(HWND hwnd, HDC dc)
 {
     DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
     UINT type = style & 3;
     HTHEME theme = CcClassTheme(hwnd, L"Combobox");
     COMBOBOXINFO info = {sizeof(info)};
-    if (!theme || type == CBS_SIMPLE || !combo_base(hwnd, CB_GETCOMBOBOXINFO, 0, (LPARAM)&info))
+    if (!theme || type == CBS_SIMPLE || !combo_info(hwnd, &info))
         return FALSE;
     RECT client;
     GetClientRect(hwnd, &client);
@@ -256,6 +280,8 @@ static LRESULT CALLBACK ComboBoxProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         if (track_hot(hwnd, msg))
             InvalidateRect(hwnd, nullptr, FALSE);
         break;
+    case CB_GETCOMBOBOXINFO:
+        return lparam && ((COMBOBOXINFO *)lparam)->cbSize == sizeof(COMBOBOXINFO) && combo_info(hwnd, (COMBOBOXINFO *)lparam);
     case WM_NCDESTROY:
         CcSetWindowFlags(hwnd, 0);
         break;

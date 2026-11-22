@@ -146,11 +146,20 @@ int CcMagicScale(HWND hwnd, BOOL forced, BOOL themed, int value);
 #define CC_LBCP_BORDER_HVSCROLL 2
 #define CC_LBCP_BORDER_NOSCROLL 3
 #define CC_LBCP_BORDER_VSCROLL 4
+#define CC_SBP_ARROWBTN 1
+#define CC_SBP_THUMBBTNHORZ 2
+#define CC_SBP_THUMBBTNVERT 3
+#define CC_SBP_LOWERTRACKHORZ 4
+#define CC_SBP_UPPERTRACKHORZ 5
+#define CC_SBP_LOWERTRACKVERT 6
+#define CC_SBP_UPPERTRACKVERT 7
+#define CC_SBP_SIZEBOX 10
 #define CC_CP_BORDER 4
 #define CC_CP_READONLY 5
 #define CC_CP_DROPDOWNBUTTONRIGHT 6
 
 LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK ScrollBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK AnimateProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK ProgressProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK LinkProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

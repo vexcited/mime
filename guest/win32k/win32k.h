@@ -362,6 +362,7 @@ struct FONT *GdiCreateFont(const LOGFONTW *lf);
 BOOL GdiBltFromSurface(HDC hdst, int x, int y, int width, int height, struct SURFACE *src, int src_x, int src_y, DWORD rop);
 /* oembitmap.c: the check marks and radio buttons user32 draws, made again after the colours of the system change. */
 void OemBitmapsInvalidate(void);
+void OemDrawScrollArrow(SURFACE *s, const REGION *clip, const RECT *r, ULONG direction, ULONG state);
 DC *DcLookup(HDC dc);
 void DcSelectPalette(DC *dc, PALETTE *palette);
 /* gdi/palette.c. */
@@ -1094,6 +1095,16 @@ LRESULT FrameHitTest(WND *w, POINT pt);
 void FramePaint(WND *w);
 BOOLEAN FrameIsDark(WND *w);
 BOOLEAN FrameThemed(void);
+BOOLEAN FrameDrawScrollPart(SURFACE *s, const REGION *clip, const RECT *r, int part, int state, UINT dpi);
+
+/* scrollbar.c: the scroll bars of a frame, drawn and tracked as DefWindowProc does. */
+void ScrollPaint(WND *w, SURFACE *s, const REGION *clip);
+void ScrollRedraw(WND *w);
+void ScrollMouse(WND *w, UINT msg, LONG hit, POINT pt);
+void ScrollTrack(WND *w, int bar, POINT pt);
+BOOLEAN ScrollTrackPos(const WND *w, int bar, LONG *pos);
+void ScrollWindowDestroyed(WND *w);
+void ScrollBarInfo(const WND *w, int bar, SCROLLBARINFO *info);
 /* high contrast is on: the system colors are the high contrast ones and the visual style is off. */
 BOOLEAN MetricsHighContrast(void);
 /* the system colors or the visual style changed: every window is told and drawn again. */

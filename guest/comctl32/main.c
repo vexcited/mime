@@ -37,17 +37,18 @@ static const CLASS_ENTRY g_classes[] = {
 };
 
 /* the classes that take the place of the ones of user32, and so cannot be registered before a program asks. */
-static const WCHAR *const g_user_classes[] = {L"Static", L"Button", L"Edit", L"ListBox", L"ComboBox"};
+static const WCHAR *const g_user_classes[] = {L"Static", L"Button", L"ScrollBar", L"Edit", L"ListBox", L"ComboBox"};
 
-static BOOL register_button(void)
+/* a class made whole here, of the name of one of user32. */
+static BOOL register_own(LPCWSTR name, WNDPROC proc, UINT style)
 {
     WNDCLASSW wc = {};
-    wc.style = CS_GLOBALCLASS | CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_PARENTDC;
-    wc.lpfnWndProc = ButtonProc;
+    wc.style = CS_GLOBALCLASS | style;
+    wc.lpfnWndProc = proc;
     wc.cbWndExtra = sizeof(void *);
     wc.hInstance = Comctl32Instance;
     wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
-    wc.lpszClassName = L"Button";
+    wc.lpszClassName = name;
     return RegisterClassW(&wc) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
@@ -79,8 +80,10 @@ WINCOMMCTRLAPI BOOL WINAPI RegisterClassNameW(LPCWSTR name)
     if (!_wcsicmp(name, L"Static"))
         return RegisterStaticClass();
     if (!_wcsicmp(name, L"Button"))
-        return register_button();
-    for (SIZE_T i = 2; i < RTL_NUMBER_OF(g_user_classes); i++)
+        return register_own(L"Button", ButtonProc, CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_PARENTDC);
+    if (!_wcsicmp(name, L"ScrollBar"))
+        return register_own(L"ScrollBar", ScrollBarProc, CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_PARENTDC);
+    for (SIZE_T i = 3; i < RTL_NUMBER_OF(g_user_classes); i++)
         if (!_wcsicmp(name, g_user_classes[i]))
             return RegisterFieldClass(g_user_classes[i]);
     for (SIZE_T i = 0; i < sizeof(g_classes) / sizeof(g_classes[0]); i++)
