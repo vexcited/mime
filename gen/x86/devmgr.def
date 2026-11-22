@@ -1,0 +1,10 @@
+LIBRARY devmgr.dll
+EXPORTS
+    DeviceProperties_RunDLLA=_DeviceProperties_RunDLLA@16 @5
+    DeviceProperties_RunDLLW=_DeviceProperties_RunDLLW@16 @6
+    DevicePropertiesA=_DevicePropertiesA@16 @7
+    DevicePropertiesW=_DevicePropertiesW@16 @8
+    DeviceCreateHardwarePage=_DeviceCreateHardwarePage@8 @19
+    DeviceCreateHardwarePageEx=_DeviceCreateHardwarePageEx@16 @20
+    DevicePropertiesExA=_DevicePropertiesExA@20 @21
+    DevicePropertiesExW=_DevicePropertiesExW@20 @22

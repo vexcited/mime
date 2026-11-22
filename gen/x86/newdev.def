@@ -1,0 +1,3 @@
+LIBRARY newdev.dll
+EXPORTS
+    DiUninstallDevice=_DiUninstallDevice@20 @8

@@ -669,7 +669,7 @@ set(MIME_EXTRA_DLLS advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6
 list(APPEND MIME_EXTRA_DLLS sensapi:0x7FEBF0000000 verifier:0x7FEBE0000000 wldp:0x7FECD0000000 rasapi32:0x7FEC10000000 uianimation:0x7FECB0000000
     windows.graphics:0x7FECA0000000 windows.media.devices:0x7FEB60000000 windows.devices.enumeration:0x7FEB50000000 windows.networking.connectivity:0x7FEB40000000 cryptowinrt:0x7FEB30000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
     twinapi.appcore:0x7FEBC0000000 fwpuclnt:0x7FEBB0000000 cryptsvc:0x7FEBA0000000 nlansp_c:0x7FEB90000000 dosvc:0x7FEB80000000
-    qmgr:0x7FEB70000000 netprofmsvc:0x7FEB20000000 bthserv:0x7FEB10000000
+    qmgr:0x7FEB70000000 netprofmsvc:0x7FEB20000000 bthserv:0x7FEB10000000 devmgr:0x7FEB00000000 newdev:0x7FEAF0000000
     ngcsvc:0x7FEAE0000000 dhcpcore:0x7FEAD0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -839,6 +839,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_dhcpcore ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
     set(libs_ngcsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ncrypt.lib)
+    set(libs_devmgr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/comctl32.lib ${MIME_LIB_${arch}}/setupapi.lib
+        ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/uxtheme.lib)
+    set(libs_newdev ${MIME_LIB_${arch}}/setupapi.lib ${MIME_LIB_${arch}}/shell32.lib)
     set(objects_dosvc ${arch}-lib-transfer)
     set(includes_dosvc guest/lib)
     set(libs_dosvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib
@@ -1371,7 +1374,10 @@ list(APPEND MIME_X86_DLLS windows.media.devices:0x48000000:runtime_imports
 foreach(runtime windows.media.devices windows.devices.enumeration windows.networking.connectivity cryptowinrt)
     set(includes_${runtime} guest/lib)
 endforeach()
+set(devmgr_imports ntdll kernel32 user32 gdi32 win32u advapi32 comctl32 setupapi cfgmgr32 uxtheme)
+set(newdev_imports ntdll kernel32 setupapi shell32)
 list(APPEND MIME_X86_DLLS winsta:0x10800000:all_five)
+list(APPEND MIME_X86_DLLS devmgr:0x10400000:devmgr_imports newdev:0x10C00000:newdev_imports)
 set(evr_imports ntdll kernel32 mfplat ole32 gdi32 user32 dxva2 d3d9)
 list(APPEND MIME_X86_DLLS evr:0x32F90000:evr_imports)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c x86-lib-hlsl x86-div)

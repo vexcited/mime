@@ -422,6 +422,7 @@
     {L"ext-ms-win-msimg-draw-l1-1", L"msimg32.dll", 0},
     {L"ext-ms-win-net-nfdapi-l1-1", L"ndfapi.dll", 1},
     {L"ext-ms-win-networking-wlanapi-l1-1", L"wlanapi.dll", 0},
+    {L"ext-ms-win-newdev-config-l1-1", L"newdev.dll", 0},
     {L"ext-ms-win-ntdsapi-activedirectoryclient-l1-1", L"ntdsapi.dll", 1},
     {L"ext-ms-win-ntuser-caret-l1-1", L"user32.dll", 0},
     {L"ext-ms-win-ntuser-chartranslation-l1-1", L"user32.dll", 0},
