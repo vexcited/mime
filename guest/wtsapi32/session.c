@@ -569,11 +569,139 @@ WTSAPI BOOL WINAPI WTSEnumerateSessionsW(HANDLE server, DWORD reserved, DWORD ve
     return TRUE;
 }
 
-/* only the system account may take a session's token. */
+/* ---------------------------------------------------------------- the user's token */
+
+#define ERROR_NO_TOKEN 1008L
+#define TOKEN_DUPLICATE_ 0x0002
+#define TOKEN_QUERY_ 0x0008
+#define TOKEN_ALL_ACCESS_ 0xF01FF
+#define TOKEN_USER_CLASS 1
+#define TOKEN_PRIVILEGES_CLASS 3
+#define TOKEN_ELEVATION_TYPE_CLASS 18
+#define TOKEN_LINKED_TOKEN_CLASS 19
+#define SE_TCB_PRIVILEGE 7
+
+NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateToken(HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                             BOOLEAN effective_only, ULONG type, PHANDLE new_token);
+
+/* the well known rid of a token's user when it is one of the nt authority accounts, else 0. */
+static ULONG service_rid(HANDLE token)
+{
+    union {
+        struct {
+            PSID Sid;
+            ULONG Attributes;
+        } User;
+        UCHAR Raw[128];
+    } info;
+    ULONG got;
+    if (!NT_SUCCESS(NtQueryInformationToken(token, TOKEN_USER_CLASS, &info, sizeof(info), &got)))
+        return ~0u;
+    const UCHAR *sid = info.User.Sid;
+    static const UCHAR nt[6] = {0, 0, 0, 0, 0, 5};
+    if (sid[1] == 1 && !memcmp(sid + 2, nt, 6)) {
+        ULONG rid = *(const ULONG *)(sid + 8);
+        if (rid == 18 || rid == 19 || rid == 20)
+            return rid;
+    }
+    return 0;
+}
+
+/* termsrv gives the token only to the system account holding the tcb privilege. */
+static BOOL caller_is_tcb(void)
+{
+    HANDLE token;
+    if (!NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), TOKEN_QUERY_, TRUE, &token)) &&
+        !NT_SUCCESS(NtOpenProcessToken(NtCurrentProcess(), TOKEN_QUERY_, &token)))
+        return FALSE;
+    BOOL ok = service_rid(token) == 18;
+    union {
+        struct {
+            ULONG Count;
+            struct {
+                LUID Luid;
+                ULONG Attributes;
+            } Privileges[1];
+        } Set;
+        UCHAR Raw[1024];
+    } info;
+    ULONG got, held = FALSE;
+    if (ok && NT_SUCCESS(NtQueryInformationToken(token, TOKEN_PRIVILEGES_CLASS, &info, sizeof(info), &got)))
+        for (ULONG i = 0; i < info.Set.Count; i++)
+            held |= info.Set.Privileges[i].Luid.LowPart == SE_TCB_PRIVILEGE && !info.Set.Privileges[i].Luid.HighPart;
+    NtClose(token);
+    return ok && held;
+}
+
+/*
+ * the logon token of the session's user. the kernel gives each program of the console its user's filtered logon
+ * token, so a program of the user in the session holds it, or its elevated half whose linked token it is.
+ */
+static HANDLE session_logon_token(ULONG session)
+{
+    ULONG size = 0x10000, got;
+    UCHAR *buffer = nullptr;
+    NTSTATUS status;
+    do {
+        LocalFree(buffer);
+        size *= 2;
+        buffer = LocalAlloc(LMEM_FIXED, size);
+        status = buffer ? NtQuerySystemInformation(SystemProcessInformation, buffer, size, &got) : STATUS_NO_MEMORY;
+    } while (status == STATUS_INFO_LENGTH_MISMATCH && size < 0x1000000);
+    HANDLE found = nullptr;
+    for (ULONG offset = 0; NT_SUCCESS(status) && !found;) {
+        SYSTEM_PROCESS_INFORMATION *p = (SYSTEM_PROCESS_INFORMATION *)(buffer + offset);
+        HANDLE process, token;
+        OBJECT_ATTRIBUTES oa;
+        InitializeObjectAttributes(&oa, nullptr, 0, nullptr, nullptr);
+        CLIENT_ID cid = {p->UniqueProcessId, nullptr};
+        if (p->SessionId == session && p->UniqueProcessId &&
+            NT_SUCCESS(NtOpenProcess(&process, PROCESS_QUERY_LIMITED_INFORMATION, &oa, &cid))) {
+            if (NT_SUCCESS(NtOpenProcessToken(process, TOKEN_DUPLICATE_ | TOKEN_QUERY_, &token))) {
+                ULONG type = 0;
+                if (!service_rid(token) &&
+                    NT_SUCCESS(NtQueryInformationToken(token, TOKEN_ELEVATION_TYPE_CLASS, &type, sizeof(type), &got))) {
+                    HANDLE logon = token;
+                    if (type == 2 &&
+                        !NT_SUCCESS(NtQueryInformationToken(token, TOKEN_LINKED_TOKEN_CLASS, &logon, sizeof(logon), &got)))
+                        logon = nullptr;
+                    if (logon && !NT_SUCCESS(NtDuplicateToken(logon, TOKEN_ALL_ACCESS_, &oa, FALSE, 1 /* TokenPrimary */,
+                                                              &found)))
+                        found = nullptr;
+                    if (logon && logon != token)
+                        NtClose(logon);
+                }
+                NtClose(token);
+            }
+            NtClose(process);
+        }
+        if (!p->NextEntryOffset)
+            break;
+        offset += p->NextEntryOffset;
+    }
+    LocalFree(buffer);
+    return found;
+}
+
 WTSAPI BOOL WINAPI WTSQueryUserToken(ULONG id, PHANDLE token)
 {
-    set_error(token ? ERROR_PRIVILEGE_NOT_HELD : ERROR_INVALID_PARAMETER);
-    return FALSE;
+    if (!token) {
+        set_error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!caller_is_tcb()) {
+        set_error(ERROR_PRIVILEGE_NOT_HELD);
+        return FALSE;
+    }
+    if (id == WTS_CURRENT_SESSION)
+        id = current_session();
+    HANDLE found = session_logon_token(id);
+    if (!found) {
+        set_error(ERROR_NO_TOKEN);
+        return FALSE;
+    }
+    *token = found;
+    return TRUE;
 }
 
 /* ---------------------------------------------------------------- notifications */

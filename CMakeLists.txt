@@ -1353,6 +1353,7 @@ list(APPEND MIME_X86_DLLS windows.media.devices:0x48000000:runtime_imports
 foreach(runtime windows.media.devices windows.devices.enumeration windows.networking.connectivity cryptowinrt)
     set(includes_${runtime} guest/lib)
 endforeach()
+list(APPEND MIME_X86_DLLS winsta:0x10800000:all_five)
 set(evr_imports ntdll kernel32 mfplat ole32 gdi32 user32 dxva2 d3d9)
 list(APPEND MIME_X86_DLLS evr:0x32F90000:evr_imports)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c x86-lib-hlsl x86-div)
