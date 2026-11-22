@@ -57,12 +57,26 @@ void KiSwitchAddressSpace(PKPROCESS process)
     KiWriteCr3(process->DirectoryTableBase);
 }
 
+/* the base of fs, read without an exit where rdfsbase is allowed: the msr is only written when it changes. */
+static BOOLEAN g_fsgsbase;
+
+static void set_fs_base(ULONG64 base)
+{
+    ULONG64 now = ~base;
+    if (g_fsgsbase)
+        __asm__ volatile("rdfsbase %0" : "=r"(now));
+    if (now != base)
+        KiWriteMsr(MSR_FS_BASE, base);
+}
+
 /* in 32-bit code, fs of a wow64 thread points at its 32-bit teb. */
 static void set_teb32(ULONG_PTR teb32)
 {
     ULONG64 *entry = &KeGetPcr()->GdtBase[KGDT64_R3_CMTEB / 8];
-    *entry = (*entry & ~(0xFFFFFFull << 16 | 0xFFull << 56)) | (teb32 & 0xFFFFFF) << 16 | ((teb32 >> 24) & 0xFF) << 56;
-    KiWriteMsr(MSR_FS_BASE, teb32);
+    ULONG64 value = (*entry & ~(0xFFFFFFull << 16 | 0xFFull << 56)) | (teb32 & 0xFFFFFF) << 16 | ((teb32 >> 24) & 0xFF) << 56;
+    if (*entry != value)
+        *entry = value;
+    set_fs_base(teb32);
 }
 
 /*
@@ -174,7 +188,7 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
     if (next->Teb32)
         set_teb32((ULONG_PTR)next->Teb32);
     else
-        KiWriteMsr(MSR_FS_BASE, 0); /* 64-bit windows keeps the teb in gs and leaves fs zero. */
+        set_fs_base(0); /* 64-bit windows keeps the teb in gs and leaves fs zero. */
     KiSwapContextInternal(&old->KernelSp, next->KernelSp, old->XSaveArea, next->XSaveArea);
 }
 
@@ -665,8 +679,10 @@ void KiInitializeProcessorArch(void)
     if (regs[1] & (1u << 7))
         cr4 |= CR4_SMEP;
     /* the processor feature is advertised to user mode, so rd/wrfsbase and rd/wrgsbase must be legal there. */
-    if (regs[1] & (1u << 0))
+    if (regs[1] & (1u << 0)) {
         cr4 |= CR4_FSGSBASE;
+        g_fsgsbase = TRUE;
+    }
     __asm__ volatile("movq %0, %%cr4" ::"r"(cr4) : "memory");
     /*
      * windows checks alignment in user mode: a thread that sets the flag faults on a misaligned access, and its

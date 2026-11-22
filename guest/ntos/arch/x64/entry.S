@@ -297,6 +297,39 @@ KiFlushIpi:
 .endm
 
 /*
+ * the return to user mode of a frame the syscall instruction made, rip in rcx and the flags in r11, is a sysretq:
+ * anything else, a frame whose rip or flags were changed, a trap flag, another segment or an address that is not
+ * canonical, which sysretq would fault on in kernel mode, takes the iretq. ss is loaded first as amd parts keep a
+ * null ss unusable through sysretq, which the 32-bit code of wow64 would fault on.
+ */
+.macro RETURN_TO_USER
+    movq    KTRAP_RIP(%rsp), %rax
+    cmpq    %rax, KTRAP_RCX(%rsp)
+    jne     8f
+    shrq    $47, %rax
+    jnz     8f
+    movq    KTRAP_RFLAGS(%rsp), %rax
+    cmpq    %rax, KTRAP_R11(%rsp)
+    jne     8f
+    testl   $0x10100, %eax
+    jnz     8f
+    cmpq    $(KGDT64_R3_CODE | RPL_USER), KTRAP_CS(%rsp)
+    jne     8f
+    cmpq    $(KGDT64_R3_DATA | RPL_USER), KTRAP_SS(%rsp)
+    jne     8f
+    movl    $KGDT64_R0_DATA, %eax
+    movl    %eax, %ss
+    RESTORE_GPRS
+    movq    KTRAP_RSP(%rsp), %rsp
+    swapgs
+    sysretq
+8:  RESTORE_GPRS
+    addq    $KTRAP_RIP, %rsp
+    swapgs
+    iretq
+.endm
+
+/*
  * syscall from user mode: rcx = return rip, r11 = rflags, interrupts off.
  * the frame is built where the hardware would push one, at KPCR.KernelRsp.
  */
@@ -353,10 +386,7 @@ KiFastServiceExit:
     call    KiSettleTlbFlush
     movq    %rbx, %rsp
 1:  RESTORE_XMM
-    RESTORE_GPRS
-    addq    $KTRAP_RIP, %rsp
-    swapgs
-    iretq
+    RETURN_TO_USER
 
 /*
  * BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value), BOOLEAN KiFastWriteUser32(void *address, ULONG
@@ -647,10 +677,7 @@ KiExceptionExit:
     call    KiReleaseKernelLock
     movq    %rbx, %rsp
     RESTORE_XMM
-    RESTORE_GPRS
-    addq    $KTRAP_RIP, %rsp
-    swapgs
-    iretq
+    RETURN_TO_USER
 
 2:  testl   $KTRAP_FLAG_LOCK_TAKEN, KTRAP_FLAGS(%rsp)
     jz      3f
