@@ -526,9 +526,14 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
-    if (!name.Length)
+    /*
+     * CreatePipe makes a pipe with no name below the handle of the file system, and opens its other end below the
+     * handle it got: no name finds such a pipe.
+     */
+    PFILE_OBJECT related = file->RelatedFileObject;
+    if (!name.Length && !(related && related->DeviceObject == file->DeviceObject && related->FsContext2 == END_ROOT))
         return STATUS_OBJECT_NAME_INVALID;
-    NP_PIPE *p = find_pipe(&name);
+    NP_PIPE *p = name.Length ? find_pipe(&name) : nullptr;
     if (p) {
         if (c->Disposition == FILE_CREATE)
             return STATUS_ACCESS_DENIED;
@@ -779,11 +784,17 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
-    if (!name.Length) {
+    /* no name below the server end of a pipe is its other end, and anywhere else the file system itself. */
+    PFILE_OBJECT related = file->RelatedFileObject;
+    NP_INSTANCE *below = !name.Length && related && related->DeviceObject == file->DeviceObject &&
+                                 related->FsContext2 == END_SERVER
+                             ? related->FsContext
+                             : nullptr;
+    if (!name.Length && !below) {
         file->FsContext2 = END_ROOT;
         return STATUS_SUCCESS;
     }
-    NP_PIPE *p = find_pipe(&name);
+    NP_PIPE *p = below ? below->Pipe : find_pipe(&name);
     ULONG index;
     if (!p && discord_index(&name, &index))
         return open_host(file, &name, index);
@@ -798,8 +809,8 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     /* the handle still has the append right it asked for, the write end of CreatePipe is 0x120196 on windows. */
     if (context && context->Checked)
         context->GrantedAccess |= asked & FILE_CREATE_PIPE_INSTANCE;
-    NP_INSTANCE *in = listening_instance(p);
-    if (!in)
+    NP_INSTANCE *in = below ? below : listening_instance(p);
+    if (!in || in->State != FILE_PIPE_LISTENING_STATE || !in->ServerOpen)
         return STATUS_PIPE_NOT_AVAILABLE;
     in->State = FILE_PIPE_CONNECTED_STATE;
     in->ClientOpen = TRUE;
