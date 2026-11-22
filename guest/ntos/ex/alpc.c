@@ -189,30 +189,93 @@ static NTSTATUS write_caller(void *dst, const void *src, SIZE_T length)
     return STATUS_SUCCESS;
 }
 
+/*
+ * wow64 hands the attributes of a 32-bit caller over as they are and marks the call with this flag. they keep the
+ * layout of the 32-bit ntdll, with pointers and handles in four bytes.
+ */
+#define ALPC_MSGFLG_WOW64_CALL 0x80000000u
+
 /* the size ntdll's AlpcGetHeaderSize gives the attributes before an attribute, from the bits above it. */
-static ULONG attributes_size(ULONG bits)
+static ULONG attributes_size(ULONG bits, BOOLEAN wow)
 {
     ULONG n = 8;
     if (bits & ATTR_SECURITY)
-        n += 0x18;
+        n += wow ? 12 : 0x18;
     if (bits & ATTR_VIEW)
-        n += 0x20;
+        n += wow ? 16 : 0x20;
     if (bits & ATTR_CONTEXT)
-        n += 0x20;
+        n += wow ? 20 : 0x20;
     if (bits & ATTR_HANDLE)
-        n += 0x18;
+        n += wow ? 16 : 0x18;
     if (bits & ATTR_TOKEN)
         n += 0x18;
     if (bits & ATTR_DIRECT)
-        n += 8;
+        n += wow ? 4 : 8;
     if (bits & ATTR_WORK_ON_BEHALF)
         n += 8;
     return n;
 }
 
-static ULONG attribute_offset(ULONG allocated, ULONG bit)
+static ULONG attribute_offset(ULONG allocated, ULONG bit, BOOLEAN wow)
 {
-    return attributes_size(allocated & ~(bit | (bit - 1)));
+    return attributes_size(allocated & ~(bit | (bit - 1)), wow);
+}
+
+/* the fields of an attribute: their size in 64 and in 32 bits, 0 for padding, and whether they widen with their sign. */
+typedef struct ATTR_FIELD {
+    UCHAR Size64, Size32;
+    BOOLEAN Signed;
+} ATTR_FIELD;
+
+static const ATTR_FIELD g_security_fields[] = {{4, 4}, {4, 0}, {8, 4}, {8, 4, TRUE}, {0}};
+static const ATTR_FIELD g_view_fields[] = {{4, 4}, {4, 0}, {8, 4, TRUE}, {8, 4}, {8, 4}, {0}};
+static const ATTR_FIELD g_context_fields[] = {{8, 4}, {8, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 0}, {0}};
+static const ATTR_FIELD g_handle_fields[] = {{4, 4}, {4, 0}, {8, 4, TRUE}, {4, 4}, {4, 4}, {0}};
+
+static NTSTATUS read_attribute(void *out, SIZE_T size, PVOID attributes, ULONG allocated, ULONG bit, BOOLEAN wow,
+                               const ATTR_FIELD *fields)
+{
+    PUCHAR at = (PUCHAR)attributes + attribute_offset(allocated, bit, wow);
+    if (!wow)
+        return read_caller(out, at, size);
+    UCHAR narrow[0x20];
+    ULONG n = 0;
+    for (const ATTR_FIELD *f = fields; f->Size64; f++)
+        n += f->Size32;
+    NTSTATUS status = read_caller(narrow, at, n);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR wide = out;
+    memset(wide, 0, size);
+    n = 0;
+    for (const ATTR_FIELD *f = fields; f->Size64; wide += f->Size64, f++) {
+        if (!f->Size32)
+            continue;
+        ULONG v;
+        memcpy(&v, narrow + n, 4);
+        n += 4;
+        ULONG64 w = f->Signed ? (ULONG64)(LONG64)(LONG)v : v;
+        memcpy(wide, &w, f->Size64);
+    }
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS write_attribute(PVOID attributes, ULONG allocated, ULONG bit, BOOLEAN wow, const void *in, SIZE_T size,
+                                const ATTR_FIELD *fields)
+{
+    PUCHAR at = (PUCHAR)attributes + attribute_offset(allocated, bit, wow);
+    if (!wow)
+        return write_caller(at, in, size);
+    UCHAR narrow[0x20];
+    ULONG n = 0;
+    const UCHAR *wide = in;
+    for (const ATTR_FIELD *f = fields; f->Size64; wide += f->Size64, f++) {
+        if (f->Size32) {
+            memcpy(narrow + n, wide, 4);
+            n += 4;
+        }
+    }
+    return write_caller(at, narrow, n);
 }
 
 /* ------------------------------------------------------------------ messages */
@@ -831,8 +894,15 @@ NTSTATUS NTAPI NtAlpcAcceptConnectPort(PHANDLE handle, HANDLE connection_handle,
     if (handle) {
         ObReferenceObject(server);
         status = ObInsertObject(server, PORT_ALL_ACCESS, 0, &h);
-        if (NT_SUCCESS(status))
+        /* wow64 passes the place of the handle on: a 32-bit program keeps it in four bytes. */
+        if (NT_SUCCESS(status) && (flags & ALPC_MSGFLG_WOW64_CALL)) {
+            ULONG narrow = (ULONG)(ULONG_PTR)h;
+            status = write_caller(handle, &narrow, sizeof(narrow));
+            if (!NT_SUCCESS(status))
+                NtClose(h);
+        } else if (NT_SUCCESS(status)) {
             status = ObStoreHandle(handle, h);
+        }
     }
     if (!NT_SUCCESS(status)) {
         complete(request, STATUS_PORT_CONNECTION_REFUSED);
@@ -1094,7 +1164,8 @@ NTSTATUS NTAPI NtAlpcCreateResourceReserve(HANDLE port_handle, ULONG flags, SIZE
     if (!NT_SUCCESS(status))
         return status;
     HANDLE id = (HANDLE)(ULONG_PTR)(g_object_ids++ * 4);
-    status = write_caller(reserve, &id, sizeof(id));
+    /* wow64 passes the place of the reserve on: a 32-bit program keeps it in four bytes. */
+    status = write_caller(reserve, &id, PspIsWow64Process(PsCurrentProcess()) ? sizeof(ULONG) : sizeof(id));
     ObDereferenceObject(port);
     return status;
 }
@@ -1125,7 +1196,7 @@ typedef struct ALPC_HANDLE_ATTRIBUTE {
 #define ALPC_HANDLEFLG_DUPLICATE_SAME_ACCESS 0x10000
 
 /* what a sender attaches to a message, from the attributes it says are valid. */
-static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user)
+static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user, BOOLEAN wow)
 {
     PTOKEN token = sender_token();
     token_ids(token, m->TokenIds);
@@ -1141,7 +1212,7 @@ static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user)
     ULONG allocated = head[0], valid = head[1] & head[0];
     if (valid & ATTR_SECURITY) {
         ALPC_SECURITY_ATTRIBUTE sa;
-        status = read_caller(&sa, (PUCHAR)user + attribute_offset(allocated, ATTR_SECURITY), sizeof(sa));
+        status = read_attribute(&sa, sizeof(sa), user, allocated, ATTR_SECURITY, wow, g_security_fields);
         if (!NT_SUCCESS(status))
             return status;
         /* rpcrt4 gives -2 for the identity the port was connected with, which is taken as the message goes. */
@@ -1171,7 +1242,7 @@ static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user)
     }
     if (valid & ATTR_VIEW) {
         ALPC_VIEW_ATTRIBUTE va;
-        status = read_caller(&va, (PUCHAR)user + attribute_offset(allocated, ATTR_VIEW), sizeof(va));
+        status = read_attribute(&va, sizeof(va), user, allocated, ATTR_VIEW, wow, g_view_fields);
         if (!NT_SUCCESS(status))
             return status;
         if (va.ViewBase) {
@@ -1185,14 +1256,14 @@ static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user)
     }
     if (valid & ATTR_CONTEXT) {
         ALPC_CONTEXT_ATTRIBUTE ca;
-        status = read_caller(&ca, (PUCHAR)user + attribute_offset(allocated, ATTR_CONTEXT), sizeof(ca));
+        status = read_attribute(&ca, sizeof(ca), user, allocated, ATTR_CONTEXT, wow, g_context_fields);
         if (!NT_SUCCESS(status))
             return status;
         m->SenderMessageContext = ca.MessageContext;
     }
     if (valid & ATTR_HANDLE) {
         ALPC_HANDLE_ATTRIBUTE ha;
-        status = read_caller(&ha, (PUCHAR)user + attribute_offset(allocated, ATTR_HANDLE), sizeof(ha));
+        status = read_attribute(&ha, sizeof(ha), user, allocated, ATTR_HANDLE, wow, g_handle_fields);
         if (!NT_SUCCESS(status))
             return status;
         if (ha.Handle) {
@@ -1211,7 +1282,7 @@ static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user)
 }
 
 /* writes a message and the attributes the receiver allocated for it into the receiver's buffers. */
-static NTSTATUS deliver(ALPC_MESSAGE *m, ULONG id, ULONG callback, PVOID buffer, PVOID attributes)
+static NTSTATUS deliver(ALPC_MESSAGE *m, ULONG id, ULONG callback, PVOID buffer, PVOID attributes, BOOLEAN wow)
 {
     ALPC_PORT_HEADER out = {};
     out.DataLength = (USHORT)m->DataLength;
@@ -1233,7 +1304,7 @@ static NTSTATUS deliver(ALPC_MESSAGE *m, ULONG id, ULONG callback, PVOID buffer,
     ULONG valid = 0;
     if ((allocated & ATTR_SECURITY) && m->HasSecurity) {
         ALPC_SECURITY_ATTRIBUTE sa = {};
-        status = write_caller((PUCHAR)attributes + attribute_offset(allocated, ATTR_SECURITY), &sa, sizeof(sa));
+        status = write_attribute(attributes, allocated, ATTR_SECURITY, wow, &sa, sizeof(sa), g_security_fields);
         valid |= ATTR_SECURITY;
     }
     if ((allocated & ATTR_VIEW) && m->View && NT_SUCCESS(status)) {
@@ -1242,13 +1313,13 @@ static NTSTATUS deliver(ALPC_MESSAGE *m, ULONG id, ULONG callback, PVOID buffer,
         if (NT_SUCCESS(status)) {
             va.ViewSize = m->ViewSize;
             m->ReceiverView = va.ViewBase;
-            status = write_caller((PUCHAR)attributes + attribute_offset(allocated, ATTR_VIEW), &va, sizeof(va));
+            status = write_attribute(attributes, allocated, ATTR_VIEW, wow, &va, sizeof(va), g_view_fields);
             valid |= ATTR_VIEW;
         }
     }
     if ((allocated & ATTR_CONTEXT) && NT_SUCCESS(status) && m->Type != (LPC_CONNECTION_REQUEST | LPC_CONTINUATION_REQUIRED)) {
         ALPC_CONTEXT_ATTRIBUTE ca = {m->PortContext, m->MessageContext, m->Sequence, id, callback, 0};
-        status = write_caller((PUCHAR)attributes + attribute_offset(allocated, ATTR_CONTEXT), &ca, sizeof(ca));
+        status = write_attribute(attributes, allocated, ATTR_CONTEXT, wow, &ca, sizeof(ca), g_context_fields);
         valid |= ATTR_CONTEXT;
     }
     if ((allocated & ATTR_HANDLE) && m->Object && NT_SUCCESS(status)) {
@@ -1259,12 +1330,12 @@ static NTSTATUS deliver(ALPC_MESSAGE *m, ULONG id, ULONG callback, PVOID buffer,
             ha.Handle = (ULONG64)h;
             ha.ObjectType = m->ObjectType;
             ha.DesiredAccess = m->ObjectAccess;
-            status = write_caller((PUCHAR)attributes + attribute_offset(allocated, ATTR_HANDLE), &ha, sizeof(ha));
+            status = write_attribute(attributes, allocated, ATTR_HANDLE, wow, &ha, sizeof(ha), g_handle_fields);
             valid |= ATTR_HANDLE;
         }
     }
     if ((allocated & ATTR_TOKEN) && m->Token && m->TellToken && NT_SUCCESS(status)) {
-        status = write_caller((PUCHAR)attributes + attribute_offset(allocated, ATTR_TOKEN), m->TokenIds,
+        status = write_caller((PUCHAR)attributes + attribute_offset(allocated, ATTR_TOKEN, wow), m->TokenIds,
                               sizeof(m->TokenIds));
         valid |= ATTR_TOKEN;
     }
@@ -1314,7 +1385,7 @@ static NTSTATUS receive(ALPC_PORT *port, ULONG flags, PVOID buffer, PSIZE_T leng
     m->Receiver = PsCurrentProcess();
     ULONG id = m->Id, callback = m->CallbackId;
     BOOLEAN tracked = message_find(id) == m;
-    NTSTATUS status = deliver(m, id, callback, buffer, attributes);
+    NTSTATUS status = deliver(m, id, callback, buffer, attributes, (flags & ALPC_MSGFLG_WOW64_CALL) != 0);
     /* a datagram, a reply or a notice is done once received. */
     if (!tracked || !(m->Type & LPC_CONTINUATION_REQUIRED))
         message_free(m);
@@ -1322,7 +1393,7 @@ static NTSTATUS receive(ALPC_PORT *port, ULONG flags, PVOID buffer, PSIZE_T leng
 }
 
 /* a reply to a message this process received: the sender wakes, or gets it in its queue. */
-static NTSTATUS reply_to(ALPC_PORT *port, const ALPC_PORT_HEADER *header, PUCHAR data, PVOID attributes)
+static NTSTATUS reply_to(ALPC_PORT *port, const ALPC_PORT_HEADER *header, PUCHAR data, PVOID attributes, BOOLEAN wow)
 {
     ALPC_MESSAGE *m = message_find(header->MessageId);
     if (!m || m->State != MSG_RECEIVED || m->Receiver != PsCurrentProcess() ||
@@ -1345,7 +1416,7 @@ static NTSTATUS reply_to(ALPC_PORT *port, const ALPC_PORT_HEADER *header, PUCHAR
         NTSTATUS status = read_caller(head, attributes, sizeof(head));
         if (NT_SUCCESS(status) && (head[1] & head[0] & ATTR_VIEW)) {
             ALPC_VIEW_ATTRIBUTE va;
-            status = read_caller(&va, (PUCHAR)attributes + attribute_offset(head[0], ATTR_VIEW), sizeof(va));
+            status = read_attribute(&va, sizeof(va), attributes, head[0], ATTR_VIEW, wow, g_view_fields);
             /* the view the request brought is let go of here, and one of this side may go back with the reply. */
             if (NT_SUCCESS(status) && (va.Flags & ALPC_VIEWFLG_UNMAP_EXISTING) && m->ReceiverView) {
                 unmap_view(m->ReceiverView);
@@ -1413,7 +1484,7 @@ NTSTATUS NTAPI NtAlpcSendWaitReceivePort(HANDLE handle, ULONG flags, PVOID send,
         return status;
     }
     if (header.MessageId) {
-        status = reply_to(port, &header, data, send_attributes);
+        status = reply_to(port, &header, data, send_attributes, (flags & ALPC_MSGFLG_WOW64_CALL) != 0);
         if (!NT_SUCCESS(status) && data)
             ExFreePool(data);
         if (NT_SUCCESS(status) && receive_buffer)
@@ -1449,7 +1520,7 @@ NTSTATUS NTAPI NtAlpcSendWaitReceivePort(HANDLE handle, ULONG flags, PVOID send,
     ObReferenceObject(peer);
     m->PortContext = peer->Context;
     m->Sequence = ++peer->Sequence;
-    status = attach(m, port, send_attributes);
+    status = attach(m, port, send_attributes, (flags & ALPC_MSGFLG_WOW64_CALL) != 0);
     /* measured: the token is told with the first message of a connection and after it changes. */
     m->TellToken = memcmp(peer->TokenIds, m->TokenIds, sizeof(m->TokenIds)) != 0;
     memcpy(peer->TokenIds, m->TokenIds, sizeof(m->TokenIds));
@@ -1492,7 +1563,8 @@ NTSTATUS NTAPI NtAlpcSendWaitReceivePort(HANDLE handle, ULONG flags, PVOID send,
             if (length && room < total) {
                 status = STATUS_BUFFER_TOO_SMALL;
             } else {
-                status = deliver(reply, m->Id, m->CallbackId, receive_buffer, receive_attributes);
+                status = deliver(reply, m->Id, m->CallbackId, receive_buffer, receive_attributes,
+                                 (flags & ALPC_MSGFLG_WOW64_CALL) != 0);
                 if (NT_SUCCESS(status) && length)
                     write_caller(length, &total, sizeof(total));
             }

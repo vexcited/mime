@@ -358,6 +358,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         kind = FAST_DELAY;
         break;
     case MIME_SVC_NtWaitForMultipleObjects:
+    case MIME_SVC_NtWaitForMultipleObjects32:
         kind = FAST_WAIT_MANY;
         break;
     case MIME_SVC_NtRemoveIoCompletion:
@@ -434,18 +435,23 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
                 return 0;
         }
         break;
-    case FAST_WAIT_MANY:
+    case FAST_WAIT_MANY: {
+        /* the wait of a 32-bit program has handles of 32 bits, each read from the aligned quadword that holds it. */
+        BOOLEAN narrow = number == MIME_SVC_NtWaitForMultipleObjects32;
+        ULONG size = narrow ? sizeof(LONG) : sizeof(HANDLE);
         count = (ULONG)a0;
-        if (!count || count > FAST_WAIT_OBJECTS || !KiIsUserRange((PVOID)a1, count * sizeof(HANDLE)))
+        if (!count || count > FAST_WAIT_OBJECTS || (narrow && (a1 & 3)) || !KiIsUserRange((PVOID)a1, count * size))
             return 0;
         wait_type = (ULONG)a2 == WaitAll ? WaitAll : WaitAny;
         alertable = (BOOLEAN)a3;
         if (!fast_stack_argument(frame, 0, &a4) || !fast_timeout(a4, &time, &timeout))
             return 0;
         for (; held < count; held++) {
-            ULONG64 handle;
-            if (!KiFastReadUser64((PVOID)(a1 + held * sizeof(HANDLE)), &handle))
+            ULONG64 handle, at = a1 + held * size;
+            if (!KiFastReadUser64((PVOID)(narrow ? at & ~7ull : at), &handle))
                 return fast_decline(thread, frame, objects, held);
+            if (narrow)
+                handle = (ULONG64)(LONG64)(LONG)(handle >> ((at & 4) * 8));
             objects[held] = ObReferenceHandleFast((HANDLE)handle, SYNCHRONIZE, nullptr, nullptr);
             if (!objects[held])
                 return fast_decline(thread, frame, objects, held);
@@ -454,6 +460,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
                 return fast_decline(thread, frame, objects, held + 1);
         }
         break;
+    }
     case FAST_REMOVE:
         /* pointers that cannot be written fail the call before it takes a packet. */
         if (!fast_probe(a1, sizeof(PVOID)) || !fast_probe(a2, sizeof(PVOID)) || !fast_probe(a3, sizeof(IO_STATUS_BLOCK)) ||
@@ -694,7 +701,7 @@ void KiSystemService(PKTRAP_FRAME frame)
         g_win32.FlushUserBatch();
     if (locked) {
         result = (ULONG)STATUS_INVALID_SYSTEM_SERVICE;
-    } else if (table == 0 && !strcmp(service_name(table, index), "?")) {
+    } else if (table == 0 && (index >= MIME_NT_SERVICES_COUNT || !MIME_NT_SERVICES_NAMES[index])) {
         /* a number past the end of the table of windows. */
         result = (ULONG)STATUS_INVALID_SYSTEM_SERVICE;
     } else if (!t || !t->Table || index >= t->Count || !t->Table[index].Routine) {
@@ -705,7 +712,13 @@ void KiSystemService(PKTRAP_FRAME frame)
             /* who calls it, for the first call. */
             KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }
-        result = table == 1 ? 0 : (ULONG)STATUS_NOT_IMPLEMENTED;
+        /*
+         * most services of win32k answer a value that is zero when they fail. those of the graphics kernel answer a
+         * status, where zero would say the adapters and devices they did not make are there.
+         */
+        const char *name = service_name(table, index);
+        BOOLEAN status_result = table != 1 || !strncmp(name, "NtGdiDdDDI", 10) || !strncmp(name, "NtDxgk", 6);
+        result = status_result ? (ULONG)STATUS_NOT_IMPLEMENTED : 0;
     } else {
         ULONG64 args[16];
         for (int i = 0; i < KI_SERVICE_REGISTER_ARGS; i++)
