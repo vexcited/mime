@@ -466,6 +466,9 @@ long CredStoreRead(const WCHAR *target, DWORD type, DWORD flags, CRED_RECORD *ou
 long CredStoreDelete(const WCHAR *target, DWORD type, DWORD flags);
 long CredStoreEnumerate(const WCHAR *filter, DWORD flags, CRED_RECORD **items, DWORD **clear_sizes, DWORD *count);
 void CredFreeRecord(CRED_RECORD *c);
+/* the task scheduler of schedule.c, and the wait for its endpoint to be known to the mapper. */
+void ScheduleStart(void);
+void ScheduleWaitRegistered(DWORD milliseconds);
 /* a pipe value that stands for the caller of the current rpc call, for the access checks. */
 #define SCM_RPC_CALLER ((HANDLE)(LONG_PTR)-10)
 void MainCollect(void);

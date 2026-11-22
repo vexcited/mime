@@ -772,6 +772,41 @@
 @=expand:"%SystemRoot%\\system32\\mstask.dll"
 "ThreadingModel"="Both"
 
+; taskschd.dll, the task scheduler 2.0 of windows, which genuine taskschd.dll serves through the schedule of the manager.
+; TaskScheduler
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}]
+@="TaskScheduler class"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\InprocServer32]
+@=expand:"%SystemRoot%\\System32\\taskschd.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\ProgID]
+@="Schedule.Service.1"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\Programmable]
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\TypeLib]
+@="{E34CB9F1-C7F7-424C-BE29-027DCC09363A}"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\Version]
+@="1.0"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\VersionIndependentProgID]
+@="Schedule.Service"
+[HKCR\Schedule.Service]
+@="TaskScheduler class"
+[HKCR\Schedule.Service\CLSID]
+@="{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"
+[HKCR\Schedule.Service\CurVer]
+@="Schedule.Service.1"
+[HKCR\Schedule.Service.1]
+@="TaskScheduler class"
+[HKCR\Schedule.Service.1\CLSID]
+@="{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0]
+@="TaskScheduler 1.1 Type Library"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0\0\win32]
+@="C:\\Windows\\SysWOW64\\taskschd.dll"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0\0\win64]
+@="C:\\Windows\\System32\\taskschd.dll"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0\FLAGS]
+@="0"
+
 ; msado15.dll
 ; ADODB.Connection
 [HKCR\CLSID\{00000514-0000-0010-8000-00AA006D2EA4}]
