@@ -669,7 +669,8 @@ set(MIME_EXTRA_DLLS advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6
 list(APPEND MIME_EXTRA_DLLS sensapi:0x7FEBF0000000 verifier:0x7FEBE0000000 wldp:0x7FECD0000000 rasapi32:0x7FEC10000000 uianimation:0x7FECB0000000
     windows.graphics:0x7FECA0000000 windows.media.devices:0x7FEB60000000 windows.devices.enumeration:0x7FEB50000000 windows.networking.connectivity:0x7FEB40000000 cryptowinrt:0x7FEB30000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
     twinapi.appcore:0x7FEBC0000000 fwpuclnt:0x7FEBB0000000 cryptsvc:0x7FEBA0000000 dosvc:0x7FEB80000000
-    qmgr:0x7FEB70000000 bthserv:0x7FEB10000000)
+    qmgr:0x7FEB70000000 bthserv:0x7FEB10000000
+    dhcpcore:0x7FEAD0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet ${arch}-lib-crypto:guest/lib/crypto/hash.c)
@@ -836,6 +837,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_cryptsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_bthserv ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ole32.lib
         ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_dhcpcore ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
     set(objects_dosvc ${arch}-lib-transfer)
     set(includes_dosvc guest/lib)
     set(libs_dosvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib

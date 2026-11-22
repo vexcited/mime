@@ -91,7 +91,9 @@
 [HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters]
 "Domain"=""
 
+; the descriptor of windows 11: the dhcp client, S-1-5-80-2940520708..., keeps its dhcpv6 identifiers under this key.
 [HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters]
+#security O:SYG:SYD:PAI(A;CIIO;RC;;;OW)(A;CI;KA;;;SY)(A;CI;KR;;;LS)(A;CI;0x3003f;;;NS)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;0x3001f;;;S-1-5-32-556)(A;CI;0x3001f;;;S-1-5-80-2940520708-3855866260-481812779-327648279-1710889582)(A;CI;0x2001f;;;S-1-5-80-3981856537-581775623-1136376035-2066872258-409572886)(A;CI;KR;;;AC)(A;CI;KR;;;S-1-15-3-1)(A;CI;KR;;;S-1-15-3-2)(A;CI;KR;;;S-1-15-3-3)(A;CI;KR;;;S-1-15-3-4214768333-1334025770-122408079-3919188833)
 
 ; the workstation service, which netapi32 asks for the computer's name, workgroup and users, and what it needs to run. nsi and
 ; the redirector drivers are windows' own keys. the host does the work of the drivers, their objects tell the service
@@ -380,4 +382,89 @@
 "DataType0"=dword:00000002
 "GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
 "Type"=dword:00000006
+
+; the dhcp client service, mime's own dhcpcore.dll in svchost -k LocalServiceNetworkRestricted, as windows 11 registers
+; it but for the name of dhcpcore6.dll under Parametersv6: mime's library holds the dhcpv6 half itself. it serves the
+; lease queries of dhcpcsvc6.dll, where GetAdaptersAddresses takes the dhcpv6 identifiers of an adapter from. the leases
+; of ipv4 are the host's and dhcpcsvc.dll reads them without the service.
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp]
+"DependOnService"=multi:"NSI","Afd"
+"Description"="Registers and updates IP addresses and DNS records for this computer. If this service is stopped, this computer will not receive dynamic IP addresses and DNS updates. If this service is disabled, any services that explicitly depend on it will fail to start."
+"DisplayName"="DHCP Client"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,c0,d4,01,00,01,00,00,00,e0,93,04,00,00,00,00,00,00,00,00,00
+"Group"="TDI"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalServiceNetworkRestricted -p"
+"ObjectName"="NT Authority\\LocalService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceDll"=expand:"%SystemRoot%\\system32\\dhcpcore.dll"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Configurations]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Linkage]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Linkage\Disabled]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\dhcpcore.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\1]
+"KeyType"=dword:00000007
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpSubnetMaskOpt","SYSTEM\\CurrentControlSet\\Services\\?\\Parameters\\Tcpip\\DhcpSubnetMaskOpt"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\15]
+"KeyType"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpDomain","SYSTEM\\CurrentControlSet\\Services\\TcpIp\\Parameters\\DhcpDomain"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\220]
+"KeyType"=dword:00000003
+"RegSendLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\SoHRequest"
+"VendorType"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\3]
+"KeyType"=dword:00000007
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpDefaultGateway","SYSTEM\\CurrentControlSet\\Services\\?\\Parameters\\Tcpip\\DhcpDefaultGateway"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\44]
+"KeyType"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\Interfaces\\Tcpip_?\\DhcpNameServerList","SYSTEM\\CurrentControlSet\\Services\\NetBT\\Adapters\\?\\DhcpNameServer"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\46]
+"KeyType"=dword:00000004
+"RegLocation"="SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\DhcpNodeType"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\47]
+"KeyType"=dword:00000001
+"RegLocation"="SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\DhcpScopeID"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\6]
+"KeyType"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpNameServer","SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\DhcpNameServer"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\DhcpNetbiosOptions]
+"KeyType"=dword:00000004
+"OptionId"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\Interfaces\\Tcpip_?\\DhcpNetbiosOptions"
+"VendorType"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6\Options]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6\Options\23]
+"KeyType"=dword:00000003
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\?\\Dhcpv6DNSServers","SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Dhcpv6DNSServers"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6\Options\24]
+"KeyType"=dword:00000003
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\?\\Dhcpv6DomainSearchList","SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Dhcpv6DomainSearchList"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Security]
+"Security"=hex:01,00,14,80,a4,00,00,00,b0,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,01,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,74,00,05,00,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,0b,00,00,00,00,00,18,00,fd,01,02,00,01,02,00,00,00,00,00,05,20,00,00,00,2c,02,00,00,00,00,18,00,ff,01,0f,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,02,01,00,00,00,00,00,14,00,fd,01,02,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
 
