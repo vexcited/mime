@@ -2037,6 +2037,7 @@ void CmRefreshTimeZoneRules(ULONG year);
 void ExInitialize(void);
 void ExpInitializeAtoms(void);
 void ExpInitializeWnf(void);
+void ExpInitializeEtw(void);
 /* ex/firmware.c: the variable store of the firmware, and the firmware type system information reports. */
 void ExpInitializeFirmware(void);
 /* ex/power.c: the PowerRequest objects of NtPowerInformation. */

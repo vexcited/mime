@@ -178,6 +178,7 @@ void ExInitialize(void)
     ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, DEBUG_ALL_ACCESS);
     DbgkDebugObjectType = ObCreateObjectType(L"DebugObject", &init);
     MiInitializeSections();
+    ExpInitializeEtw();
 }
 
 static NTSTATUS create_named(POBJECT_TYPE type, ULONG size, PHANDLE handle, ACCESS_MASK access,
@@ -432,6 +433,18 @@ NTSTATUS NTAPI NtOpenTimer(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     return open_named(ExTimerType, handle, access, attributes);
 }
 
+/*
+ * SetWaitableTimer and CancelWaitableTimer take the high resolution timers of CreateWaitableTimerEx, which are of
+ * the other type: measured with hrt2.c of the research repository.
+ */
+static NTSTATUS reference_timer(HANDLE handle, ETIMER **timer)
+{
+    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, ExTimerType, KeGetPreviousMode(), timer);
+    if (status == STATUS_OBJECT_TYPE_MISMATCH)
+        status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, g_timer2_type, KeGetPreviousMode(), timer);
+    return status;
+}
+
 NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID apc_context, BOOLEAN resume,
                           LONG period, PBOOLEAN previous)
 {
@@ -439,7 +452,7 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
     LARGE_INTEGER d;
     if (!NT_SUCCESS(KiCopyFromUser(&d, due, sizeof(d))))
         return STATUS_ACCESS_VIOLATION;
-    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, ExTimerType, KeGetPreviousMode(), &t);
+    NTSTATUS status = reference_timer(handle, &t);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
@@ -558,7 +571,7 @@ NTSTATUS NTAPI NtCancelTimer2(HANDLE handle, PVOID parameters)
 NTSTATUS NTAPI NtCancelTimer(HANDLE handle, PBOOLEAN current)
 {
     ETIMER *t;
-    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, ExTimerType, KeGetPreviousMode(), &t);
+    NTSTATUS status = reference_timer(handle, &t);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
