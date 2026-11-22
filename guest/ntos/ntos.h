@@ -1225,6 +1225,8 @@ FORCEINLINE void ObUnlockHandleTable(PHANDLE_TABLE table, ULONG64 state)
 
 extern POBJECT_TYPE ObDirectoryType;
 void ObpForgetNamespace(POBJECT_DIRECTORY directory);
+/* the signing level cached for a file goes with the file, as the extended attribute windows keeps it in. */
+void SeForgetSigningLevel(ULONG64 file_id);
 extern POBJECT_TYPE ObSymbolicLinkType;
 extern POBJECT_TYPE ObTypeType;
 extern POBJECT_DIRECTORY ObRootDirectory;

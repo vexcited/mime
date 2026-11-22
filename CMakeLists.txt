@@ -385,7 +385,8 @@ mime_glob(ntos_common guest/ntos/*.c guest/ntos/*/*.c)
 list(FILTER ntos_common EXCLUDE REGEX "/guest/ntos/arch/")
 mime_glob(ntos_arch guest/ntos/arch/${MIME_GUEST_ARCH}/*.c)
 
-mime_objects(kernel-ntos kernel SOURCES ${ntos_common} ${ntos_arch} ${ntos_asm} guest/lib/crypto/hash.c
+mime_objects(kernel-ntos kernel SOURCES ${ntos_common} ${ntos_arch} ${ntos_asm} guest/lib/crypto/hash.c guest/lib/crypto/bignum.c
+    guest/lib/crypto/rsa.c
     OPTIONS ${ntos_options} INCLUDES guest/ntos guest/lib)
 mime_objects(kernel-rtl kernel SOURCES ${rtl_sources} OPTIONS ${ntos_options} INCLUDES guest/ntos)
 mime_objects(kernel-crt kernel SOURCES ${crt_sources} ${crt_kernel_asm} OPTIONS -fno-builtin)
