@@ -669,7 +669,7 @@ set(MIME_EXTRA_DLLS advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6
 list(APPEND MIME_EXTRA_DLLS sensapi:0x7FEBF0000000 verifier:0x7FEBE0000000 wldp:0x7FECD0000000 rasapi32:0x7FEC10000000 uianimation:0x7FECB0000000
     windows.graphics:0x7FECA0000000 windows.media.devices:0x7FEB60000000 windows.devices.enumeration:0x7FEB50000000 windows.networking.connectivity:0x7FEB40000000 cryptowinrt:0x7FEB30000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
     twinapi.appcore:0x7FEBC0000000 fwpuclnt:0x7FEBB0000000 cryptsvc:0x7FEBA0000000 dosvc:0x7FEB80000000
-    qmgr:0x7FEB70000000 bthserv:0x7FEB10000000
+    qmgr:0x7FEB70000000 netprofmsvc:0x7FEB20000000 bthserv:0x7FEB10000000
     ngcsvc:0x7FEAE0000000 dhcpcore:0x7FEAD0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -848,6 +848,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_qmgr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib
         ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/winhttp.lib ${MIME_LIB_${arch}}/crypt32.lib
         ${MIME_LIB_${arch}}/kernelbase.lib)
+    set(libs_netprofmsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
     set(libs_wbemcore ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_loadperf ${MIME_LIB_${arch}}/advapi32.lib)
     set(libs_bthprops ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ole32.lib)
