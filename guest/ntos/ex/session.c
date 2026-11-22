@@ -178,8 +178,37 @@ static NTSTATUS choose_token(PCUNICODE_STRING image, ULONG level, BOOLEAN *eleva
     return STATUS_SUCCESS;
 }
 
+/*
+ * the first program waits for the services to have started, as a session of windows opens after them: a program that
+ * runs before the endpoints of the manager answer finds no lsa, no data protection and no elevation. the manager
+ * makes the event when it starts and sets it once its services run. the wait is bounded, a machine without the
+ * manager still runs programs.
+ */
+static void wait_for_services(void)
+{
+    static BOOLEAN waited;
+    if (waited)
+        return;
+    waited = TRUE;
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\BaseNamedObjects\\SC_AutoStartComplete");
+    LARGE_INTEGER step = {.QuadPart = -10 * 10000ll}, limit = {.QuadPart = -5000 * 10000ll};
+    PVOID event = nullptr;
+    for (ULONG tries = 0; tries < 300; tries++) {
+        if (NT_SUCCESS(ObReferenceObjectByName(&name, OBJ_CASE_INSENSITIVE, nullptr, 0, ExEventType, KernelMode,
+                                               nullptr, &event)))
+            break;
+        event = nullptr;
+        KeDelayExecutionThread(KernelMode, FALSE, &step);
+    }
+    if (!event)
+        return;
+    KeWaitForSingleObject(event, Executive, KernelMode, FALSE, &limit);
+    ObDereferenceObject(event);
+}
+
 static void handle_run(const MimeCtrlRun *run, ULONG size)
 {
+    wait_for_services();
     ULONG64 chars = (ULONG64)run->image_chars + run->cmdline_chars + run->cwd_chars;
     if (sizeof(*run) + chars * sizeof(WCHAR) > size || run->image_chars == 0) {
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)STATUS_INVALID_PARAMETER, 0);
