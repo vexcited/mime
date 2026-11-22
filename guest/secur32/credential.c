@@ -164,8 +164,14 @@ static SECURITY_STATUS acquire(const SEC_PACKAGE *package, ULONG use, void *auth
     c->Package = package;
     c->Use = use;
     c->Name = auth_data && takes_identity(package) ? identity_name(auth_data, ansi) : nullptr;
-    if (package->Kind == SEC_KIND_SCHANNEL)
-        SchParseCredentials(auth_data, &c->Schannel);
+    if (package->Kind == SEC_KIND_SCHANNEL) {
+        SECURITY_STATUS status = SchParseCredentials(auth_data, &c->Schannel);
+        if (status) {
+            SecHeapFree(c->Name);
+            SecHeapFree(c);
+            return status;
+        }
+    }
     /* a server needs the certificate it answers with. */
     if (package->Kind == SEC_KIND_SCHANNEL && (use & SECPKG_CRED_INBOUND) && !c->Schannel.Certificate) {
         SecHeapFree(c);
@@ -213,6 +219,8 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY FreeCredentialsHandle(PCredHandle credenti
     if (!c)
         return SEC_E_INVALID_HANDLE;
     SecHeapFree(c->Name);
+    if (c->Package->Kind == SEC_KIND_SCHANNEL)
+        TlsSessionPurge(c->Schannel.Tag);
     if (c->Schannel.Certificate)
         SchFreeCertificate(c->Schannel.Certificate);
     SecHeapFree(c);

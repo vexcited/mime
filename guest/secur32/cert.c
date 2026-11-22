@@ -24,6 +24,7 @@
 static struct {
     typeof(CertOpenStore) *OpenStore;
     typeof(CertCloseStore) *CloseStore;
+    typeof(CertDuplicateStore) *DuplicateStore;
     typeof(CertAddEncodedCertificateToStore) *AddEncoded;
     typeof(CertDuplicateCertificateContext) *Duplicate;
     typeof(CertFreeCertificateContext) *FreeContext;
@@ -41,6 +42,7 @@ static BOOL WINAPI load_crypt32(INIT_ONCE *once, void *parameter, void **context
         return TRUE;
     crypt32.OpenStore = (void *)GetProcAddress(module, "CertOpenStore");
     crypt32.CloseStore = (void *)GetProcAddress(module, "CertCloseStore");
+    crypt32.DuplicateStore = (void *)GetProcAddress(module, "CertDuplicateStore");
     crypt32.AddEncoded = (void *)GetProcAddress(module, "CertAddEncodedCertificateToStore");
     crypt32.Duplicate = (void *)GetProcAddress(module, "CertDuplicateCertificateContext");
     crypt32.FreeContext = (void *)GetProcAddress(module, "CertFreeCertificateContext");
@@ -53,7 +55,7 @@ static BOOL WINAPI load_crypt32(INIT_ONCE *once, void *parameter, void **context
 static bool have_crypt32(void)
 {
     InitOnceExecuteOnce(&crypt32_once, load_crypt32, nullptr, nullptr);
-    return crypt32.OpenStore && crypt32.CloseStore && crypt32.AddEncoded && crypt32.Duplicate &&
+    return crypt32.OpenStore && crypt32.CloseStore && crypt32.DuplicateStore && crypt32.AddEncoded && crypt32.Duplicate &&
            crypt32.FreeContext && crypt32.GetChain && crypt32.FreeChain && crypt32.VerifyPolicy;
 }
 
@@ -136,6 +138,16 @@ void SchFreeCertificates(TLS_CERTS *certs)
         crypt32.CloseStore(certs->Store, 0);
     certs->Leaf = nullptr;
     certs->Store = nullptr;
+}
+
+void SchCopyCertificates(TLS_CERTS *to, const TLS_CERTS *from)
+{
+    to->Store = nullptr;
+    to->Leaf = nullptr;
+    if (!from->Leaf || !have_crypt32())
+        return;
+    to->Store = from->Store ? crypt32.DuplicateStore(from->Store) : nullptr;
+    to->Leaf = crypt32.Duplicate(from->Leaf);
 }
 
 PCCERT_CONTEXT SchDuplicate(PCCERT_CONTEXT cert)
@@ -364,8 +376,70 @@ static BOOL WINAPI load_signing(INIT_ONCE *once, void *parameter, void **context
     return TRUE;
 }
 
+/* one integer of an ecdsa signature in der: no leading zeros, a zero in front of a high bit. */
+static SIZE_T der_integer(const BYTE *v, SIZE_T n, BYTE *out)
+{
+    while (n > 1 && !v[0]) {
+        v++;
+        n--;
+    }
+    SIZE_T pad = v[0] & 0x80 ? 1 : 0;
+    out[0] = 0x02;
+    out[1] = (BYTE)(n + pad);
+    out[2] = 0;
+    memcpy(out + 2 + pad, v, n);
+    return 2 + pad + n;
+}
+
+static bool ecdsa_der(const BYTE *raw, SIZE_T half, BYTE *sig, SIZE_T *sig_size)
+{
+    BYTE body[2 * (3 + 66)];
+    SIZE_T n = der_integer(raw, half, body);
+    n += der_integer(raw + half, half, body + n);
+    SIZE_T head = n < 128 ? 2 : 3;
+    if (head + n > *sig_size)
+        return false;
+    sig[0] = 0x30;
+    if (n < 128)
+        sig[1] = (BYTE)n;
+    else {
+        sig[1] = 0x81;
+        sig[2] = (BYTE)n;
+    }
+    memcpy(sig + head, body, n);
+    *sig_size = head + n;
+    return true;
+}
+
+/* 1 for an rsa key, 2 for an ecdsa one with the bits of its curve, 0 for any other. */
+int SchCertificateKeyKind(PCCERT_CONTEXT cert, unsigned *bits)
+{
+    static const BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+    static const BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+    static const BYTE p521[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23};
+    *bits = 0;
+    if (!cert || !cert->pCertInfo)
+        return 0;
+    const CRYPT_ALGORITHM_IDENTIFIER *a = &cert->pCertInfo->SubjectPublicKeyInfo.Algorithm;
+    if (!a->pszObjId)
+        return 0;
+    if (!strcmp(a->pszObjId, szOID_RSA_RSA))
+        return 1;
+    if (strcmp(a->pszObjId, szOID_ECC_PUBLIC_KEY))
+        return 0;
+    const CRYPT_OBJID_BLOB *p = &a->Parameters;
+    if (p->cbData == sizeof(p256) && !memcmp(p->pbData, p256, sizeof(p256)))
+        *bits = 256;
+    else if (p->cbData == sizeof(p384) && !memcmp(p->pbData, p384, sizeof(p384)))
+        *bits = 384;
+    else if (p->cbData == sizeof(p521) && !memcmp(p->pbData, p521, sizeof(p521)))
+        *bits = 521;
+    return 2;
+}
+
 /*
- * signs content with the private key of a certificate, as the server does in its key exchange. the key is a cng key or
+ * signs content with the private key of a certificate, as the server does in its key exchange and a client in its
+ * CertificateVerify. the key is a cng key or
  * a key of a legacy container, whatever the property of the certificate names. false when there is no such key, or it
  * cannot sign in the scheme.
  */
@@ -385,6 +459,19 @@ bool SchSignWithCertificate(PCCERT_CONTEXT cert, unsigned scheme, const MimeHash
     }
     bool pss = (scheme & 0xFF00) == 0x0800;
     bool ok = false;
+    if ((scheme & 0xFF) == 0x03) {
+        /* ecdsa: cng signs r and s side by side, tls wants them as the der sequence of two integers. */
+        BYTE raw[132];
+        DWORD out = 0;
+        if (spec == CERT_NCRYPT_KEY_SPEC_ && signing.NSign)
+            ok = signing.NSign(key, nullptr, digest, hash->digest_size, raw, sizeof(raw), &out, 0) == 0 && out &&
+                 !(out & 1);
+        if (ok)
+            ok = ecdsa_der(raw, out / 2, sig, sig_size);
+        if (release && spec == CERT_NCRYPT_KEY_SPEC_ && signing.NFree)
+            signing.NFree(key);
+        return ok;
+    }
     if (spec == CERT_NCRYPT_KEY_SPEC_) {
         PCWSTR name = hash->digest_size == 32 ? L"SHA256" : hash->digest_size == 48 ? L"SHA384" : L"SHA512";
         struct {

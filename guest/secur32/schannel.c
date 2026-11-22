@@ -7,9 +7,10 @@
 
 /* ------------------------------------------------------------------ credentials */
 
-void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
+SECURITY_STATUS SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
 {
     ULONG enabled = 0, disabled = 0;
+    bool legacy = false;
     memset(config, 0, sizeof(*config));
     if (auth_data) {
         ULONG version = *(const ULONG *)auth_data;
@@ -30,14 +31,27 @@ void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
             enabled = c->grbitEnabledProtocols;
             config->MinStrength = c->dwMinimumCipherStrength;
             config->MaxStrength = c->dwMaximumCipherStrength;
+            legacy = true;
         }
     }
     /* no protocols means the system defaults: tls 1.2 and 1.3 on windows 11. */
     ULONG supported = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
     config->Protocols = (enabled ? enabled : supported) & supported & ~disabled;
+    /* CCredentialGroup::InitializeEnabledProtocols: tls 1.3 needs SCH_CREDENTIALS, a SCHANNEL_CRED stops at 1.2. */
+    if (legacy)
+        config->Protocols &= ~SP_PROT_TLS1_3_CLIENT;
     /* a server speaks tls 1.2. */
     ULONG server = SP_PROT_TLS1_2_SERVER;
     config->ServerProtocols = (enabled ? enabled : server) & server & ~disabled;
+    if (!config->Protocols && !config->ServerProtocols) {
+        if (config->Certificate)
+            SchFreeCertificate(config->Certificate);
+        config->Certificate = nullptr;
+        return SEC_E_ALGORITHM_MISMATCH;
+    }
+    if (!SchRandom(&config->Tag, sizeof(config->Tag)))
+        return SEC_E_INTERNAL_ERROR;
+    return SEC_E_OK;
 }
 
 /* ------------------------------------------------------------------ buffers */
@@ -163,7 +177,8 @@ static void report_input(PSecBufferDesc input, SecBuffer *token, SIZE_T consumed
     if (status == SEC_E_INCOMPLETE_MESSAGE) {
         slot->BufferType = SECBUFFER_MISSING;
         slot->cbBuffer = (ULONG)missing;
-    } else if ((status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED) && consumed < token->cbBuffer) {
+    } else if ((status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED || status == SEC_I_INCOMPLETE_CREDENTIALS) &&
+               consumed < token->cbBuffer) {
         slot->BufferType = SECBUFFER_EXTRA;
         slot->cbBuffer = (ULONG)(token->cbBuffer - consumed);
     }
@@ -314,16 +329,18 @@ SECURITY_STATUS SchEncrypt(TLS *t, PSecBufferDesc message)
             header = b;
             break;
         case SECBUFFER_TOKEN:
+            /* as schannel 26300 picks them: a token is the header, and the next one the trailer, as wininet passes them. */
             if (!header)
                 header = b;
+            else if (!trailer)
+                trailer = b;
             break;
         case SECBUFFER_DATA:
             if (!data)
                 data = b;
             break;
         case SECBUFFER_STREAM_TRAILER:
-            if (!trailer)
-                trailer = b;
+            trailer = b;
             break;
         }
     }
@@ -432,8 +449,23 @@ SECURITY_STATUS SchQueryAttributes(TLS *t, ULONG attribute, void *buffer, bool a
 {
     if (!buffer)
         return SEC_E_INVALID_PARAMETER;
-    if (attribute == SECPKG_ATTR_REMOTE_CERT_CONTEXT) {
+    /*
+     * measured on windows 11: the chain of the peer is there as soon as its certificate message is read, which is
+     * where wininet verifies it, and it is the same context the certificate attribute gives once the handshake is
+     * over. before that the certificate attribute has no handle to ask, and the chain attribute no credentials.
+     */
+    if (attribute == SECPKG_ATTR_REMOTE_CERT_CHAIN) {
         PCCERT_CONTEXT cert = TlsRemoteCertificate(t);
+        if (!cert)
+            return SEC_E_NO_CREDENTIALS;
+        *(PCCERT_CONTEXT *)buffer = cert;
+        return SEC_E_OK;
+    }
+    if (attribute == SECPKG_ATTR_REMOTE_CERT_CONTEXT && !TlsConnected(t))
+        return SEC_E_INVALID_HANDLE;
+    if (attribute == SECPKG_ATTR_REMOTE_CERT_CONTEXT || attribute == SECPKG_ATTR_LOCAL_CERT_CONTEXT) {
+        PCCERT_CONTEXT cert =
+            attribute == SECPKG_ATTR_REMOTE_CERT_CONTEXT ? TlsRemoteCertificate(t) : TlsLocalCertificate(t);
         if (!cert)
             return SEC_E_NO_CREDENTIALS;
         *(PCCERT_CONTEXT *)buffer = cert;
@@ -495,6 +527,9 @@ SECURITY_STATUS SchApplyControlToken(TLS *t, PSecBufferDesc input)
         TlsQueueAlert(t, (BYTE)words[1], (BYTE)words[2]);
         return SEC_E_OK;
     case SCHANNEL_SESSION:
+        /* SCHANNEL_SESSION_TOKEN: SSL_SESSION_DISABLE_RECONNECTS is 2. */
+        if (token->cbBuffer >= 2 * sizeof(DWORD) && (words[1] & 2))
+            TlsDisableReconnects(t);
         return SEC_E_OK;
     default:
         return SEC_E_UNSUPPORTED_FUNCTION;
