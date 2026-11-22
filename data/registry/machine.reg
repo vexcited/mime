@@ -20,9 +20,70 @@
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion]
 "BuildLabEx"="26100.1.x86fre.ge_release.240331-1435"
 
-; what user32 reads of the window manager: the library it loads to turn the png image of an icon into a bitmap.
+; what user32 reads of the window manager: the library it loads to turn the png image of an icon into a bitmap. the
+; other values are those of windows 11, where both views of the key hold them. a program that finds the key looks
+; for LoadAppInit_DLLs in it, which windows always has, zero.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows]
+@="mnmsrvc"
+"AppInit_DLLs"=""
+"DdeSendTimeout"=dword:00000000
+"DesktopHeapLogging"=dword:00000001
+"DeviceNotSelectedTimeout"="15"
+"DwmInputUsesIoCompletionPort"=dword:00000001
+"EnableDwmInputProcessing"=dword:00000007
+"GDIProcessHandleQuota"=dword:00002710
 "IconServiceLib"="IconCodecService.dll"
+"LoadAppInit_DLLs"=dword:00000000
+"NaturalInputHandler"="Ninput.dll"
+"RapidHpdTimeoutMs"=dword:00000bb8
+"ShutdownWarningDialogTimeout"=dword:ffffffff
+"Spooler"="yes"
+"TransmissionRetryTimeout"="90"
+"USERNestedWindowLimit"=dword:00000032
+"USERPostMessageLimit"=dword:00002710
+"USERProcessHandleQuota"=dword:00002710
+
+; the licensing platform's settings as an installed windows 11 pro holds them, the key being the generic one of the
+; edition. programs that identify the machine open this key.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform]
+"AuthorizedContainers"="Microsoft.Office.*_8wekyb3d8bbwe"
+"BackupProductKeyDefault"="VK7JG-NPHTM-C97JM-9MPGT-3V66T"
+"CacheStore"=expand:"%WINDIR%\\System32\\spp\\store\\2.0\\cache"
+"HasOOBERun"=dword:00000001
+"IgnoreContainerOrigin"=dword:00000000
+"InactivityShutdownDelay"=dword:0000001e
+"KeepRunningThresholdMins"=dword:0000000f
+"NoExpirationUX"=dword:00000000
+"SkipRearm"=dword:00000000
+"TokenStore"=expand:"%WINDIR%\\System32\\spp\\store\\2.0"
+"UserOperations"=dword:00000000
+"VLActivationInterval"=dword:00000078
+"VLRenewalInterval"=dword:00002760
+
+; the files of the stock fonts, those of 120 dpi above 108 and those of 96 otherwise.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Gre_Initialize\LargeFont]
+"FIXEDFON.FON"="8514fix.fon"
+"FONTS.FON"="8514sys.fon"
+"OEMFONT.FON"="8514oem.fon"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Gre_Initialize\SmallFont]
+"FIXEDFON.FON"="vgafix.fon"
+"FONTS.FON"="vgasys.fon"
+"OEMFONT.FON"="vgaoem.fon"
+
+; the raster fonts the console loads, the Terminal sizes of the DOS screens.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Console\RasterFonts]
+"woafont"="dosapp.fon"
+"CGA40WOA.FON"="CGA40WOA.FON"
+"CGA80WOA.FON"="CGA80WOA.FON"
+"EGA40WOA.FON"="EGA40WOA.FON"
+"EGA80WOA.FON"="EGA80WOA.FON"
+
+; what setup showed when the machine was installed. updaters read that the license was shown before they act for the user.
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\OOBE]
+"SetupDisplayedEula"=dword:00000001
+"SetupDisplayedLanguageSelection"=dword:00000001
+"SetupDisplayedProductKey"=dword:00000001
 
 ; the profiles folders, read by the profile functions and the service control manager.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList]
