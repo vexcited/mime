@@ -106,12 +106,17 @@ SECURITYAPI NTSTATUS NTAPI GetSecurityUserInfo(PSSPI_LUID logon_id, ULONG flags,
     return STATUS_NOT_IMPLEMENTED;
 }
 
-/* what a thread tells lsa about its next call, kept until SeciFreeCallContext. */
+/*
+ * what a thread tells lsa about its next call, kept until SeciFreeCallContext. sspicli 26300 keeps 48 bytes: the
+ * socket address of the peer in the first 32, then the flags, then the name of the target.
+ */
 typedef struct SEC_CALL_DATA {
+    UCHAR Address[32];
     ULONG Flags;
-    ULONG AddressLength;
-    PVOID Address;
+    PWSTR Target;
 } SEC_CALL_DATA;
+
+SECURITYAPI void SEC_ENTRY SeciFreeCallContext(void);
 
 static SEC_CALL_DATA *call_data(PBOOL allocated)
 {
@@ -141,24 +146,42 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY SeciAllocateAndSetCallFlags(ULONG flags, P
     return SEC_E_OK;
 }
 
-SECURITYAPI SECURITY_STATUS SEC_ENTRY SeciAllocateAndSetIPAddress(PVOID address, SIZE_T length, PBOOL allocated)
+/*
+ * as sspicli 26300: an address or a name is needed, an address longer than its 32 bytes is answered as no memory,
+ * the name replaces the one kept and the address is left alone when none comes. wininet calls it with the peer
+ * and the host before each step of a handshake.
+ */
+SECURITYAPI SECURITY_STATUS SEC_ENTRY SeciAllocateAndSetCallTarget(PVOID address, ULONG length, PCWSTR target,
+                                                                   PBOOL allocated)
 {
-    if (!allocated || (!address && length) || length > 0xFFFF)
+    SIZE_T characters = target ? wcslen(target) : 0;
+    if ((!address && !characters) || !allocated)
         return SEC_E_INVALID_PARAMETER;
+    *allocated = FALSE;
+    if (address && length > sizeof(((SEC_CALL_DATA *)nullptr)->Address))
+        return SEC_E_INSUFFICIENT_MEMORY;
     SEC_CALL_DATA *data = call_data(allocated);
     if (!data)
         return SEC_E_INSUFFICIENT_MEMORY;
-    PVOID copy = nullptr;
-    if (length) {
-        copy = LocalAlloc(LMEM_FIXED, length);
-        if (!copy)
+    if (characters) {
+        LocalFree(data->Target);
+        data->Target = LocalAlloc(LPTR, (characters + 1) * sizeof(WCHAR));
+        if (!data->Target) {
+            if (*allocated)
+                SeciFreeCallContext();
+            *allocated = FALSE;
             return SEC_E_INSUFFICIENT_MEMORY;
-        memcpy(copy, address, length);
+        }
+        memcpy(data->Target, target, characters * sizeof(WCHAR));
     }
-    LocalFree(data->Address);
-    data->Address = copy;
-    data->AddressLength = (ULONG)length;
+    if (address)
+        memcpy(data->Address, address, length);
     return SEC_E_OK;
+}
+
+SECURITYAPI SECURITY_STATUS SEC_ENTRY SeciAllocateAndSetIPAddress(PVOID address, SIZE_T length, PBOOL allocated)
+{
+    return SeciAllocateAndSetCallTarget(address, (ULONG)length, nullptr, allocated);
 }
 
 SECURITYAPI void SEC_ENTRY SeciFreeCallContext(void)
@@ -168,7 +191,7 @@ SECURITYAPI void SEC_ENTRY SeciFreeCallContext(void)
     SEC_CALL_DATA *data = TlsGetValue(SecTlsCallData);
     if (!data)
         return;
-    LocalFree(data->Address);
+    LocalFree(data->Target);
     LocalFree(data);
     TlsSetValue(SecTlsCallData, nullptr);
 }

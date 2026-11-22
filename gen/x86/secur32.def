@@ -48,6 +48,8 @@ EXPORTS
     LsaUnregisterPolicyChangeNotification=_LsaUnregisterPolicyChangeNotification@8
     MakeSignature=_MakeSignature@16
     QueryContextAttributesA=_QueryContextAttributesA@12
+    QueryContextAttributesExA=_QueryContextAttributesExA@16
+    QueryContextAttributesExW=_QueryContextAttributesExW@16
     QueryContextAttributesW=_QueryContextAttributesW@12
     QueryCredentialsAttributesA=_QueryCredentialsAttributesA@12
     QueryCredentialsAttributesW=_QueryCredentialsAttributesW@12
@@ -68,6 +70,7 @@ EXPORTS
     SaslSetContextOption=_SaslSetContextOption@16
     SealMessage=_SealMessage@16
     SeciAllocateAndSetCallFlags=_SeciAllocateAndSetCallFlags@8
+    SeciAllocateAndSetCallTarget=_SeciAllocateAndSetCallTarget@16
     SeciAllocateAndSetIPAddress=_SeciAllocateAndSetIPAddress@12
     SeciFreeCallContext=_SeciFreeCallContext@0
     SecpFreeMemory=_SecpFreeMemory@4

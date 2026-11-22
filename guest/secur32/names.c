@@ -122,27 +122,17 @@ static DWORD user_name(EXTENDED_NAME_FORMAT format, PWSTR out, DWORD capacity, D
     switch (format) {
     case NameSamCompatible:
         return NT_SUCCESS(SecSamCompatibleName(out, capacity, length)) ? ERROR_SUCCESS : ERROR_NONE_MAPPED;
-    case NameFullyQualifiedDN:
-    case NameDisplay:
-    case NameUniqueId:
-    case NameCanonical:
-    case NameUserPrincipal:
-    case NameCanonicalEx:
-    case NameServicePrincipal:
-    case NameDnsDomain:
-    case NameGivenName:
-    case NameSurname:
-        /* a local account has no directory names; NameDisplay would be the sam full name, which is not kept. */
-        return ERROR_NONE_MAPPED;
     default:
-        return ERROR_INVALID_PARAMETER;
+        /* a local account has no directory names, and windows 11 answers the formats it does not know the same way. */
+        return ERROR_NONE_MAPPED;
     }
 }
 
 /*
  * the buffer holds the name and its zero. a short buffer fails with ERROR_MORE_DATA and the size in characters with the
- * zero, and success returns the length without it. the 0x10000 flag counts the zero on success and fails short buffers
- * with ERROR_INSUFFICIENT_BUFFER.
+ * zero, and success returns the length without it. the format is the low word. the 0x10000 flag, which GetUserNameW of
+ * advapi32 sets, asks for the account alone without its domain, counts the zero on success and fails short buffers with
+ * ERROR_INSUFFICIENT_BUFFER. measured with un.c of scratch/g2/lsa of the research repository.
  */
 SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExW(EXTENDED_NAME_FORMAT format, LPWSTR buffer, PULONG size)
 {
@@ -154,10 +144,15 @@ SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExW(EXTENDED_NAME_FORMAT format, LPWSTR
     ULONG capacity = buffer ? *size : 0;
     WCHAR name[330];
     DWORD n;
-    DWORD error = user_name((EXTENDED_NAME_FORMAT)((ULONG)format & ~NAME_FLAG_COUNT_NUL), name, RTL_NUMBER_OF(name), &n);
+    DWORD error = user_name((EXTENDED_NAME_FORMAT)((ULONG)format & 0xFFFF), name, RTL_NUMBER_OF(name), &n);
     if (error) {
         SecSetError(error);
         return FALSE;
+    }
+    PWSTR account = count_nul ? wcschr(name, L'\\') : nullptr;
+    if (account) {
+        n -= (DWORD)(account + 1 - name);
+        memmove(name, account + 1, (n + 1) * sizeof(WCHAR));
     }
     if (n >= capacity) {
         *size = n + 1;
