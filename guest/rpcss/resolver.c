@@ -759,6 +759,32 @@ error_status_t WINAPI ILocalObjectExporter_ClientResolveOXID_s(
     return status;
 }
 
+/*
+ * the string binding of local rpc a process of an oxid listens on, for the calls rpcss makes into its apartments. a
+ * process gives its local bindings as whole string bindings.
+ */
+BOOL RsOxidBinding(UINT64 oxid, WCHAR *out, SIZE_T chars)
+{
+    BOOL found = FALSE;
+    AcquireSRWLockShared(&g_rs_lock);
+    RS_OXID *o = find_oxid(oxid);
+    const DUALSTRINGARRAY *d = o && o->Owner ? o->Owner->Bindings : nullptr;
+    for (ULONG at = 0; d && !found && at < d->wSecurityOffset && d->aStringArray[at];) {
+        const WCHAR *text = (const WCHAR *)&d->aStringArray[at];
+        ULONG length = 0;
+        while (at + length < d->wSecurityOffset && text[length])
+            length++;
+        if (length > 8 && !_wcsnicmp(text, L"ncalrpc:", 8) && length < chars) {
+            memcpy(out, text, length * sizeof(WCHAR));
+            out[length] = 0;
+            found = TRUE;
+        }
+        at += length + 1;
+    }
+    ReleaseSRWLockShared(&g_rs_lock);
+    return found;
+}
+
 /* the checks rpcss makes of what a server says of an apartment, read from _ServerAllocateOXIDAndOIDs of 26300. */
 static BOOL info_valid(const OXID_INFO *info)
 {

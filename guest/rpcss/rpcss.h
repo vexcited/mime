@@ -26,6 +26,7 @@ DWORD RsStartResolver(void);
 RPC_STATUS RsRegisterInterface(RPC_IF_HANDLE spec);
 DWORD RsCallerOf(handle_t binding, void *process); /* the pid of the caller when it holds that context, else 0. */
 ULONG RsNextThreadId(void);
+BOOL RsOxidBinding(UINT64 oxid, WCHAR *out, SIZE_T chars);
 
 /* scm.c */
 
@@ -46,6 +47,10 @@ BOOL RsScmFindClass(const GUID *clsid, RS_CLASS *out);
 /* activate.c */
 BOOL RsActivationRequest(const BYTE *objref, ULONG size, GUID *clsid, ULONG *clsctx, ULONG *flags);
 BOOL RsClassHasLocalServer(const GUID *clsid);
+
+/* launch.c */
+DWORD RsStartLaunch(void);
+HRESULT RsLaunch(DWORD client, const WCHAR *service, const WCHAR *parameters, const WCHAR *command, HANDLE *process);
 
 /* rot.c */
 RPC_STATUS RsStartRot(void);

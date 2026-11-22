@@ -603,8 +603,13 @@ WINOLEAPI HRESULT WINAPI CoRegisterClassObject(REFCLSID clsid, IUnknown *object,
     BOOL publish = local && !(flags & REGCLS_SUSPENDED);
     entry->Published = publish;
     ReleaseSRWLockExclusive(&g_class_lock);
-    if (publish)
-        OrpcClassPublish(clsid, object, flags, entry->Cookie);
+    /* a class no other process can reach is not registered: its server must not sit and wait for clients. */
+    if (publish && FAILED(hr = OrpcClassPublish(clsid, object, flags, entry->Cookie))) {
+        entry->Published = FALSE;
+        CoRevokeClassObject(*cookie);
+        *cookie = 0;
+        return hr;
+    }
     return S_OK;
 }
 

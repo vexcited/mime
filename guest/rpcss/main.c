@@ -100,9 +100,9 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
     else
         g_launch_handle = handle;
     status->dwServiceType = SERVICE_WIN32_SHARE_PROCESS;
-    DWORD error = rpcss ? RsStartResolver() : ERROR_SUCCESS;
+    DWORD error = rpcss ? RsStartResolver() : RsStartLaunch();
     if (error) {
-        RsLog("the resolver did not start: %u", error);
+        RsLog("%ls did not start: %u", argv[0], error);
         status->dwCurrentState = SERVICE_STOPPED;
         status->dwWin32ExitCode = error;
     } else {
