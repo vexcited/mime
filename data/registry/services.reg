@@ -261,7 +261,24 @@
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\Parameters]
-"ServiceDll"=expand:"%systemroot%\\system32\\keyiso.dll"
+"ServiceDll"=expand:"%SystemRoot%\\system32\\keyiso.dll"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\Security]
+"Security"=hex:01,00,14,80,b4,00,00,00,c0,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,01,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,84,00,06,00,00,00,00,00,14,00,fd,01,02,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,ff,01,0f,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,05,04,00,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,05,06,00,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,06,00,00,00,00,00,14,00,00,01,00,00,01,01,00,00,00,00,00,05,0b,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\TriggerInfo\0]
+"Action"=dword:00000001
+"Data0"=hex:62,00,32,00,35,00,61,00,35,00,32,00,62,00,66,00,2d,00,65,00,35,00,64,00,64,00,2d,00,34,00,66,00,34,00,61,00,2d,00,61,00,65,00,61,00,36,00,2d,00,38,00,63,00,61,00,37,00,32,00,37,00,32,00,61,00,30,00,65,00,38,00,36,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\TriggerInfo\1]
+"Action"=dword:00000001
+"Data0"=hex:38,00,46,00,42,00,37,00,34,00,37,00,34,00,34,00,2d,00,42,00,32,00,46,00,46,00,2d,00,34,00,43,00,30,00,30,00,2d,00,42,00,45,00,30,00,44,00,2d,00,39,00,45,00,46,00,39,00,41,00,31,00,39,00,31,00,46,00,45,00,31,00,42,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
 "ServiceDllUnloadOnStop"=dword:00000001
 
 ; the drivers of the devices the firmware tree names; mime runs the work in its own libraries, the keys are what
