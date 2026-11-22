@@ -893,6 +893,14 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
+# the process of the security authority, which hosts the key isolation service of cng.
+mime_objects(${MIME_GUEST_ARCH}-lsass ${MIME_GUEST_ARCH} SOURCES guest/lsass/main.c)
+mime_link(${MIME_OUT_${MIME_GUEST_ARCH}}/lsass.exe ${MIME_GUEST_ARCH} OBJECTS ${MIME_GUEST_ARCH}-lsass ${MIME_GUEST_ARCH}-chkstk
+    LIBS ${MIME_LIB_${MIME_GUEST_ARCH}}/ntdll.lib ${MIME_LIB_${MIME_GUEST_ARCH}}/kernel32.lib
+        ${MIME_LIB_${MIME_GUEST_ARCH}}/advapi32.lib
+    FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A7000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
+    RESOURCE lsass.exe ROM ${MIME_ROM_${MIME_GUEST_ARCH}}/lsass.exe GROUPS guest)
+
 mime_glob(msiexec_sources guest/msiexec/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)

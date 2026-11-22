@@ -1,0 +1,4 @@
+LIBRARY keyiso.dll
+EXPORTS
+    KeyIsoServiceMain
+    KeyIsoSetAuditingInterface
