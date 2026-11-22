@@ -12,7 +12,7 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "Microsoft Corporation"
-            VALUE "FileDescription", "x64 Emulation"
+            VALUE "FileDescription", "x86 and x64 Processor Translator"
             VALUE "FileVersion", "10.0.26100.9457 (WinBuild.160101.0800)"
             VALUE "InternalName", "xta64.dll"
             VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."

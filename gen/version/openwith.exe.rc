@@ -12,7 +12,7 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "Microsoft Corporation"
-            VALUE "FileDescription", "Open With"
+            VALUE "FileDescription", "Pick an app"
             VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "OpenWith"
             VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."

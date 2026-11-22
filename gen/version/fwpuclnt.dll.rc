@@ -5,7 +5,7 @@ FILEFLAGSMASK 0x3F
 FILEFLAGS 0x0
 FILEOS 0x40004
 FILETYPE 2
-FILESUBTYPE 8
+FILESUBTYPE 0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "FWP/IPsec User-Mode API"
             VALUE "FileVersion", "10.0.26100.9444 (WinBuild.160101.0800)"
             VALUE "InternalName", "fwpuclnt.dll"
-            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "fwpuclnt.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9444"
