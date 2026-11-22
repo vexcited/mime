@@ -2,6 +2,8 @@
 #include <mime/win32/winsvc.h>
 #include <mime/win32/rpc.h>
 #include "rpcepmap/epmp.h"
+#define SCTRIGGER_CLIENT_ONLY
+#include "services/trigger.h"
 
 #define EPT_S_NOT_REGISTERED 0x16c9a0d6
 #define EPT_S_INVALID_ENTRY 0x16c9a0d5
@@ -9,6 +11,8 @@
 
 #define LOOKUP_MAGIC 0x4b4f4c45 /* "ELOK" */
 #define OWNER_MAGIC 0x4e574f45  /* "EOWN" */
+#define TRIGGERS \
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\NetworkServiceTriggers\\Triggers\\bc90d167-9470-4139-a9ba-be0bbbf5b74d"
 
 /* one registered endpoint: the entry a server sent, and the parts of its tower lookups compare. */
 typedef struct EP_ENTRY {
@@ -321,8 +325,8 @@ static BOOL map_matches(const EP_ENTRY *e, const GUID *object, BOOL exact_object
     return guid_equal(&e->Object, exact_object ? object : &g_nil);
 }
 
-static void map(GUID *object, twr_t *map_tower, ept_lookup_handle_t *entry_handle, unsigned long max_towers,
-                unsigned long *num_towers, twr_t **towers, error_status_t *status)
+static void map_registered(GUID *object, twr_t *map_tower, ept_lookup_handle_t *entry_handle,
+                           unsigned long max_towers, unsigned long *num_towers, twr_t **towers, error_status_t *status)
 {
     *num_towers = 0;
     GUID iface;
@@ -363,6 +367,70 @@ static void map(GUID *object, twr_t *map_tower, ept_lookup_handle_t *entry_handl
     ReleaseSRWLockShared(&g_lock);
     *status = *num_towers ? RPC_S_OK : EPT_S_NOT_REGISTERED;
     lookup_continue(entry_handle, skip + *num_towers, more);
+}
+
+static void guid_text(const GUID *g, WCHAR *out, size_t chars)
+{
+    _snwprintf(out, chars, L"%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", g->Data1, g->Data2, g->Data3,
+               g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
+}
+
+/*
+ * the service control manager lists the start triggers of services as keys named by the interface, or by the
+ * interface, a colon and an object, below the key of the event of rpc interfaces. an interface that has one and no
+ * endpoint yet is told to the manager, which starts the service and answers once it runs.
+ */
+static BOOL raise_trigger(const GUID *iface, const GUID *object)
+{
+    static const GUID event = {0xbc90d167, 0x9470, 0x4139, {0xa9, 0xba, 0xbe, 0x0b, 0xbb, 0xf5, 0xb7, 0x4d}};
+    WCHAR data[80], path[240];
+    guid_text(iface, data, RTL_NUMBER_OF(data));
+    if (!guid_equal(object, &g_nil)) {
+        data[36] = L':';
+        guid_text(object, data + 37, RTL_NUMBER_OF(data) - 37);
+    }
+    _snwprintf(path, RTL_NUMBER_OF(path), TRIGGERS L"\\%ls", data);
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &key)) {
+        if (guid_equal(object, &g_nil))
+            return FALSE;
+        return raise_trigger(iface, &g_nil);
+    }
+    RegCloseKey(key);
+    RPC_WSTR text = nullptr;
+    RPC_BINDING_HANDLE binding = nullptr;
+    unsigned long error = ERROR_NOT_FOUND;
+    if (!RpcStringBindingComposeW(nullptr, (RPC_WSTR)L"ncalrpc", nullptr, (RPC_WSTR)L"sctrigger", nullptr, &text) &&
+        !RpcBindingFromStringBindingW(text, &binding)) {
+        __try {
+            error = sctrigger_Raise(binding, (GUID *)&event, data);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            error = __exception_code();
+        }
+    }
+    if (binding)
+        RpcBindingFree(&binding);
+    if (text)
+        RpcStringFreeW(&text);
+    return !error;
+}
+
+static void map(GUID *object, twr_t *map_tower, ept_lookup_handle_t *entry_handle, unsigned long max_towers,
+                unsigned long *num_towers, twr_t **towers, error_status_t *status)
+{
+    BOOL first = !lookup_of(*entry_handle);
+    map_registered(object, map_tower, entry_handle, max_towers, num_towers, towers, status);
+    GUID iface;
+    USHORT major, minor;
+    UCHAR protocol[8];
+    ULONG protocol_size;
+    if (*status != EPT_S_NOT_REGISTERED || !first || !map_tower ||
+        !tower_parse(map_tower->tower_octet_string, map_tower->tower_length, &iface, &major, &minor, protocol,
+                     &protocol_size))
+        return;
+    if (raise_trigger(&iface, object ? object : &g_nil))
+        map_registered(object, map_tower, entry_handle, max_towers, num_towers, towers, status);
 }
 
 void WINAPI epm_ept_map_s(handle_t h, GUID *object, twr_t *map_tower, ept_lookup_handle_t *entry_handle,
