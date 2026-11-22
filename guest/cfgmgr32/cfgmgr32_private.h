@@ -16,4 +16,12 @@ BOOL parse_guid(PCWSTR text, GUID *out);
 CONFIGRET InterfaceOwnProperty(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *type, PBYTE buffer, PULONG size,
                                BOOL *handled);
 
+void format_guid(const GUID *g, WCHAR *out);
+CONFIGRET from_registry(LSTATUS error);
+BOOL interface_path(PCWSTR link, WCHAR *path, ULONG chars);
+BOOL interface_owner(PCWSTR link, WCHAR *device, GUID *klass, BOOL *enabled);
+BOOL machine_local(void *machine);
+/* the interfaces that are registered for a class and not enabled, as a multi-sz the caller frees. */
+WCHAR *registered_interfaces(const GUID *klass, PCWSTR device, ULONG *chars);
+
 #endif

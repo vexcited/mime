@@ -28,7 +28,7 @@ static WCHAR *put_hex(WCHAR *out, ULONG value, int digits)
     return out;
 }
 
-static void format_guid(const GUID *g, WCHAR *out)
+void format_guid(const GUID *g, WCHAR *out)
 {
     *out++ = L'{';
     out = put_hex(out, g->Data1, 8);
@@ -46,7 +46,7 @@ static void format_guid(const GUID *g, WCHAR *out)
     *out = 0;
 }
 
-static CONFIGRET from_registry(LSTATUS error)
+CONFIGRET from_registry(LSTATUS error)
 {
     if (!error)
         return CR_SUCCESS;
@@ -569,7 +569,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Class_Registry_PropertyW(const GUID *klass, ULONG 
         return CR_INVALID_POINTER;
     if (flags)
         return CR_INVALID_FLAG;
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     DWORD expected;
     PCWSTR name = class_value_name(property, &expected);
@@ -598,7 +598,7 @@ CMAPI CONFIGRET WINAPI CM_Set_Class_Registry_PropertyW(const GUID *klass, ULONG 
         return CR_INVALID_POINTER;
     if (flags)
         return CR_INVALID_FLAG;
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     DWORD kind;
     PCWSTR name = class_value_name(property, &kind);
@@ -673,30 +673,84 @@ CMAPI CONFIGRET WINAPI CM_Get_Class_Property_Keys(const GUID *klass, DEVPROPKEY 
 
 /* ------------------------------------------------------------------ interfaces */
 
-/* the key under DeviceClasses names the path with \\?\ as ##?#; its parent holds the properties. */
-static BOOL interface_path(PCWSTR link, WCHAR *path, ULONG chars)
+/*
+ * the key of a link under DeviceClasses: the class, the link with \\?\ as ##?# up to the end of its class, and # with
+ * the reference string, which is the part of the link after the class.
+ */
+BOOL interface_path(PCWSTR link, WCHAR *path, ULONG chars)
 {
     PCWSTR brace = nullptr;
     for (PCWSTR p = link; *p; p++)
         if (*p == L'{')
             brace = p;
-    if (!brace || lstrlenW(link) < 5 || lstrlenW(link) + 200 > (int)chars)
+    GUID klass;
+    if (!brace || lstrlenW(link) < 5 || lstrlenW(link) + 200 > (int)chars || !parse_guid(brace, &klass))
+        return FALSE;
+    PCWSTR reference = brace + MAX_GUID_STRING_LEN - 1;
+    if (*reference && *reference != L'\\')
         return FALSE;
     lstrcpyW(path, INTERFACE_CLASS_PATH L"\\");
-    lstrcatW(path, brace);
-    lstrcatW(path, L"\\##?#");
-    lstrcatW(path, link + 4);
-    lstrcatW(path, L"\\#");
+    WCHAR *out = path + lstrlenW(path);
+    memcpy(out, brace, (MAX_GUID_STRING_LEN - 1) * sizeof(WCHAR));
+    out += MAX_GUID_STRING_LEN - 1;
+    lstrcpyW(out, L"\\##?#");
+    out += 5;
+    for (PCWSTR p = link + 4; p < reference; p++)
+        *out++ = *p;
+    *out++ = L'\\';
+    *out++ = L'#';
+    lstrcpyW(out, *reference ? reference + 1 : L"");
+    return TRUE;
+}
+
+/*
+ * the device and class of an interface: one a driver enabled, which the kernel knows, or one that is only registered,
+ * which is its key under DeviceClasses with the DeviceInstance value CM_Register_Device_Interface wrote.
+ */
+BOOL interface_owner(PCWSTR link, WCHAR *device, GUID *klass, BOOL *enabled)
+{
+    MIME_PNP_REQUEST *r;
+    if (NT_SUCCESS(request(MIME_PNP_INTERFACE_DEVICE, 0, nullptr, link, &r))) {
+        if (device)
+            lstrcpynW(device, r->Out, MAX_DEVICE_ID_LEN);
+        if (klass)
+            *klass = r->Class;
+        if (enabled)
+            *enabled = TRUE;
+        HeapFree(GetProcessHeap(), 0, r);
+        return TRUE;
+    }
+    WCHAR path[MAX_PATH + 256], instance[MAX_DEVICE_ID_LEN];
+    if (!interface_path(link, path, RTL_NUMBER_OF(path)))
+        return FALSE;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &key))
+        return FALSE;
+    RegCloseKey(key);
+    /* the device's key is the one above. */
+    WCHAR *cut = path + lstrlenW(path);
+    while (*cut != L'\\')
+        cut--;
+    *cut = 0;
+    DWORD bytes = sizeof(instance);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, path, L"DeviceInstance", RRF_RT_REG_SZ, nullptr, instance, &bytes))
+        return FALSE;
+    PCWSTR brace = nullptr;
+    for (PCWSTR p = link; *p; p++)
+        if (*p == L'{')
+            brace = p;
+    if (device)
+        lstrcpyW(device, instance);
+    if (klass)
+        parse_guid(brace, klass);
+    if (enabled)
+        *enabled = FALSE;
     return TRUE;
 }
 
 static BOOL interface_known(PCWSTR link)
 {
-    MIME_PNP_REQUEST *r;
-    if (!NT_SUCCESS(request(MIME_PNP_INTERFACE_DEVICE, 0, nullptr, link, &r)))
-        return FALSE;
-    HeapFree(GetProcessHeap(), 0, r);
-    return TRUE;
+    return interface_owner(link, nullptr, nullptr, nullptr);
 }
 
 static CONFIGRET interface_base(PCWSTR link, BOOL create, REGSAM access, HKEY *out)
@@ -748,18 +802,13 @@ CMAPI CONFIGRET WINAPI CM_Delete_Device_Interface_KeyW(PCWSTR path, ULONG flags)
     return from_registry(error);
 }
 
-/* every interface has these: enabled, and its class. */
-MIME_DEVPROPKEY(g_interface_enabled, 0x14C83A99, 0x0B3F, 0x44B7, 0xBE, 0x4C, 0xA1, 0x78, 0xD3, 0x99, 0x05, 0x64, 2);
+/* every interface has these: DEVPKEY_DeviceInterface_Enabled, and its class. */
+MIME_DEVPROPKEY(g_interface_enabled, 0x026E516E, 0xB814, 0x414B, 0x83, 0xCD, 0x85, 0x6D, 0x6F, 0xEF, 0x48, 0x22, 3);
 MIME_DEVPROPKEY(g_interface_class, 0x026E516E, 0xB814, 0x414B, 0x83, 0xCD, 0x85, 0x6D, 0x6F, 0xEF, 0x48, 0x22, 4);
 
 static BOOL interface_class(PCWSTR link, GUID *klass)
 {
-    MIME_PNP_REQUEST *r;
-    if (!NT_SUCCESS(request(MIME_PNP_INTERFACE_DEVICE, 0, nullptr, link, &r)))
-        return FALSE;
-    *klass = r->Class;
-    HeapFree(GetProcessHeap(), 0, r);
-    return TRUE;
+    return interface_owner(link, nullptr, klass, nullptr);
 }
 
 CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_Property_KeysW(PCWSTR path, DEVPROPKEY *keys, PULONG count,
@@ -826,9 +875,11 @@ CONFIGRET InterfaceOwnProperty(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *
     GUID klass;
     if (key_is(key, &g_interface_enabled)) {
         *handled = TRUE;
-        if (!interface_known(path))
+        /* measured on windows 11: an interface that is registered and not enabled answers false. */
+        BOOL live;
+        if (!interface_owner(path, nullptr, nullptr, &live))
             return CR_NO_SUCH_DEVICE_INTERFACE;
-        BYTE enabled = 0xff;
+        BYTE enabled = live ? 0xff : 0;
         return put(DEVPROP_TYPE_BOOLEAN, &enabled, sizeof(enabled), type, buffer, size);
     }
     if (key_is(key, &g_interface_class)) {
@@ -852,14 +903,14 @@ CONFIGRET InterfaceOwnProperty(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *
 CMAPI CONFIGRET WINAPI CM_Get_DevNode_Registry_Property_ExW(DEVINST devinst, ULONG property, PULONG type,
                                                             PVOID buffer, PULONG length, ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_DevNode_Registry_PropertyW(devinst, property, type, buffer, length, flags);
 }
 
 CMAPI CONFIGRET WINAPI CM_Get_Parent_Ex(PDEVINST out, DEVINST devinst, ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Parent(out, devinst, flags);
 }
@@ -867,7 +918,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Parent_Ex(PDEVINST out, DEVINST devinst, ULONG fla
 CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_List_ExW(GUID *klass, PCWSTR device, PWSTR buffer, ULONG length,
                                                         ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Device_Interface_ListW(klass, device, buffer, length, flags);
 }
@@ -875,7 +926,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_List_ExW(GUID *klass, PCWSTR devi
 CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_List_Size_ExW(PULONG length, GUID *klass, PCWSTR device, ULONG flags,
                                                              void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Device_Interface_List_SizeW(length, klass, device, flags);
 }
@@ -1123,6 +1174,10 @@ CMAPI CONFIGRET WINAPI CM_Register_Notification(PCM_NOTIFY_FILTER filter, PVOID 
     g_watching = TRUE;
     RtlLeaveCriticalSection(&g_notify_lock);
     if (start) {
+        /* the watcher runs in this library for good, so a program that frees its last user must not unload it. */
+        HMODULE self;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (PCWSTR)watch_tree,
+                           &self);
         HANDLE thread = CreateThread(nullptr, 0, watch_tree, nullptr, 0, nullptr);
         if (thread)
             CloseHandle(thread);
@@ -1175,7 +1230,7 @@ CMAPI CONFIGRET WINAPI CM_Get_First_Log_Conf(PLOG_CONF out, DEVINST devinst, ULO
 
 CMAPI CONFIGRET WINAPI CM_Get_First_Log_Conf_Ex(PLOG_CONF out, DEVINST devinst, ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_First_Log_Conf(out, devinst, flags);
 }
@@ -1187,7 +1242,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Next_Log_Conf(PLOG_CONF out, LOG_CONF conf, ULONG 
 
 CMAPI CONFIGRET WINAPI CM_Get_Next_Log_Conf_Ex(PLOG_CONF out, LOG_CONF conf, ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Next_Log_Conf(out, conf, flags);
 }
@@ -1207,7 +1262,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Next_Res_Des(PRES_DES out, RES_DES from, RESOURCEI
 CMAPI CONFIGRET WINAPI CM_Get_Next_Res_Des_Ex(PRES_DES out, RES_DES from, RESOURCEID wanted, PRESOURCEID found,
                                               ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Next_Res_Des(out, from, wanted, found, flags);
 }
@@ -1222,7 +1277,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data_Size(PULONG size, RES_DES des, ULONG 
 
 CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data_Size_Ex(PULONG size, RES_DES des, ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Res_Des_Data_Size(size, des, flags);
 }
@@ -1236,7 +1291,7 @@ CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data(RES_DES des, PVOID buffer, ULONG leng
 
 CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data_Ex(RES_DES des, PVOID buffer, ULONG length, ULONG flags, void *machine)
 {
-    if (machine)
+    if (!machine_local(machine))
         return CR_INVALID_MACHINENAME;
     return CM_Get_Res_Des_Data(des, buffer, length, flags);
 }
