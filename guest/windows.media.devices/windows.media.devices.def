@@ -1,0 +1,6 @@
+; the exports of Windows.Media.Devices.dll of windows that are served, with their ordinals.
+LIBRARY Windows.Media.Devices.dll
+EXPORTS
+    DllGetActivationFactory @1 PRIVATE
+    DllCanUnloadNow @7 PRIVATE
+    DllGetClassObject @8 PRIVATE

@@ -1,5 +1,6 @@
 ; the windows runtime classes that the libraries of Mime serve from their DllGetActivationFactory. ActivationType 0 is
-; in process, Threading 0 serves both apartments and TrustLevel 0 is base trust, as Windows registers them.
+; in process, Threading 0 serves both apartments and TrustLevel 0 is base trust, as Windows registers them. the 32-bit
+; view names the file of SysWOW64 where Windows does.
 
 ; CoreMessaging.dll
 [HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.System.DispatcherQueue]
@@ -31,5 +32,57 @@
 [HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.UI.Composition.Core.CompositorController]
 "ActivationType"=dword:00000000
 "DllPath"=expand:"%SystemRoot%\\system32\\dcomp.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+; Windows.Media.Devices.dll, in the multithreaded apartment as windows registers it.
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Media.Devices.MediaDevice]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\System32\\Windows.Media.Devices.dll"
+"Threading"=dword:00000002
+"TrustLevel"=dword:00000000
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Media.Devices.MediaDevice]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\SysWOW64\\Windows.Media.Devices.dll"
+"Threading"=dword:00000002
+"TrustLevel"=dword:00000000
+
+; Windows.Devices.Enumeration.dll
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Devices.Enumeration.DeviceInformation]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\System32\\Windows.Devices.Enumeration.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Devices.Enumeration.DeviceInformation]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\SysWOW64\\Windows.Devices.Enumeration.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+; Windows.Networking.Connectivity.dll
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Networking.Connectivity.NetworkInformation]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\System32\\Windows.Networking.Connectivity.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Networking.Connectivity.NetworkInformation]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\SysWOW64\\Windows.Networking.Connectivity.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+; CryptoWinRT.dll
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Security.Credentials.KeyCredentialManager]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\System32\\CryptoWinRT.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Security.Credentials.KeyCredentialManager]
+"ActivationType"=dword:00000000
+"DllPath"="C:\\Windows\\SysWOW64\\CryptoWinRT.dll"
 "Threading"=dword:00000000
 "TrustLevel"=dword:00000000

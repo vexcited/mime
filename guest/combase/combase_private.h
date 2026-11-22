@@ -79,10 +79,18 @@ typedef struct CB_AUDIO_ENDPOINT {
     BOOLEAN IsDefault;
 } CB_AUDIO_ENDPOINT;
 #define CB_AUDIO_MAX 32
-/* the active endpoints of a data flow, 0 render and 1 capture. */
+/* audioendpoint.c: the endpoints of mmdevapi, for each library that compiles it. */
+#define CB_AUDIO_RENDER_CLASS L"{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+#define CB_AUDIO_CAPTURE_CLASS L"{2eef81be-33fa-4800-9670-1cd474972c3f}"
+/* the device interface path of an endpoint of a data flow, 0 render and 1 capture, from its mmdevapi id. */
+void CbAudioEndpointPath(INT32 flow, LPCWSTR id, WCHAR path[CB_AUDIO_PATH]);
+BOOLEAN CbAudioDefaultPath(INT32 flow, INT32 role, WCHAR path[CB_AUDIO_PATH]);
+/* the active endpoints of a data flow. */
 UINT32 CbAudioEndpoints(INT32 flow, CB_AUDIO_ENDPOINT *endpoints, UINT32 capacity);
-/* starts listening to mmdevapi, which then raises the events of MediaDevice and refreshes the watchers. */
+/* starts listening to mmdevapi, which then calls the two functions below of the library. */
 void CbAudioWatch(void);
+/* the default endpoint of a role of AudioDeviceRole changed, the id is null when the direction is left without one. */
+void CbAudioDefaultChanged(INT32 flow, INT32 role, LPCWSTR id);
 
 /* a TypedEventHandler, whichever its arguments. */
 typedef struct CB_EVENT_HANDLER {
@@ -97,7 +105,7 @@ typedef struct CB_EVENT_HANDLER {
 /* devinfo.c: Windows.Devices.Enumeration.DeviceInformation. */
 extern const WCHAR CbDeviceInformationClass[];
 HRESULT CbDeviceInformationFactory(REFIID riid, void **factory);
-/* the started watchers look at the endpoints again, from a pool thread. */
+/* the endpoints changed: the started watchers look at them again, from a pool thread. */
 void CbDeviceWatchersRefresh(void);
 
 /* keycred.c: Windows.Security.Credentials.KeyCredentialManager. */

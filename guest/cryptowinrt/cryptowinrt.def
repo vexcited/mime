@@ -1,0 +1,6 @@
+; the exports of CryptoWinRT.dll of windows with their ordinals.
+LIBRARY CryptoWinRT.dll
+EXPORTS
+    DllCanUnloadNow @1 PRIVATE
+    DllGetActivationFactory @2 PRIVATE
+    DllGetClassObject @3 PRIVATE

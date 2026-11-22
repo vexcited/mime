@@ -39,8 +39,6 @@ static HRESULT live(ASYNC *a)
 static HRESULT STDMETHODCALLTYPE info_get_id(IAsyncInfo *This, UINT32 *id)
 {
     ASYNC *a = async_of(This);
-    if (!id)
-        return E_POINTER;
     AcquireSRWLockShared(&a->Lock);
     HRESULT hr = live(a);
     *id = SUCCEEDED(hr) ? a->Id : 0;
@@ -166,8 +164,6 @@ static HRESULT STDMETHODCALLTYPE op_get_completed(IAsyncOperation *This, IAsyncC
 static HRESULT STDMETHODCALLTYPE bool_get_results(IAsyncOperation *This, void *result)
 {
     ASYNC *a = async_of(This);
-    if (!result)
-        return E_POINTER;
     *(BOOLEAN *)result = FALSE;
     HRESULT hr = results_state(a);
     if (SUCCEEDED(hr))
@@ -178,8 +174,6 @@ static HRESULT STDMETHODCALLTYPE bool_get_results(IAsyncOperation *This, void *r
 static HRESULT STDMETHODCALLTYPE object_get_results(IAsyncOperation *This, void *result)
 {
     ASYNC *a = async_of(This);
-    if (!result)
-        return E_POINTER;
     *(void **)result = nullptr;
     HRESULT hr = results_state(a);
     if (SUCCEEDED(hr) && a->Object) {

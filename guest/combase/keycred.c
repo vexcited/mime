@@ -64,8 +64,6 @@ static HRESULT STDMETHODCALLTYPE result_get_credential(IKeyCredentialRetrievalRe
 
 static HRESULT STDMETHODCALLTYPE result_get_status(IKeyCredentialRetrievalResult *This, KeyCredentialStatus *value)
 {
-    if (!value)
-        return E_POINTER;
     *value = ((RETRIEVAL_RESULT *)((WRT_IFACE *)This)->Owner)->Status;
     return S_OK;
 }
@@ -117,16 +115,12 @@ WRT_INSPECTABLE_THUNKS(IKeyCredentialManagerFactory)
  */
 static HRESULT STDMETHODCALLTYPE statics_is_supported(IKeyCredentialManagerStatics *This, IAsyncOperation **operation)
 {
-    if (!operation)
-        return E_POINTER;
     return CbAsyncFinished(CB_ASYNC_BOOL, S_OK, FALSE, nullptr, (void **)operation);
 }
 
 /* a program without a container has no attestation to renew, which windows counts as done. */
 static HRESULT STDMETHODCALLTYPE statics_renew_attestation(IKeyCredentialManagerStatics *This, IAsyncAction **operation)
 {
-    if (!operation)
-        return E_POINTER;
     return CbAsyncFinished(CB_ASYNC_ACTION, S_OK, FALSE, nullptr, (void **)operation);
 }
 
@@ -134,8 +128,6 @@ static HRESULT STDMETHODCALLTYPE statics_request_create(IKeyCredentialManagerSta
                                                         KeyCredentialCreationOption option,
                                                         IAsyncOperation **operation)
 {
-    if (!operation)
-        return E_POINTER;
     *operation = nullptr;
     if (!name)
         return E_INVALIDARG;
@@ -186,7 +178,7 @@ static void factory_destroy(WRT_OBJECT *object)
     object->Refs = 1;
 }
 
-static const WRT_CLASS factory_class = {CbKeyCredentialManagerClass,
+static const WRT_CLASS factory_class = {nullptr,
                                         2,
                                         {&IID_IActivationFactory, &IID_IKeyCredentialManagerStatics},
                                         0,

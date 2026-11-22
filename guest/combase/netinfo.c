@@ -27,14 +27,12 @@ typedef struct NET_ADAPTER {
 } NET_ADAPTER;
 
 typedef ULONG(WINAPI *GET_ADAPTERS_ADDRESSES)(ULONG, ULONG, PVOID, PIP_ADAPTER_ADDRESSES, PULONG);
-typedef DWORD(NETIOAPI_API_ *GET_HINT_OF_INTERFACE)(NET_IFINDEX, NL_NETWORK_CONNECTIVITY_HINT *);
 typedef DWORD(NETIOAPI_API_ *NOTIFY_HINT)(PNETWORK_CONNECTIVITY_HINT_CHANGE_CALLBACK, PVOID, BOOLEAN, HANDLE *);
 typedef DWORD(NETIOAPI_API_ *NOTIFY_INTERFACE)(ADDRESS_FAMILY, PIPINTERFACE_CHANGE_CALLBACK, PVOID, BOOLEAN, HANDLE *);
 typedef DWORD(NETIOAPI_API_ *CANCEL_NOTIFY)(HANDLE);
 
 static struct {
     GET_ADAPTERS_ADDRESSES GetAdaptersAddresses;
-    GET_HINT_OF_INTERFACE GetHintOfInterface;
     NOTIFY_HINT NotifyHint;
     NOTIFY_INTERFACE NotifyInterface;
     CANCEL_NOTIFY Cancel;
@@ -47,8 +45,6 @@ static BOOL CALLBACK load_ip(PINIT_ONCE once, PVOID parameter, PVOID *context)
     if (!iphlpapi)
         return TRUE;
     g_ip.GetAdaptersAddresses = (GET_ADAPTERS_ADDRESSES)(void *)GetProcAddress(iphlpapi, "GetAdaptersAddresses");
-    g_ip.GetHintOfInterface =
-        (GET_HINT_OF_INTERFACE)(void *)GetProcAddress(iphlpapi, "GetNetworkConnectivityHintForInterface");
     g_ip.NotifyHint = (NOTIFY_HINT)(void *)GetProcAddress(iphlpapi, "NotifyNetworkConnectivityHintChange");
     g_ip.NotifyInterface = (NOTIFY_INTERFACE)(void *)GetProcAddress(iphlpapi, "NotifyIpInterfaceChange");
     g_ip.Cancel = (CANCEL_NOTIFY)(void *)GetProcAddress(iphlpapi, "CancelMibChangeNotify2");
@@ -90,20 +86,6 @@ static BOOL parse_guid(const char *text, GUID *guid)
     return *text == '}';
 }
 
-static NetworkConnectivityLevel level_of(NL_NETWORK_CONNECTIVITY_LEVEL_HINT hint)
-{
-    switch (hint) {
-    case NetworkConnectivityLevelHintLocalAccess:
-        return NetworkConnectivityLevel_LocalAccess;
-    case NetworkConnectivityLevelHintConstrainedInternetAccess:
-        return NetworkConnectivityLevel_ConstrainedInternetAccess;
-    case NetworkConnectivityLevelHintInternetAccess:
-        return NetworkConnectivityLevel_InternetAccess;
-    default:
-        return NetworkConnectivityLevel_None;
-    }
-}
-
 /* the adapters that are up, but for loopback and tunnels. a list the caller frees. */
 static BOOL net_scan(NET_ADAPTER **list, ULONG *count)
 {
@@ -120,8 +102,8 @@ static BOOL net_scan(NET_ADAPTER **list, ULONG *count)
         if (!addresses)
             return FALSE;
         error = g_ip.GetAdaptersAddresses(AF_UNSPEC,
-                                          GAA_FLAG_SKIP_UNICAST | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
-                                              GAA_FLAG_SKIP_DNS_SERVER,
+                                          GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
+                                              GAA_FLAG_INCLUDE_GATEWAYS,
                                           nullptr, addresses, &size);
     } while (error == ERROR_BUFFER_OVERFLOW);
     if (error != NO_ERROR) {
@@ -151,11 +133,14 @@ static BOOL net_scan(NET_ADAPTER **list, ULONG *count)
         e->Metric = a->Ipv4Metric;
         e->Outbound = a->TransmitLinkSpeed;
         e->Inbound = a->ReceiveLinkSpeed;
-        NL_NETWORK_CONNECTIVITY_HINT hint = {};
-        if (g_ip.GetHintOfInterface && g_ip.GetHintOfInterface(a->IfIndex, &hint) == NO_ERROR) {
-            e->Level = level_of(hint.ConnectivityLevel);
-            e->Cost = (NetworkCostType)hint.ConnectivityCost;
-        }
+        /* the connectivity of the adapter: the internet through a gateway, the local network with an address. windows
+           asks its network list manager, which mime has not, so iphlpapi's hint of an interface has no answer. */
+        if (a->FirstGatewayAddress)
+            e->Level = NetworkConnectivityLevel_InternetAccess;
+        else if (a->FirstUnicastAddress)
+            e->Level = NetworkConnectivityLevel_LocalAccess;
+        if (e->Level != NetworkConnectivityLevel_None)
+            e->Cost = NetworkCostType_Unrestricted;
         /* a network with a way out is named by the first free number, one without is not identified. */
         if (e->Level >= NetworkConnectivityLevel_ConstrainedInternetAccess) {
             if (++named > 1)
@@ -246,8 +231,9 @@ static COST *cost_of(void *iface)
 
 static HRESULT STDMETHODCALLTYPE cost_get_type(IConnectionCost *This, NetworkCostType *value)
 {
+    /* windows 11 says E_INVALIDARG here, where the other getters say E_POINTER. */
     if (!value)
-        return E_POINTER;
+        return E_INVALIDARG;
     *value = cost_of(This)->Type;
     return S_OK;
 }
@@ -633,7 +619,8 @@ static HRESULT STDMETHODCALLTYPE profile6_is_domain_authenticated(IConnectionPro
 {
     if (!value)
         return E_POINTER;
-    *value = FALSE;
+    /* a machine in no domain is authenticated by nothing: windows 11 says true for kind 0, DomainAuthenticationKind_None. */
+    *value = kind == 0;
     return S_OK;
 }
 
@@ -857,8 +844,6 @@ static HRESULT STDMETHODCALLTYPE statics_remove_status_changed(INetworkInformati
 
 static HRESULT STDMETHODCALLTYPE statics_get_profiles(INetworkInformationStatics *This, IVectorViewPtr **value)
 {
-    if (!value)
-        return E_POINTER;
     *value = nullptr;
     NET_ADAPTER *list;
     ULONG count;
@@ -885,8 +870,6 @@ static HRESULT STDMETHODCALLTYPE statics_get_profiles(INetworkInformationStatics
 static HRESULT STDMETHODCALLTYPE statics_get_internet_profile(INetworkInformationStatics *This,
                                                               IConnectionProfile **value)
 {
-    if (!value)
-        return E_POINTER;
     *value = nullptr;
     NET_ADAPTER *list;
     ULONG count;
@@ -900,8 +883,6 @@ static HRESULT STDMETHODCALLTYPE statics_get_internet_profile(INetworkInformatio
 
 static HRESULT STDMETHODCALLTYPE statics_get_lan_identifiers(INetworkInformationStatics *This, IVectorViewPtr **value)
 {
-    if (!value)
-        return E_POINTER;
     *value = nullptr;
     return E_NOTIMPL;
 }
@@ -967,7 +948,7 @@ static void factory_destroy(WRT_OBJECT *object)
     object->Refs = 1;
 }
 
-static const WRT_CLASS factory_class = {CbNetworkInformationClass,
+static const WRT_CLASS factory_class = {nullptr,
                                         3,
                                         {&IID_IActivationFactory, &IID_INetworkInformationStatics,
                                          &IID_INetworkInformationStatics2},

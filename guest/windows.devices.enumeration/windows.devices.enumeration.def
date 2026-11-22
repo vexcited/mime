@@ -1,0 +1,6 @@
+; the exports of Windows.Devices.Enumeration.dll of windows that are served, with their ordinals.
+LIBRARY Windows.Devices.Enumeration.dll
+EXPORTS
+    DllCanUnloadNow @3 PRIVATE
+    DllGetActivationFactory @4 PRIVATE
+    DllGetClassObject @5 PRIVATE

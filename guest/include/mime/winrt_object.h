@@ -107,6 +107,9 @@ FORCEINLINE HRESULT WrtGetRuntimeClassName(WRT_IFACE *self, HSTRING *name)
     if (!name)
         return E_POINTER;
     *name = nullptr;
+    /* a class without a name is an activation factory: those of windows answer that the call is illegal. */
+    if (!self->Owner->Class->Name)
+        return E_ILLEGAL_METHOD_CALL;
     HMODULE combase = LoadLibraryW(L"combase.dll");
     CREATE create = combase ? (CREATE)(void *)GetProcAddress(combase, "WindowsCreateString") : nullptr;
     if (!create)

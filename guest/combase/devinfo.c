@@ -808,18 +808,32 @@ static HRESULT STDMETHODCALLTYPE watcher_aqs_props(IDeviceInformationStatics *Th
 
 static HRESULT STDMETHODCALLTYPE aqs_from_class(IDeviceInformationStatics2 *This, INT32 device_class, HSTRING *filter)
 {
+    /*
+     * the selectors of windows 11 for the classes of DeviceClass from AudioCapture to Location, letter for letter, and
+     * E_INVALIDARG for a class it does not have. it faults for All, which is answered empty here.
+     */
+#define ENABLED L" AND System.Devices.InterfaceEnabled:=System.StructuredQueryType.Boolean#True"
     static const WCHAR *const filters[] = {
         L"",
-        L"System.Devices.InterfaceClassGuid:=\"{2EEF81BE-33FA-4800-9670-1CD474972C3F}\" AND "
-        L"System.Devices.InterfaceEnabled:=System.StructuredQueryType.Boolean#True",
-        L"System.Devices.InterfaceClassGuid:=\"{E6327CAD-DCEC-4949-AE8A-991E976A79D2}\" AND "
-        L"System.Devices.InterfaceEnabled:=System.StructuredQueryType.Boolean#True",
+        L"System.Devices.InterfaceClassGuid:=\"{2eef81be-33fa-4800-9670-1cd474972c3f}\"" ENABLED,
+        L"System.Devices.InterfaceClassGuid:=\"{e6327cad-dcec-4949-ae8a-991e976a79d2}\"" ENABLED,
+        L"(System.Devices.InterfaceClassGuid:=\"{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}\" AND "
+        L"System.Storage.Portable:=System.StructuredQueryType.Boolean#True AND NOT "
+        L"System.Storage.SystemCritical:=System.StructuredQueryType.Boolean#True) OR "
+        L"(System.Devices.InterfaceClassGuid:=\"{6AC27878-A6FA-4155-BA85-F98F491D4F33}\" AND NOT "
+        L"System.Shell.OmitFromView:=\"True\")" ENABLED,
+        L"System.Devices.InterfaceClassGuid:=\"{e5323777-f976-4f5b-9b55-b94699c46e44}\"" ENABLED
+        L" AND (System.Devices.WinPhone8CameraFlags:=[] OR System.Devices.WinPhone8CameraFlags:<4096)",
+        L"System.Devices.InterfaceClassGuid:=\"{6bdd1fc6-810f-11d0-bec7-08002be2092f}\"" ENABLED
+        L" AND System.Devices.WiaDeviceType:=1",
+        L"System.Devices.InterfaceClassGuid:=\"{BFA794E4-F964-4FDB-90F6-51056BFE4B44}\"" ENABLED,
     };
+#undef ENABLED
     if (!filter)
         return E_POINTER;
     *filter = nullptr;
     if (device_class < 0 || device_class >= (INT32)RTL_NUMBER_OF(filters))
-        return E_NOTIMPL;
+        return E_INVALIDARG;
     return copy_string(filters[device_class], filter);
 }
 
@@ -856,7 +870,7 @@ static const IDeviceInformationStatics2Vtbl statics2_vtbl = {WRT_INSPECTABLE_ENT
                                                              aqs_from_class, from_id_kind, find_kind, watcher_kind};
 
 static const WRT_CLASS factory_class = {
-    CbDeviceInformationClass, 3, {&IID_IActivationFactory, &IID_IDeviceInformationStatics, &IID_IDeviceInformationStatics2},
+    nullptr, 3, {&IID_IActivationFactory, &IID_IDeviceInformationStatics, &IID_IDeviceInformationStatics2},
     0, static_destroy};
 static WRT_OBJECT g_factory;
 static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;

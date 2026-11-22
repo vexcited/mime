@@ -667,7 +667,7 @@ set(MIME_EXTRA_DLLS advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6
     onecorecommonproxystub:0x7FEFF0000000 onecoreuapcommonproxystub:0x7FEFE0000000
     rpcss:0x7FEFD0000000 rpcepmap:0x7FEFC0000000 wkscli:0x7FEE70000000 wkssvc:0x7FEE00000000 httpapi:0x7FEDE0000000 wbemcore:0x7FEDD0000000 loadperf:0x7FEDC0000000 webservices:0x7FEDA0000000 xolehlp:0x7FED90000000 vssapi:0x7FED80000000 xmllite:0x7FED70000000 d2d1:0x7FED20000000 mstask:0x7FED10000000 msado15:0x7FED00000000 scrrun:0x7FECF0000000 wshom:0x7FECE0000000 security:0x7FED60000000 sspicli:0x7FECC0000000 rsaenh:0x7FEC90000000 profapi:0x7FEC80000000 clusapi:0x7FED50000000 resutils:0x7FED40000000 nsisvc:0x7FEDF0000000 keyiso:0x7FEDB0000000 feclient:0x7FEFB0000000 zipfldr:0x7FEFA0000000 avifil32:0x7FEF90000000 glu32:0x7FEF80000000 odbccp32:0x7FEE10000000 mscms:0x7FEE20000000 mapi32:0x7FEE30000000 hlink:0x7FEE40000000 authz:0x7FEE50000000 wldap32:0x7FEE60000000 ntdsapi:0x7FEE80000000 mlang:0x7FED30000000 query:0x7FEE90000000 fontsub:0x7FEEA0000000 tdh:0x7FEEB0000000 windows.networking:0x7FEEC0000000 dbgeng:0x7FEED0000000 wmvcore:0x7FEEE0000000 avicap32:0x7FEEF0000000 rstrtmgr:0x7FEF00000000 wlanapi:0x7FEF10000000 snmpapi:0x7FEF20000000 ktmw32:0x7FEF30000000 msvfw32:0x7FEF40000000 normaliz:0x7FEF50000000 cryptsp:0x7FEF60000000 shfolder:0x7FEF70000000 srvcli:0x7FEC40000000 netutils:0x7FEC30000000)
 list(APPEND MIME_EXTRA_DLLS sensapi:0x7FEBF0000000 verifier:0x7FEBE0000000 wldp:0x7FECD0000000 rasapi32:0x7FEC10000000 uianimation:0x7FECB0000000
-    windows.graphics:0x7FECA0000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
+    windows.graphics:0x7FECA0000000 windows.media.devices:0x7FEB60000000 windows.devices.enumeration:0x7FEB50000000 windows.networking.connectivity:0x7FEB40000000 cryptowinrt:0x7FEB30000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
     twinapi.appcore:0x7FEBC0000000 fwpuclnt:0x7FEBB0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
@@ -798,6 +798,10 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_shlwapi ${MIME_LIB_${arch}}/shcore.lib)
     set(objects_shcore ${arch}-lib-winrt)
     set(includes_shcore guest/lib)
+    foreach(runtime windows.media.devices windows.devices.enumeration windows.networking.connectivity cryptowinrt)
+        set(includes_${runtime} guest/lib)
+        set(libs_${runtime} ${MIME_LIB_${arch}}/combase.lib)
+    endforeach()
     set(objects_windows.graphics ${arch}-lib-winrt)
     set(includes_windows.graphics guest/lib)
     set(libs_windows.graphics ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/combase.lib ${MIME_LIB_${arch}}/shcore.lib
@@ -860,8 +864,26 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             set(file UIAnimation.dll)
         elseif(name STREQUAL "windows.graphics")
             set(file Windows.Graphics.dll)
+        elseif(name STREQUAL "windows.media.devices")
+            set(file Windows.Media.Devices.dll)
+        elseif(name STREQUAL "windows.devices.enumeration")
+            set(file Windows.Devices.Enumeration.dll)
+        elseif(name STREQUAL "windows.networking.connectivity")
+            set(file Windows.Networking.Connectivity.dll)
+        elseif(name STREQUAL "cryptowinrt")
+            set(file CryptoWinRT.dll)
         endif()
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
+        # the classes are those mime's combase had, each compiled into the library windows keeps it in.
+        if(name STREQUAL "windows.media.devices")
+            list(APPEND sources guest/combase/mediadevice.c guest/combase/audioendpoint.c)
+        elseif(name STREQUAL "windows.devices.enumeration")
+            list(APPEND sources guest/combase/devinfo.c guest/combase/audioendpoint.c)
+        elseif(name STREQUAL "windows.networking.connectivity")
+            list(APPEND sources guest/combase/netinfo.c guest/combase/async.c guest/combase/collections.c)
+        elseif(name STREQUAL "cryptowinrt")
+            list(APPEND sources guest/combase/keycred.c guest/combase/async.c)
+        endif()
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}
             INCLUDES ${includes_${name}} IMPORTS ntdll kernel32 user32 gdi32 win32u LIBS ${libs_${name}}
             DEPENDS ${depends_${name}})
@@ -1323,6 +1345,14 @@ set(includes_wininet guest/lib)
 set(d3dcompiler_imports ${all_five} msvcrt)
 list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:d3dcompiler_imports)
 list(APPEND MIME_X86_DLLS wldp:0x31900000:base cryptnet:0x55900000:crypt)
+# the windows runtime classes genuine combase loads from SysWOW64, as the 32-bit view of the registry names them.
+set(runtime_imports ntdll kernel32 user32 gdi32 win32u combase)
+list(APPEND MIME_X86_DLLS windows.media.devices:0x48000000:runtime_imports
+    windows.devices.enumeration:0x48400000:runtime_imports windows.networking.connectivity:0x48800000:runtime_imports
+    cryptowinrt:0x48C00000:runtime_imports)
+foreach(runtime windows.media.devices windows.devices.enumeration windows.networking.connectivity cryptowinrt)
+    set(includes_${runtime} guest/lib)
+endforeach()
 set(evr_imports ntdll kernel32 mfplat ole32 gdi32 user32 dxva2 d3d9)
 list(APPEND MIME_X86_DLLS evr:0x32F90000:evr_imports)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c x86-lib-hlsl x86-div)
