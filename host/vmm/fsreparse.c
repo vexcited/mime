@@ -28,6 +28,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <linux/openat2.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 #include <unistd.h>
 
 #define SYMLINK_FLAG_RELATIVE 1u
@@ -146,8 +151,31 @@ bool mime_fs_link_read(MimeVm *vm, const char *link, MimeFsReparse *r)
  * the first component below the root of the volume that is a link, not counting the last one when the caller opens a link
  * as itself. returns the number of components through it, 1 for the first, or 0, and the length of the path through it.
  */
+#ifdef __linux__
+/*
+ * one walk of the kernel instead of a stat per component: a path that resolves with no link on the way has none, and
+ * one that is missing on the way has none before the missing part, which the walk by components also answers with 0.
+ * a link anywhere, in the root of the volume too, leaves the answer to the walk by components.
+ */
+static bool no_link_on_the_way(const char *path, bool last_is_the_file)
+{
+    struct open_how how = {.flags = O_PATH | O_NOFOLLOW | O_CLOEXEC, .resolve = RESOLVE_NO_SYMLINKS};
+    int fd = (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
+    if (fd < 0)
+        return errno == ENOENT || errno == ENOTDIR;
+    struct stat st;
+    bool plain = fstat(fd, &st) == 0 && (!S_ISLNK(st.st_mode) || last_is_the_file);
+    close(fd);
+    return plain;
+}
+#endif
+
 int mime_fs_find_link(const char *path, size_t root_length, bool last_is_the_file, size_t *through)
 {
+#ifdef __linux__
+    if (no_link_on_the_way(path, last_is_the_file))
+        return 0;
+#endif
     size_t total = strlen(path);
     char prefix[MIME_PATH_MAX];
     if (total >= sizeof(prefix))

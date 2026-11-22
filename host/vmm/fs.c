@@ -15,6 +15,13 @@
 #else
 #include <sys/vfs.h>
 #endif
+#ifdef __linux__
+#include <linux/fiemap.h>
+#include <sys/ioctl.h>
+#ifndef FS_IOC_FIEMAP
+#define FS_IOC_FIEMAP _IOWR('f', 11, struct fiemap)
+#endif
+#endif
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
@@ -488,6 +495,143 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
         mime_fs_times_set(fh->host_path, fh->fd, (b.mask & MIME_FS_BASIC_CREATION) ? &creation : nullptr,
                           set_change ? &change : nullptr);
     fh->frozen = (uint8_t)((fh->frozen | b.freeze) & ~b.thaw);
+    return MIME_HC_STATUS_OK;
+}
+
+/* the zeroes a range of a file gets written as, in pieces of a fixed buffer. */
+static uint64_t write_zeroes(int fd, uint64_t start, uint64_t end)
+{
+    static const uint8_t zeroes[65536];
+    while (start < end) {
+        size_t n = end - start < sizeof(zeroes) ? (size_t)(end - start) : sizeof(zeroes);
+        ssize_t done = pwrite(fd, zeroes, n, (off_t)start);
+        if (done < 0) {
+            if (errno == EINTR)
+                continue;
+            return errno_status(errno);
+        }
+        start += (uint64_t)done;
+    }
+    return MIME_HC_STATUS_OK;
+}
+
+/*
+ * FSCTL_SET_SPARSE, FSCTL_SET_ZERO_DATA and FSCTL_QUERY_ALLOCATED_RANGES on the host file. a file that is not sparse is
+ * whole on windows, so the guest fills the holes the host left when the attribute changes; a sparse file frees the
+ * pieces a zeroed range covers whole and writes zeroes in the rest, which is what allocates a piece there on ntfs.
+ */
+static uint64_t fs_sparse(MimeVm *vm, MimeFsHandle *fh, uint64_t op, uint64_t start, uint64_t end, uint64_t pa,
+                          uint64_t capacity, uint64_t *count)
+{
+    struct stat st;
+    if (fh->is_dir || fh->is_link || fstat(fh->fd, &st) != 0)
+        return MIME_HC_STATUS_INVALID;
+    uint64_t size = (uint64_t)st.st_size;
+    if (op == MIME_FS_SPARSE_FILL) {
+#ifdef __linux__
+        if (size && fallocate(fh->fd, FALLOC_FL_KEEP_SIZE, 0, (off_t)size) != 0 && errno != EOPNOTSUPP)
+            return errno_status(errno);
+#endif
+        return MIME_HC_STATUS_OK;
+    }
+    if (op == MIME_FS_SPARSE_ZERO || op == MIME_FS_SPARSE_PUNCH) {
+        if (end > size)
+            end = size;
+        if (start >= end)
+            return MIME_HC_STATUS_OK;
+        mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        uint64_t first = (start + MIME_FS_SPARSE_UNIT - 1) & ~(MIME_FS_SPARSE_UNIT - 1);
+        uint64_t last = end & ~(MIME_FS_SPARSE_UNIT - 1);
+        uint64_t status = MIME_HC_STATUS_OK;
+#ifdef __linux__
+        if (op == MIME_FS_SPARSE_PUNCH && first < last &&
+            fallocate(fh->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, (off_t)first, (off_t)(last - first)) == 0) {
+            status = write_zeroes(fh->fd, start, first);
+            if (status == MIME_HC_STATUS_OK)
+                status = write_zeroes(fh->fd, last, end);
+        } else
+#endif
+            status = write_zeroes(fh->fd, start, end);
+        mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        return status;
+    }
+    if (op != MIME_FS_SPARSE_RANGES)
+        return MIME_HC_STATUS_INVALID;
+    MimeFsRange *out = capacity ? mime_vm_phys(vm, pa, capacity * sizeof(MimeFsRange)) : nullptr;
+    if (capacity && !out)
+        return MIME_HC_STATUS_INVALID;
+    if (end > size)
+        end = size;
+    uint64_t n = 0, at = start;
+#ifdef __linux__
+    /* the extents the file has on the disk, preallocated ones too, which SEEK_DATA counts as holes. */
+    enum { EXTENTS = 64 };
+    struct {
+        struct fiemap map;
+        struct fiemap_extent extents[EXTENTS];
+    } f;
+    bool mapped = false;
+    while (at < end) {
+        memset(&f, 0, sizeof(f));
+        f.map.fm_start = at;
+        f.map.fm_length = end - at;
+        f.map.fm_flags = FIEMAP_FLAG_SYNC;
+        f.map.fm_extent_count = EXTENTS;
+        if (ioctl(fh->fd, FS_IOC_FIEMAP, &f.map) != 0)
+            break;
+        mapped = true;
+        if (!f.map.fm_mapped_extents)
+            break;
+        uint64_t stop = at;
+        for (uint32_t i = 0; i < f.map.fm_mapped_extents; i++) {
+            const struct fiemap_extent *e = &f.extents[i];
+            uint64_t a = e->fe_logical < at ? at : e->fe_logical, b = e->fe_logical + e->fe_length;
+            if (b > end)
+                b = end;
+            if (a < b) {
+                if (n && n <= capacity && out[n - 1].offset + out[n - 1].length == a)
+                    out[n - 1].length += b - a;
+                else {
+                    if (n < capacity)
+                        out[n] = (MimeFsRange){a, b - a};
+                    n++;
+                }
+            }
+            stop = e->fe_logical + e->fe_length;
+            if (e->fe_flags & FIEMAP_EXTENT_LAST)
+                stop = end;
+        }
+        if (stop <= at)
+            break;
+        at = stop;
+    }
+    if (mapped) {
+        *count = n;
+        return MIME_HC_STATUS_OK;
+    }
+    at = start;
+#endif
+    while (at < end) {
+        off_t data = lseek(fh->fd, (off_t)at, SEEK_DATA);
+        if (data < 0) {
+            if (errno == ENXIO)
+                break;
+            /* a host file system that cannot tell holes: all of it is data. */
+            if (n < capacity)
+                out[n] = (MimeFsRange){at, end - at};
+            n++;
+            break;
+        }
+        if ((uint64_t)data >= end)
+            break;
+        off_t hole = lseek(fh->fd, data, SEEK_HOLE);
+        uint64_t stop = hole < 0 || (uint64_t)hole > end ? end : (uint64_t)hole;
+        if (n < capacity)
+            out[n] = (MimeFsRange){(uint64_t)data, stop - (uint64_t)data};
+        n++;
+        at = stop;
+    }
+    *count = n;
     return MIME_HC_STATUS_OK;
 }
 
@@ -1352,15 +1496,6 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         MimeFsStat before = {};
         MimeFsTimes kept = {};
-        /* like ntfs, a file that is written is one to archive again. */
-        if (nr != MIME_HC_FS_READ && !fh->archived) {
-            fh->archived = true;
-            if (mime_fs_fstat(fh->fd, &before) == 0) {
-                mime_fs_times(fh->host_path, fh->fd, &before, &kept);
-                if (kept.has_attributes && !(kept.attributes & FILE_ATTRIBUTE_ARCHIVE))
-                    mime_fs_attributes_set(fh->host_path, fh->fd, kept.attributes | FILE_ATTRIBUTE_ARCHIVE);
-            }
-        }
         bool keeping = nr != MIME_HC_FS_READ && (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) &&
                        mime_fs_fstat(fh->fd, &before) == 0;
         if (keeping)
@@ -1505,6 +1640,11 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             }
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         }
+        break;
+    }
+    case MIME_HC_FS_SPARSE: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh ? fs_sparse(vm, fh, a[2], a[3], a[4], a[5], a[6], &regs[1]) : MIME_HC_STATUS_INVALID;
         break;
     }
     case MIME_HC_FS_SET_BASIC: {

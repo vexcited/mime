@@ -445,6 +445,34 @@ void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BO
     ExReleaseFastMutex(&g_lock);
 }
 
+/*
+ * for an answer that is kept elsewhere, the attributes a handle had at its open: TRUE with a token when the directory
+ * of the name is watched. FsAttrUnchanged then tells whether the answer still holds, as an entry here would.
+ */
+BOOLEAN FsAttrWatched(ULONG volume, PCUNICODE_STRING name, PLONG token)
+{
+    ULONG chars = name->Length / sizeof(WCHAR);
+    if (g_disabled || !chars || chars > 400)
+        return FALSE;
+    ULONG dir = parent_chars(name->Buffer, chars);
+    ExAcquireFastMutex(&g_lock);
+    BOOLEAN watched = watch_of(volume, name->Buffer, dir, hash_of(name->Buffer, dir)) >= 0;
+    *token = g_seq;
+    ExReleaseFastMutex(&g_lock);
+    return watched;
+}
+
+BOOLEAN FsAttrUnchanged(ULONG volume, PCUNICODE_STRING name, LONG token)
+{
+    ULONG chars = name->Length / sizeof(WCHAR);
+    ULONG dir = parent_chars(name->Buffer, chars);
+    ExAcquireFastMutex(&g_lock);
+    BOOLEAN same = watch_of(volume, name->Buffer, dir, hash_of(name->Buffer, dir)) >= 0 &&
+                   !crossed(volume, hash_of(name->Buffer, chars), token);
+    ExReleaseFastMutex(&g_lock);
+    return same;
+}
+
 BOOLEAN FsAttrIsHostWatch(ULONG id)
 {
     return id > MIME_FS_WATCH_ID_ATTRIBUTES;

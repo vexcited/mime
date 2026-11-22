@@ -1881,6 +1881,8 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
 void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token);
 void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow);
 BOOLEAN FsAttrIsHostWatch(ULONG id);
+BOOLEAN FsAttrWatched(ULONG volume, PCUNICODE_STRING name, PLONG token);
+BOOLEAN FsAttrUnchanged(ULONG volume, PCUNICODE_STRING name, LONG token);
 /* fsnotify.c: starts the thread that fetches changes made by host programs. */
 void FsNotifyHostStart(void);
 void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter);

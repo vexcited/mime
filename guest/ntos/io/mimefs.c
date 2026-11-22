@@ -56,9 +56,14 @@ typedef struct MIMEFS_FCB {
     LONGLONG LastTouch;   /* when a read last set the access time. */
     BOOLEAN StatOnly;    /* answers one query by name: no host handle, OpenInfo is the answer. */
     MimeFsInfo OpenInfo; /* what the host reported at open. */
+    BOOLEAN OpenInfoWatched; /* OpenInfo answers queries while FsAttrUnchanged says so, see query. */
+    LONG OpenInfoToken;
+    LONGLONG OpenInfoTime;
+    PFILE_OBJECT OpenFile;
     BOOLEAN Directory;
     BOOLEAN Link;         /* opened as the symbolic link or junction itself, which has no data. */
     ACCESS_MASK Access;   /* what the handle was given. */
+    BOOLEAN Modified;     /* written through this handle: its last cleanup marks the file for archiving, as ntfs. */
     BOOLEAN DeleteOnClose;
     BOOLEAN DotsDone;
     UCHAR DotIndex;
@@ -152,6 +157,16 @@ static BOOLEAN share_would_allow(ULONG volume, ULONG64 file_id, UCHAR bits)
     BOOLEAN allowed = share_allows(*share_slot(volume, file_id), bits);
     ExReleaseFastMutex(&g_share_lock);
     return allowed;
+}
+
+/* whether an open of the file may write it. */
+static BOOLEAN share_writers(ULONG volume, ULONG64 file_id)
+{
+    ExAcquireFastMutex(&g_share_lock);
+    SHARE_FILE *f = *share_slot(volume, file_id);
+    BOOLEAN writers = f && f->Writers;
+    ExReleaseFastMutex(&g_share_lock);
+    return writers;
 }
 
 /* counts the open of the file, or refuses it. */
@@ -453,6 +468,10 @@ typedef struct MIMEFS_WINDOW_REF {
 } MIMEFS_WINDOW_REF;
 
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info);
+#define FILE_ATTRIBUTE_SPARSE_FILE 0x00000200
+static NTSTATUS current_attributes(MIMEFS_FCB *fcb, ULONG *attributes);
+static void add_attributes(PFILE_OBJECT file, MIMEFS_FCB *fcb, ULONG attributes);
+static ULONG64 compressed_size(MIMEFS_FCB *fcb, const MimeFsInfo *info);
 
 BOOLEAN IoFileIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id)
 {
@@ -614,6 +633,9 @@ NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_h
     return STATUS_SUCCESS;
 }
 
+/* as long as the attribute cache would keep an answer of the host, see io/fsattr.c. */
+#define OPEN_INFO_LIFE 5000000ll
+
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
 {
     if (fcb->Rom) {
@@ -623,6 +645,20 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
     if (fcb->StatOnly) {
         *info = fcb->OpenInfo;
         return STATUS_SUCCESS;
+    }
+    /*
+     * a handle that only reads, of a file nobody writes, in a watched directory, is answered from its open for a
+     * while: every change the guest or a host program makes to the name is told to the attribute cache.
+     */
+    if (fcb->OpenInfoWatched) {
+        if ((LONGLONG)KeQueryInterruptTime() - fcb->OpenInfoTime <= OPEN_INFO_LIFE && fcb->Cache &&
+            !share_writers(fcb->Volume, fcb->FileId) && FsAttrUnchanged(fcb->Volume, &fcb->OpenFile->FileName, fcb->OpenInfoToken)) {
+            *info = fcb->OpenInfo;
+            if ((info->attributes & FILE_ATTRIBUTE_SPARSE_FILE) && !(info->attributes & FILE_ATTRIBUTE_DIRECTORY))
+                info->allocation_size = compressed_size(fcb, info);
+            return STATUS_SUCCESS;
+        }
+        fcb->OpenInfoWatched = FALSE;
     }
     /*
      * other handles flush their buffers for the file first; this one's is counted in. what it holds is taken before
@@ -636,6 +672,9 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         if (info->allocation_size < info->size)
             info->allocation_size = (info->size + 4095) & ~4095ull;
     }
+    /* what a sparse file has allocated is what its data ranges cover, as ntfs counts it, not the host's blocks. */
+    if (NT_SUCCESS(status) && (info->attributes & FILE_ATTRIBUTE_SPARSE_FILE) && !(info->attributes & FILE_ATTRIBUTE_DIRECTORY))
+        info->allocation_size = compressed_size(fcb, info);
     return status;
 }
 
@@ -893,26 +932,31 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
      * a name asked about lately is answered from io/fsattr.c. otherwise the host is asked, and the answer is kept if
      * the directory is watched for host changes.
      */
-    BOOLEAN keep = FALSE;
-    LONG keep_token = 0;
+    BOOLEAN keep = FALSE, info_watched = FALSE;
+    LONG keep_token = 0, info_token = 0;
     ULONG64 hs;
     ACCESS_MASK granted = access;
     BOOLEAN checked = FALSE;
-    if (stat_only && !check && disposition == FILE_OPEN && !(options & (FILE_DIRECTORY_FILE | FILE_NON_DIRECTORY_FILE))) {
+    /* a plain open of a name known to be missing fails the same way, and its answer is kept when it is missing. */
+    if (disposition == FILE_OPEN && !by_id) {
         BOOLEAN missing;
         MimeFsInfo known;
+        BOOLEAN plain = stat_only && !check && !(options & (FILE_DIRECTORY_FILE | FILE_NON_DIRECTORY_FILE));
         if (FsAttrLookup(vol->HostVolume, &file->FileName, &missing, &known)) {
             if (missing) {
                 ExFreePool(req);
                 return complete(irp, host_status(MIME_HC_STATUS_NOT_FOUND, FALSE), 0);
             }
-            req->info_out = known;
-            req->handle_out = 0;
-            req->action_out = FILE_OPENED;
-            hs = MIME_HC_STATUS_OK;
-            goto opened;
+            if (plain) {
+                req->info_out = known;
+                req->handle_out = 0;
+                req->action_out = FILE_OPENED;
+                hs = MIME_HC_STATUS_OK;
+                goto opened;
+            }
+        } else {
+            keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
         }
-        keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
     }
     /* buffered writes for this name are flushed before the host looks at its size, time, or truncates it. */
     if (!by_id)
@@ -986,6 +1030,9 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
             FsCacheInvalidate(vol->HostVolume, id);
         }
     }
+    /* taken before the host looks, so a change made meanwhile is seen. */
+    info_watched = !by_id && !stat_only && !(req->flags & MIME_FS_OPEN_WRITE) &&
+                   FsAttrWatched(vol->HostVolume, &file->FileName, &info_token);
 reopen:
     hs = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
 opened:
@@ -994,6 +1041,7 @@ opened:
         BOOLEAN missing = hs == MIME_HC_STATUS_NOT_FOUND && req->action_out == 0;
         FsAttrKeep(vol->HostVolume, &file->FileName, found ? ATTR_KEEP_FILE : missing ? ATTR_KEEP_MISSING : ATTR_KEEP_NOTHING,
                    &req->info_out, keep_token);
+        keep = FALSE;
     }
     if (hs == MIME_HC_STATUS_REPARSE) {
         ULONG tag = req->reparse_tag;
@@ -1094,6 +1142,13 @@ opened:
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         else
             fcb->Cache = FsCacheOpen(fcb->Volume, &opened);
+        if (fcb->Cache && !(granted & (FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) &&
+            opened.links <= 1 && !(file->Flags & FO_DELETE_ON_CLOSE)) {
+            fcb->OpenInfoWatched = info_watched;
+            fcb->OpenInfoToken = info_token;
+            fcb->OpenInfoTime = (LONGLONG)KeQueryInterruptTime();
+            fcb->OpenFile = file;
+        }
     }
     fcb->IsRoot = chars == 0 || (chars == 1 && file->FileName.Buffer[0] == '\\');
     fcb->DeleteOnClose = (file->Flags & FO_DELETE_ON_CLOSE) != 0;
@@ -1122,6 +1177,14 @@ opened:
             HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, host, HalPhysicalOf(change), 0, 0, 0, 0, nullptr);
             ExFreePool(change);
         }
+    } else if ((action == FILE_OVERWRITTEN || action == FILE_SUPERSEDED) && !fcb->Directory) {
+        /*
+         * measured on ntfs in scratch/bits/wire: an overwrite keeps the attributes the file had and adds those asked and
+         * the archive one.
+         */
+        ULONG asked = stack->Parameters.Create.FileAttributes &
+                      (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_TEMPORARY);
+        add_attributes(file, fcb, asked | FILE_ATTRIBUTE_ARCHIVE);
     }
     if (fcb->Directory)
         file->Flags |= FO_DIRECTORY_FILE;
@@ -1137,9 +1200,11 @@ opened:
     if (action == FILE_CREATED)
         FsNotifyReport(vol->HostVolume, &file->FileName, FILE_ACTION_ADDED,
                        fcb->Directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);
-    else if (action == FILE_OVERWRITTEN || action == FILE_SUPERSEDED)
+    else if (action == FILE_OVERWRITTEN || action == FILE_SUPERSEDED) {
         FsNotifyReport(vol->HostVolume, &file->FileName, FILE_ACTION_MODIFIED,
                        FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
+        SeForgetSigningLevel(fcb->FileId);
+    }
     return complete(irp, STATUS_SUCCESS, action);
 }
 
@@ -1152,6 +1217,8 @@ static NTSTATUS NTAPI mimefs_cleanup(PDEVICE_OBJECT device, PIRP irp)
     /* the last handle is closing: flush its buffer before anything can look at the file again. */
     if (fcb && !fcb->Rom && !fcb->Directory)
         FsWbClose(&fcb->Wb);
+    if (fcb && fcb->Modified && !fcb->Rom && !fcb->Directory)
+        add_attributes(file, fcb, FILE_ATTRIBUTE_ARCHIVE);
     /* and the open no longer stands in the way of others. */
     if (fcb && !fcb->Rom)
         share_close(fcb);
@@ -1180,9 +1247,11 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         if (fcb->DeleteOnClose) {
             ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr);
-            if (hs == MIME_HC_STATUS_OK)
+            if (hs == MIME_HC_STATUS_OK) {
                 FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_REMOVED,
                                fcb->Directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);
+                SeForgetSigningLevel(fcb->FileId);
+            }
         }
         if (fcb->HostHandle)
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
@@ -1444,6 +1513,8 @@ static NTSTATUS NTAPI read_write(PDEVICE_OBJECT device, PIRP irp)
     PUCHAR user = irp->UserBuffer;
     if (!length)
         return complete(irp, STATUS_SUCCESS, 0);
+    if (write)
+        fcb->Modified = TRUE;
     if (fcb->Rom) {
         if (write)
             return complete(irp, STATUS_ACCESS_DENIED, 0);
@@ -1705,6 +1776,15 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
         ((PFILE_ATTRIBUTE_TAG_INFORMATION)out)->ReparseTag =
             (info->attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? info->reparse_tag : 0;
         written = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
+        break;
+    case 28: /* FileCompressionInformation: no compression, the size on the disk. */
+        if (length < 16) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        memset(out, 0, 16);
+        ((PLARGE_INTEGER)out)->QuadPart = (LONGLONG)(fcb->Directory ? 0 : compressed_size(fcb, info));
+        written = 16;
         break;
     case FileEaInformation:
         if (length < sizeof(ULONG)) {
@@ -2091,24 +2171,38 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         if (length < sizeof(LARGE_INTEGER))
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
         ULONG64 size = (ULONG64)((PFILE_END_OF_FILE_INFORMATION)in)->EndOfFile.QuadPart;
-        if (stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation)
-            return complete(irp, STATUS_SUCCESS, 0);
-        /* like windows, a file with a section in use is not truncated: a view would read what is gone, and when
-           the pages are the host's that is a fault the host cannot take. */
-        if (FsWbIsMapped(fcb->Volume, fcb->FileId)) {
+        BOOLEAN allocation = stack->Parameters.SetFile.FileInformationClass == FileAllocationInformation;
+        /*
+         * an allocation below the end of the file cuts the file there, as on ntfs: kernelbase's TRUNCATE_EXISTING is an
+         * open and an allocation of 0. one at or past the end leaves the data as it is.
+         */
+        if (allocation || FsWbIsMapped(fcb->Volume, fcb->FileId)) {
+            FsWbSync(&fcb->Wb);
             MimeFsInfo *current = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*current), KI_TAG('M', 'f', 'I', 'n'));
-            BOOLEAN shorter = current && NT_SUCCESS(query(fcb, current)) && size < current->size;
-            if (current)
-                ExFreePool(current);
-            if (shorter)
+            if (!current)
+                return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+            NTSTATUS known = query(fcb, current);
+            BOOLEAN shorter = NT_SUCCESS(known) && size < current->size;
+            ExFreePool(current);
+            if (allocation && (!NT_SUCCESS(known) || !shorter)) {
+                if (NT_SUCCESS(known))
+                    add_attributes(stack->FileObject, fcb, FILE_ATTRIBUTE_ARCHIVE);
+                return complete(irp, known, 0);
+            }
+            /* like windows, a file with a section in use is not truncated: a view would read what is gone, and when
+               the pages are the host's that is a fault the host cannot take. */
+            if (shorter && FsWbIsMapped(fcb->Volume, fcb->FileId))
                 return complete(irp, STATUS_USER_MAPPED_FILE, 0);
         }
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
         FsWbSync(&fcb->Wb);
         ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_SET_SIZE, fcb->HostHandle, size, 0, 0, 0, 0, nullptr);
-        if (hs == MIME_HC_STATUS_OK)
+        if (hs == MIME_HC_STATUS_OK) {
+            /* a size that changes marks the file for archiving at once, as on ntfs. */
+            add_attributes(stack->FileObject, fcb, FILE_ATTRIBUTE_ARCHIVE);
             FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
                            FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
+        }
         return complete(irp, host_status(hs, FALSE), 0);
     }
     case FileDispositionInformation:
@@ -2145,6 +2239,9 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         MimeFsSecurityChanged();
         NTSTATUS status = rename_in_directory(device, file, fcb, stack, in, length);
         MimeFsSecurityChanged();
+        /* ntfs marks a file it renames for archiving, not a directory. */
+        if (NT_SUCCESS(status) && !fcb->Directory)
+            add_attributes(file, fcb, FILE_ATTRIBUTE_ARCHIVE);
         if (NT_SUCCESS(status) && from.Buffer)
             FsNotifyRename(fcb->Volume, &from, &file->FileName, fcb->Directory);
         ExFreePool(from.Buffer);
@@ -2187,8 +2284,12 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
                 change->thaw |= times[i].Time;
             }
         }
+        /* the sparse attribute is FSCTL_SET_SPARSE's: a program's attributes neither set nor clear it. */
         if (basic->FileAttributes) {
-            change->attributes = basic->FileAttributes;
+            ULONG now = 0;
+            if (!fcb->StatOnly && !fcb->Directory)
+                current_attributes(fcb, &now);
+            change->attributes = (basic->FileAttributes & ~FILE_ATTRIBUTE_SPARSE_FILE) | (now & FILE_ATTRIBUTE_SPARSE_FILE);
             change->mask |= MIME_FS_BASIC_READONLY;
         }
         NTSTATUS status = STATUS_SUCCESS;
@@ -2313,7 +2414,7 @@ static void write_entry(PUCHAR out, FILE_INFORMATION_CLASS klass, const MimeFsIn
 }
 
 /* the host lists a directory several entries per call, instead of one call per entry. */
-#define DIR_BATCH 16
+#define DIR_BATCH 64
 
 static BOOLEAN host_dir_entry(MIMEFS_FCB *fcb, ULONG index, MimeFsDirEntry *out)
 {
@@ -2483,7 +2584,7 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         ULONG need = 12 + sizeof(fs) - sizeof(WCHAR);
         if (length < 12)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        ((PULONG)out)[0] = 0x00000003 | 0x00000004 | 0x00000002; /* case preserved, unicode names. */
+        ((PULONG)out)[0] = 0x00000003 | 0x00000004 | 0x00000002 | 0x00000040; /* case preserved, unicode names, sparse files. */
         if (vol->DriveFlags & MIME_FS_DRIVE_READ_ONLY)
             ((PULONG)out)[0] |= FILE_READ_ONLY_VOLUME;
         ((PULONG)out)[1] = 255;
@@ -2900,7 +3001,10 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_SUCCESS, need);
     }
     default:
-        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        /* ntfs sends a control it does not know down the stack of the volume only for the volume itself, a handle of
+         * a file or directory gets STATUS_INVALID_PARAMETER, measured with gatt.c of scratch/g2/bth. */
+        return complete(irp, stack->FileObject->FileName.Length ? STATUS_INVALID_PARAMETER : STATUS_INVALID_DEVICE_REQUEST,
+                        0);
     }
 }
 
@@ -3249,7 +3353,8 @@ static NTSTATUS query_usn_journal(PIRP irp, MIMEFS_VOLUME *vol, ULONG length)
     d.FirstUsn = 0;
     d.NextUsn = 0x10000000ll + (LONG64)writes * 0x60;
     d.LowestValidUsn = 0;
-    d.MaxUsn = 0x7FFFFFFFFFFF0000ll;
+    /* measured on windows 11 26100: ntfs tells this end for a journal of 32 megabytes. */
+    d.MaxUsn = 0x00000FFFFFFF0000ll;
     d.MaximumSize = 0x2000000;
     d.AllocationDelta = 0x800000;
     d.MinSupportedMajorVersion = 2;
@@ -3352,6 +3457,260 @@ static NTSTATUS object_id(PIRP irp, MIMEFS_VOLUME *vol, PFILE_OBJECT file, ULONG
     return complete(irp, STATUS_SUCCESS, 64);
 }
 
+#define FSCTL_SET_SPARSE_ 0x000900C4
+
+typedef struct FILE_ALLOCATED_RANGE_BUFFER {
+    LARGE_INTEGER FileOffset;
+    LARGE_INTEGER Length;
+} FILE_ALLOCATED_RANGE_BUFFER;
+#define FSCTL_SET_ZERO_DATA_ 0x000980C8
+#define FSCTL_QUERY_ALLOCATED_RANGES_ 0x000940CF
+
+static ULONG64 sparse_call(MIMEFS_FCB *fcb, ULONG64 op, ULONG64 start, ULONG64 end, PVOID out, ULONG64 capacity,
+                           ULONG64 *count)
+{
+    return HalHypercallUnlocked(MIME_HC_FS_SPARSE, fcb->HostHandle, op, start, end, out ? HalPhysicalOf(out) : 0,
+                                capacity, count);
+}
+
+/* the attributes of the file as the host keeps them now. */
+static NTSTATUS current_attributes(MIMEFS_FCB *fcb, ULONG *attributes)
+{
+    MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('M', 'f', 'S', 'p'));
+    if (!info)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    NTSTATUS status = query(fcb, info);
+    *attributes = info->attributes;
+    ExFreePool(info);
+    return status;
+}
+
+/* the attributes a file has, with some more: none goes away. */
+static void add_attributes(PFILE_OBJECT file, MIMEFS_FCB *fcb, ULONG attributes)
+{
+    static const ULONG kept = FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
+                              FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_SPARSE_FILE |
+                              0x1000 /* offline */ | 0x2000 /* not content indexed */;
+    ULONG now = 0;
+    if (fcb->Rom || fcb->StatOnly || !fcb->HostHandle || !NT_SUCCESS(current_attributes(fcb, &now)))
+        return;
+    ULONG wanted = (now & kept) | attributes;
+    if (wanted == (now & kept) && !(now & FILE_ATTRIBUTE_NORMAL))
+        return;
+    MimeFsBasic *change = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*change), KI_TAG('M', 'f', 'B', 's'));
+    if (!change)
+        return;
+    memset(change, 0, sizeof(*change));
+    change->attributes = wanted;
+    change->mask = MIME_FS_BASIC_READONLY;
+    if (NT_SUCCESS(host_status(HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, fcb->HostHandle, HalPhysicalOf(change), 0, 0,
+                                                    0, 0, nullptr),
+                               FALSE))) {
+        fcb->OpenInfo.attributes = wanted;
+        FsAttrChanged(fcb->Volume, file->FileName.Buffer, file->FileName.Length / sizeof(WCHAR), FALSE);
+    }
+    ExFreePool(change);
+}
+
+/*
+ * FSCTL_SET_SPARSE, measured in scratch/sparse on windows 11: a handle that writes data or attributes, a file and not a
+ * directory, and a FILE_SET_SPARSE_BUFFER or nothing, which sets. a file that stops or starts being sparse is whole,
+ * as a file that is not sparse always is on ntfs.
+ */
+static NTSTATUS set_sparse(PIRP irp, PFILE_OBJECT file, MIMEFS_FCB *fcb, ULONG in_length)
+{
+    if (KeGetPreviousMode() == UserMode && !(fcb->Access & (FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES)))
+        return STATUS_ACCESS_DENIED;
+    if (fcb->Directory)
+        return STATUS_INVALID_PARAMETER;
+    if (fcb->Rom || fcb->StatOnly || !fcb->HostHandle)
+        return STATUS_ACCESS_DENIED;
+    BOOLEAN sparse = in_length ? *(const BOOLEAN *)irp->AssociatedIrp.SystemBuffer != FALSE : TRUE;
+    ULONG attributes;
+    NTSTATUS status = current_attributes(fcb, &attributes);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (!!(attributes & FILE_ATTRIBUTE_SPARSE_FILE) == sparse)
+        return STATUS_SUCCESS;
+    FsWbSync(&fcb->Wb);
+    status = host_status(sparse_call(fcb, MIME_FS_SPARSE_FILL, 0, 0, nullptr, 0, nullptr), FALSE);
+    if (!NT_SUCCESS(status))
+        return status;
+    MimeFsBasic *change = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*change), KI_TAG('M', 'f', 'B', 's'));
+    if (!change)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(change, 0, sizeof(*change));
+    change->attributes = sparse ? attributes | FILE_ATTRIBUTE_SPARSE_FILE : attributes & ~FILE_ATTRIBUTE_SPARSE_FILE;
+    change->mask = MIME_FS_BASIC_READONLY;
+    status = host_status(HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, fcb->HostHandle, HalPhysicalOf(change), 0, 0, 0, 0,
+                                              nullptr), FALSE);
+    ExFreePool(change);
+    if (NT_SUCCESS(status))
+        FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_MODIFIED, FILE_NOTIFY_CHANGE_ATTRIBUTES);
+    return status;
+}
+
+/* FSCTL_SET_ZERO_DATA: zeroes up to the end of the file and no further; a sparse file gives back its whole pieces. */
+static NTSTATUS set_zero_data(PIRP irp, PFILE_OBJECT file, MIMEFS_FCB *fcb, ULONG in_length)
+{
+    if (in_length < sizeof(LARGE_INTEGER) * 2)
+        return STATUS_INVALID_PARAMETER;
+    const LARGE_INTEGER *z = irp->AssociatedIrp.SystemBuffer;
+    if (z[0].QuadPart < 0 || z[1].QuadPart < z[0].QuadPart)
+        return STATUS_INVALID_PARAMETER;
+    if (fcb->Directory)
+        return STATUS_INVALID_PARAMETER;
+    if (fcb->Rom || fcb->StatOnly || !fcb->HostHandle)
+        return STATUS_ACCESS_DENIED;
+    ULONG attributes;
+    NTSTATUS status = current_attributes(fcb, &attributes);
+    if (!NT_SUCCESS(status))
+        return status;
+    FsWbSyncOthers(&fcb->Wb);
+    FsWbSync(&fcb->Wb);
+    ULONG64 op = attributes & FILE_ATTRIBUTE_SPARSE_FILE ? MIME_FS_SPARSE_PUNCH : MIME_FS_SPARSE_ZERO;
+    status = host_status(sparse_call(fcb, op, (ULONG64)z[0].QuadPart, (ULONG64)z[1].QuadPart, nullptr, 0, nullptr),
+                         FALSE);
+    if (NT_SUCCESS(status))
+        FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_MODIFIED, FILE_NOTIFY_CHANGE_LAST_WRITE);
+    return status;
+}
+
+/*
+ * the ranges of a sparse file that hold data, in the pieces of 64 KiB ntfs allocates and cut at the end of the file; a
+ * file that is not sparse is one range. the answer is within the asked range, and an output too small for all of them
+ * is a partial one.
+ */
+static NTSTATUS sparse_ranges(MIMEFS_FCB *fcb, ULONG64 start, ULONG64 end, ULONG64 size, BOOLEAN sparse,
+                              FILE_ALLOCATED_RANGE_BUFFER *out, ULONG room, ULONG *written)
+{
+    *written = 0;
+    if (end > size)
+        end = size;
+    if (start >= end)
+        return STATUS_SUCCESS;
+    if (!sparse) {
+        out[0].FileOffset.QuadPart = (LONGLONG)start;
+        out[0].Length.QuadPart = (LONGLONG)(end - start);
+        *written = 1;
+        return STATUS_SUCCESS;
+    }
+    enum { BATCH = 64 };
+    MimeFsRange *host = ExAllocatePool2(POOL_FLAG_NON_PAGED, BATCH * sizeof(MimeFsRange), KI_TAG('M', 'f', 'S', 'r'));
+    if (!host)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG64 unit = MIME_FS_SPARSE_UNIT, at = start & ~(unit - 1);
+    ULONG n = 0;
+    NTSTATUS status = STATUS_SUCCESS;
+    LONGLONG open_start = -1, open_end = -1;
+    while (at < end && NT_SUCCESS(status)) {
+        ULONG64 count = 0;
+        status = host_status(sparse_call(fcb, MIME_FS_SPARSE_RANGES, at, size, host, BATCH, &count), FALSE);
+        if (!NT_SUCCESS(status) || !count)
+            break;
+        ULONG64 got = count < BATCH ? count : BATCH;
+        for (ULONG64 i = 0; i < got; i++) {
+            ULONG64 a = host[i].offset & ~(unit - 1), b = (host[i].offset + host[i].length + unit - 1) & ~(unit - 1);
+            if (b > size)
+                b = size;
+            if (open_end >= 0 && (LONGLONG)a <= open_end) {
+                if ((LONGLONG)b > open_end)
+                    open_end = (LONGLONG)b;
+                continue;
+            }
+            if (open_end >= 0) {
+                ULONG64 s = (ULONG64)open_start < start ? start : (ULONG64)open_start;
+                ULONG64 e = (ULONG64)open_end > end ? end : (ULONG64)open_end;
+                if (s < e) {
+                    if (n == room) {
+                        status = STATUS_BUFFER_OVERFLOW;
+                        break;
+                    }
+                    out[n].FileOffset.QuadPart = (LONGLONG)s;
+                    out[n++].Length.QuadPart = (LONGLONG)(e - s);
+                }
+            }
+            open_start = (LONGLONG)a;
+            open_end = (LONGLONG)b;
+        }
+        at = host[got - 1].offset + host[got - 1].length;
+        if (count <= BATCH)
+            break;
+    }
+    if (NT_SUCCESS(status) && open_end >= 0) {
+        ULONG64 s = (ULONG64)open_start < start ? start : (ULONG64)open_start;
+        ULONG64 e = (ULONG64)open_end > end ? end : (ULONG64)open_end;
+        if (s < e) {
+            if (n == room)
+                status = STATUS_BUFFER_OVERFLOW;
+            else {
+                out[n].FileOffset.QuadPart = (LONGLONG)s;
+                out[n++].Length.QuadPart = (LONGLONG)(e - s);
+            }
+        }
+    }
+    ExFreePool(host);
+    *written = n;
+    return status;
+}
+
+static NTSTATUS query_allocated_ranges(PIRP irp, MIMEFS_FCB *fcb, ULONG in_length, ULONG length)
+{
+    if (in_length < sizeof(FILE_ALLOCATED_RANGE_BUFFER))
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    FILE_ALLOCATED_RANGE_BUFFER *buffer = irp->AssociatedIrp.SystemBuffer;
+    LONGLONG offset = buffer->FileOffset.QuadPart, span = buffer->Length.QuadPart;
+    if (offset < 0 || span < 0 || offset + span < offset)
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    if (length < sizeof(FILE_ALLOCATED_RANGE_BUFFER))
+        return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+    if (fcb->Directory)
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('M', 'f', 'S', 'q'));
+    if (!info)
+        return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    NTSTATUS status = query(fcb, info);
+    ULONG64 size = info->size;
+    BOOLEAN sparse = (info->attributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0;
+    ExFreePool(info);
+    if (!NT_SUCCESS(status))
+        return complete(irp, status, 0);
+    if (sparse && !fcb->Rom && fcb->HostHandle) {
+        FsWbSyncOthers(&fcb->Wb);
+        FsWbSync(&fcb->Wb);
+    }
+    ULONG room = length / sizeof(FILE_ALLOCATED_RANGE_BUFFER), n = 0;
+    FILE_ALLOCATED_RANGE_BUFFER *out = ExAllocatePool2(POOL_FLAG_NON_PAGED, room * sizeof(*out), KI_TAG('M', 'f', 'S', 'o'));
+    if (!out)
+        return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    status = sparse_ranges(fcb, (ULONG64)offset, (ULONG64)(offset + span), size, sparse && !fcb->Rom, out, room, &n);
+    memcpy(irp->AssociatedIrp.SystemBuffer, out, n * sizeof(*out));
+    ExFreePool(out);
+    return complete(irp, status, n * sizeof(FILE_ALLOCATED_RANGE_BUFFER));
+}
+
+/* the bytes a file holds on the disk: what its data ranges allocate when it is sparse, else its size. */
+static ULONG64 compressed_size(MIMEFS_FCB *fcb, const MimeFsInfo *info)
+{
+    if (!(info->attributes & FILE_ATTRIBUTE_SPARSE_FILE) || fcb->Rom || !fcb->HostHandle)
+        return info->size;
+    FILE_ALLOCATED_RANGE_BUFFER *out = ExAllocatePool2(POOL_FLAG_NON_PAGED, 64 * sizeof(*out), KI_TAG('M', 'f', 'S', 'c'));
+    if (!out)
+        return info->size;
+    ULONG64 total = 0, at = 0;
+    for (;;) {
+        ULONG n = 0;
+        NTSTATUS status = sparse_ranges(fcb, at, info->size, info->size, TRUE, out, 64, &n);
+        for (ULONG i = 0; i < n; i++)
+            total += (ULONG64)out[i].Length.QuadPart;
+        if (status != STATUS_BUFFER_OVERFLOW || !n)
+            break;
+        at = (ULONG64)(out[n - 1].FileOffset.QuadPart + out[n - 1].Length.QuadPart);
+    }
+    ExFreePool(out);
+    return total;
+}
+
 static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -3374,6 +3733,18 @@ static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
         else
             status = reparse_get(irp, fcb, length, &written);
         return complete(irp, status, written);
+    }
+    if (code == FSCTL_SET_SPARSE_ || code == FSCTL_SET_ZERO_DATA_ || code == FSCTL_QUERY_ALLOCATED_RANGES_) {
+        PFILE_OBJECT file = stack->FileObject;
+        MIMEFS_FCB *fcb = file->FsContext;
+        if (!fcb)
+            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+        ULONG in_length = stack->Parameters.DeviceIoControl.InputBufferLength;
+        if (code == FSCTL_QUERY_ALLOCATED_RANGES_)
+            return query_allocated_ranges(irp, fcb, in_length, length);
+        NTSTATUS status = code == FSCTL_SET_SPARSE_ ? set_sparse(irp, file, fcb, in_length)
+                                                    : set_zero_data(irp, file, fcb, in_length);
+        return complete(irp, status, 0);
     }
     switch (code) {
     case FSCTL_FILESYSTEM_GET_STATISTICS:

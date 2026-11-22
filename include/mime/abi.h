@@ -592,6 +592,7 @@ enum {
     MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
     MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */
     MIME_HC_FS_DELETE_REPARSE = 0x6B, /* handle and the tag the guest expects: the link becomes the empty file or directory it was made from. */
+    MIME_HC_FS_SPARSE = 0x71,    /* handle, MIME_FS_SPARSE_* op, start, end, pa and capacity in MimeFsRange entries: allocates the holes of the file, zeroes a range of it, punching what whole MIME_FS_SPARSE_UNIT pieces it covers when the op says so, or lists the ranges that hold data and returns their count. */
     MIME_HC_FS_OBJECT_ID = 0x6F, /* handle, pa of 16 bytes and create: the object id stored with the file. with create, the bytes at pa are stored when it has none. MIME_HC_STATUS_NOT_FOUND for a file without one, MIME_HC_STATUS_INVALID where none can be stored. */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
@@ -1109,6 +1110,18 @@ typedef struct MimeFsLinkName {
     uint64_t parent_id; /* file id of the directory the name is in. */
     uint16_t name[];    /* the last component, not terminated. */
 } MimeFsLinkName;
+
+/* the ops of MIME_HC_FS_SPARSE, and the piece a sparse file is allocated in, as ntfs does. */
+#define MIME_FS_SPARSE_FILL 0u
+#define MIME_FS_SPARSE_ZERO 1u
+#define MIME_FS_SPARSE_PUNCH 2u
+#define MIME_FS_SPARSE_RANGES 3u
+#define MIME_FS_SPARSE_UNIT 65536ull
+
+typedef struct MimeFsRange {
+    uint64_t offset;
+    uint64_t length;
+} MimeFsRange;
 
 typedef struct MimeFsInfo {
     uint64_t size;
