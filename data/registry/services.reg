@@ -468,3 +468,84 @@
 [HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Security]
 "Security"=hex:01,00,14,80,a4,00,00,00,b0,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,01,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,74,00,05,00,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,0b,00,00,00,00,00,18,00,fd,01,02,00,01,02,00,00,00,00,00,05,20,00,00,00,2c,02,00,00,00,00,18,00,ff,01,0f,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,02,01,00,00,00,00,00,14,00,fd,01,02,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
 
+; the microsoft passport service, mime's own ngcsvc.dll in svchost -k LocalSystemNetworkRestricted, as windows 11
+; registers it: started when a client asks the endpoint mapper for one of its rpc interfaces. mime serves the first, the
+; key storage interface of the passport key storage provider.
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc]
+"DependOnService"=multi:"RpcSs"
+"Description"="Provides process isolation for cryptographic keys used to authenticate to a user's associated identity providers. If this service is disabled, all uses and management of these keys will not be available, which includes machine logon and single-sign on for apps and websites. This service starts and stops automatically. It is recommended that you do not reconfigure this service."
+"DisplayName"="Microsoft Passport"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:84,03,00,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,e8,03,00,00,01,00,00,00,10,27,00,00,00,00,00,00,00,00,00,00
+"Group"="Cryptography"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalSystemNetworkRestricted -p"
+"ObjectName"="LocalSystem"
+"RequiredPrivileges"=multi:"SeImpersonatePrivilege","SeTcbPrivilege","SeTakeOwnershipPrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000003
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\ngcsvc.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+"ServiceMain"="NgcServiceMain"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\Security]
+"Security"=hex:01,00,14,80,90,00,00,00,9c,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,00,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,60,00,04,00,00,00,00,00,14,00,85,00,02,00,01,01,00,00,00,00,00,05,0b,00,00,00,00,00,14,00,ff,00,0e,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,9d,00,0e,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,18,00,85,00,00,00,01,02,00,00,00,00,00,05,20,00,00,00,21,02,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\0]
+"Action"=dword:00000001
+"Data0"=hex:30,00,65,00,33,00,61,00,65,00,30,00,39,00,35,00,2d,00,38,00,61,00,32,00,33,00,2d,00,34,00,38,00,66,00,34,00,2d,00,39,00,37,00,38,00,32,00,2d,00,30,00,33,00,63,00,31,00,35,00,39,00,34,00,61,00,38,00,39,00,30,00,65,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\1]
+"Action"=dword:00000001
+"Data0"=hex:63,00,32,00,32,00,35,00,65,00,37,00,39,00,39,00,2d,00,32,00,39,00,64,00,65,00,2d,00,34,00,32,00,61,00,66,00,2d,00,62,00,63,00,30,00,35,00,2d,00,31,00,65,00,32,00,31,00,32,00,37,00,63,00,63,00,30,00,35,00,36,00,65,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\2]
+"Action"=dword:00000001
+"Data0"=hex:64,00,39,00,38,00,34,00,34,00,65,00,64,00,39,00,2d,00,66,00,37,00,32,00,61,00,2d,00,34,00,37,00,34,00,35,00,2d,00,61,00,34,00,61,00,31,00,2d,00,65,00,65,00,37,00,31,00,66,00,39,00,35,00,30,00,37,00,38,00,31,00,64,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\3]
+"Action"=dword:00000001
+"Data0"=hex:32,00,62,00,37,00,30,00,62,00,65,00,64,00,36,00,2d,00,31,00,37,00,35,00,37,00,2d,00,34,00,64,00,32,00,32,00,2d,00,39,00,66,00,33,00,39,00,2d,00,34,00,34,00,38,00,35,00,38,00,39,00,66,00,62,00,65,00,62,00,66,00,35,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\4]
+"Action"=dword:00000001
+"Data0"=hex:39,00,63,00,62,00,63,00,39,00,64,00,33,00,61,00,2d,00,37,00,35,00,38,00,36,00,2d,00,34,00,38,00,31,00,34,00,2d,00,38,00,64,00,37,00,30,00,2d,00,31,00,38,00,37,00,33,00,37,00,64,00,63,00,62,00,65,00,35,00,32,00,33,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\5]
+"Action"=dword:00000001
+"Data0"=hex:34,00,45,00,32,00,35,00,46,00,34,00,41,00,32,00,2d,00,32,00,31,00,45,00,38,00,2d,00,34,00,30,00,43,00,45,00,2d,00,42,00,34,00,30,00,31,00,2d,00,33,00,32,00,30,00,35,00,30,00,34,00,31,00,33,00,31,00,34,00,33,00,41,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\6]
+"Action"=dword:00000001
+"Data0"=hex:38,00,33,00,33,00,37,00,41,00,45,00,42,00,43,00,2d,00,35,00,35,00,36,00,34,00,2d,00,34,00,36,00,46,00,44,00,2d,00,42,00,43,00,34,00,31,00,2d,00,37,00,37,00,39,00,38,00,46,00,31,00,38,00,44,00,32,00,45,00,34,00,42,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\7]
+"Action"=dword:00000001
+"GUID"=hex:65,09,f4,00,9d,e8,87,44,98,90,87,c3,ab,b2,11,f4
+"Type"=dword:00000001
+
