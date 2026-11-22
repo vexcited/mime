@@ -1529,9 +1529,11 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
             /*
              * reuse the section's relocated base so views there can share relocated pages. or else, like windows, the
              * view goes where a search from below finds room, under 4 GiB for an image that lives there. a 32-bit
-             * program keeps the search from above it had.
+             * program keeps the search from above it had, and takes the base of another only below its own limit:
+             * one that is large address aware leaves it above 2 GiB.
              */
-            if (s->RelocBase && MiRangeIsFree(as, s->RelocBase, s->RelocBase + bytes)) {
+            if (s->RelocBase && (!as->AllocationLimit || s->RelocBase + bytes <= as->AllocationLimit) &&
+                MiRangeIsFree(as, s->RelocBase, s->RelocBase + bytes)) {
                 va = s->RelocBase;
             } else {
                 status = STATUS_NO_MEMORY;
@@ -2111,6 +2113,33 @@ NTSTATUS NTAPI NtUnmapViewOfSection(HANDLE process_handle, PVOID base)
         return status;
     status = MiUnmapViewOfSection(process, base);
     ObDereferenceObject(process);
+    return status;
+}
+
+/*
+ * whether two addresses of the caller show the same file, which the loader and updaters ask to tell a library that is
+ * already mapped. measured on windows 11 26300 with same.c of the research repository: an address that nothing is
+ * mapped at is invalid, two addresses of one allocation are the same whatever it is, memory with no file behind it
+ * conflicts, and the answer is yes only when the first address is in an image of the file the second one shows.
+ */
+NTSTATUS NTAPI NtAreMappedFilesTheSame(PVOID first, PVOID second)
+{
+    PMMADDRESS_SPACE as = &PsCurrentProcess()->AddressSpace;
+    NTSTATUS status;
+    MiLockAddressSpace(as);
+    PMMVAD a = MiFindVad(as, (ULONG_PTR)first), b = MiFindVad(as, (ULONG_PTR)second);
+    if (!a || !b)
+        status = STATUS_INVALID_ADDRESS;
+    else if (a == b)
+        status = STATUS_SUCCESS;
+    else if (!a->Section || !b->Section || !a->Section->FileName.Length || !b->Section->FileName.Length)
+        status = STATUS_CONFLICTING_ADDRESSES;
+    else if ((a->Section->Flags & SEC_IMAGE) && RtlEqualUnicodeString(&a->Section->FileName, &b->Section->FileName, TRUE) &&
+             RtlEqualUnicodeString(&a->Section->DeviceName, &b->Section->DeviceName, TRUE))
+        status = STATUS_SUCCESS;
+    else
+        status = STATUS_NOT_SAME_DEVICE;
+    MiUnlockAddressSpace(as);
     return status;
 }
 

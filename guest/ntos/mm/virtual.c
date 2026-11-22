@@ -2566,11 +2566,19 @@ ULONG MmQueryVmCounters(PEPROCESS process, PVOID out, ULONG length)
 NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_INFORMATION_CLASS klass, PVOID info,
                                     SIZE_T length, PSIZE_T returned)
 {
+    /*
+     * class 8 answers as the basic class does: WriteProcessMemory asks it to learn whether the pages take a write.
+     * both ask no more of the handle than the limited query right, measured with qvm.c of the research repository.
+     */
+    BOOLEAN basic = klass == MemoryBasicInformation || (ULONG)klass == 8;
     PEPROCESS process;
-    NTSTATUS status = reference_process(process_handle, PROCESS_QUERY_INFORMATION, &process);
+    NTSTATUS status = basic ? reference_process(process_handle, PROCESS_QUERY_LIMITED_INFORMATION, &process)
+                            : STATUS_ACCESS_DENIED;
+    if (status == STATUS_ACCESS_DENIED)
+        status = reference_process(process_handle, PROCESS_QUERY_INFORMATION, &process);
     if (!NT_SUCCESS(status))
         return status;
-    if (klass == MemoryBasicInformation) {
+    if (basic) {
         MEMORY_BASIC_INFORMATION mbi;
         if (length < sizeof(mbi)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
