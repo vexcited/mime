@@ -60,6 +60,14 @@ typedef struct CSR_PORT {
 
 /* server 1 is basesrv, whose request 0x1e sxssrv answers. */
 #define CSR_BASE_CREATE_ACTIVATION_CONTEXT 0x1001e
+/* BaseSrvCreateProcess2 and where its message holds the new process and the answers of InternalSxsCreateProcess. */
+#define CSR_BASE_CREATE_PROCESS 0x1001d
+#define CSR_CREATE_PROCESS_ID 0x50
+#define CSR_CREATE_PROCESS_RUN_LEVEL 0x110
+#define CSR_CREATE_PROCESS_SUPPORTED_OS 0x11c
+#define CSR_CREATE_PROCESS_MAX_VERSION 0x130
+/* BaseSrvNlsGetUserInfo: the capture buffer holds room for the NLS_USER_INFO of the user, its address and size follow. */
+#define CSR_BASE_NLS_GET_USER_INFO 0x1001b
 
 extern POBJECT_TYPE ExAlpcPortType;
 void ExInitializeAlpc(void);
@@ -227,8 +235,20 @@ static PVOID local(const CSR_PORT *port, ULONG64 remote, ULONG length)
     return (PVOID)(port->ViewBase + (remote - port->RemoteBase));
 }
 
+/* true the first time a request number is seen, so an unanswered request is logged once. */
+static BOOLEAN logged(ULONG api)
+{
+    static volatile LONG seen[64];
+    ULONG server = api >> 16, index = api & 0xffff;
+    if (server >= 4 || index >= 512)
+        return TRUE;
+    ULONG bit = server * 512 + index;
+    LONG mask = 1 << (bit & 31);
+    return !(__atomic_fetch_or(&seen[bit >> 5], mask, __ATOMIC_RELAXED) & mask);
+}
+
 /*
- * a request whose answer was not measured is answered with success and nothing else, and said in the log. request 0
+ * a request whose answer was not measured is answered with success and nothing else, and said in the log once. request 0
  * of server 0 connects the client to a server dll, with the bytes for that dll in the view.
  */
 static NTSTATUS serve(const CSR_PORT *port, CSR_MESSAGE *message)
@@ -269,6 +289,38 @@ static NTSTATUS serve(const CSR_PORT *port, CSR_MESSAGE *message)
         }
         return PspSxsCreateClientContext(&request);
     }
+    if (message->Api == CSR_BASE_CREATE_PROCESS && message->TotalLength >= CSR_CREATE_PROCESS_MAX_VERSION + 8) {
+        /* the part sxssrv answers: the run level the manifest of the new process asks for and the systems it knows. */
+        PEPROCESS created = PspLookupProcess((HANDLE)(ULONG_PTR) * (ULONG64 *)((PUCHAR)message + CSR_CREATE_PROCESS_ID));
+        if (created) {
+            ULONG *level = (ULONG *)((PUCHAR)message + CSR_CREATE_PROCESS_RUN_LEVEL);
+            level[0] = 0;
+            level[1] = created->SxsRunLevel;
+            level[2] = created->SxsUiAccess;
+            USHORT *system = (USHORT *)((PUCHAR)message + CSR_CREATE_PROCESS_SUPPORTED_OS);
+            system[0] = created->SxsSupportedOsMajor;
+            system[1] = created->SxsSupportedOsMinor;
+            *(ULONG64 *)((PUCHAR)message + CSR_CREATE_PROCESS_MAX_VERSION) = created->SxsMaxVersionTested;
+            ObDereferenceObject(created);
+        }
+        return STATUS_SUCCESS;
+    }
+    if (message->Api == CSR_BASE_NLS_GET_USER_INFO && message->TotalLength >= 0x50) {
+        ULONG size = (ULONG)message->Arguments[2];
+        PVOID info = local(port, message->Arguments[1], size);
+        if (!info || size > CSR_VIEW_SIZE)
+            return STATUS_INVALID_PARAMETER;
+        PVOID copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('C', 's', 'r', 'N'));
+        if (!copy)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        NTSTATUS status = PspCsrNlsUserInfo(port->Session, copy, size);
+        if (NT_SUCCESS(status))
+            status = KiCopyToUser(info, copy, size);
+        ExFreePool(copy);
+        return status;
+    }
+    if (!logged(message->Api))
+        return STATUS_SUCCESS;
     KiLogPrintf("csr: process %u asks %x in %u bytes, capture %llx, answered empty: %llx %llx %llx %llx", pid, message->Api,
                 message->TotalLength, (unsigned long long)message->CaptureBuffer, (unsigned long long)message->Arguments[0],
                 (unsigned long long)message->Arguments[1], (unsigned long long)message->Arguments[2],

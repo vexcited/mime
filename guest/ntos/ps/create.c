@@ -1111,6 +1111,13 @@ void PspFreeThreadAttributes(PVOID captured)
     ExFreePool(captured);
 }
 
+/* the 32-bit parameters of a wow64 process, read with the process attached. */
+static MIME_PARAMETERS32 *parameters32(PEPROCESS process)
+{
+    MIME_PEB32 *peb32 = process->Wow64Peb;
+    return peb32 ? (MIME_PARAMETERS32 *)(ULONG_PTR)peb32->ProcessParameters : nullptr;
+}
+
 /*
  * PS_STD_HANDLE_INFO. on request, for a program of the subsystem it names that inherits nothing, the child gets a copy
  * of each standard handle of its creator. always, as with a parent process attribute, the handles kernelbase put in the
@@ -1147,6 +1154,12 @@ static void duplicate_std_handles(PEPROCESS process, PEPROCESS creator, PEPROCES
     pp->StandardInput = values[0];
     pp->StandardOutput = values[1];
     pp->StandardError = values[2];
+    MIME_PARAMETERS32 *p32 = parameters32(process);
+    if (p32) {
+        p32->StandardInput = (ULONG)(ULONG_PTR)values[0];
+        p32->StandardOutput = (ULONG)(ULONG_PTR)values[1];
+        p32->StandardError = (ULONG)(ULONG_PTR)values[2];
+    }
     KiAttachProcess(saved);
 }
 
@@ -1159,6 +1172,10 @@ static NTSTATUS give_console_reference(PEPROCESS process)
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     KiAttachProcess(&process->Pcb);
     process->Peb->ProcessParameters->ConsoleHandle = handle;
+    /* without it 32-bit kernelbase allocates a console and replaces the standard handles the program inherited. */
+    MIME_PARAMETERS32 *p32 = parameters32(process);
+    if (p32)
+        p32->ConsoleHandle = (ULONG)(ULONG_PTR)handle;
     KiAttachProcess(saved);
     return STATUS_SUCCESS;
 }
@@ -1177,6 +1194,37 @@ static void apply_attributes(PEPROCESS process, PEPROCESS parent, const PSP_ATTR
     process->ComponentFilter = a->ComponentFilter;
 }
 
+/*
+ * a file that opened and is not a program: the caller gets the state that says so and a handle to the file. kernelbase
+ * reads the state before the status, and only with this one does CreateProcess hand a .bat or .cmd file to cmd.exe.
+ */
+static void report_failed_image(PCUNICODE_STRING image, NTSTATUS failure, PVOID create_info)
+{
+    if (failure != STATUS_INVALID_IMAGE_NOT_MZ && failure != STATUS_INVALID_IMAGE_FORMAT &&
+        failure != STATUS_INVALID_IMAGE_PROTECT)
+        return;
+    UNICODE_STRING nt_path;
+    if (!NT_SUCCESS(dos_to_nt(image, &nt_path)))
+        return;
+    PFILE_OBJECT file;
+    NTSTATUS status = IopOpenFileObject(&nt_path, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE,
+                                        &file);
+    ExFreePool(nt_path.Buffer);
+    if (!NT_SUCCESS(status))
+        return;
+    HANDLE handle = nullptr;
+    status = ObOpenObjectByPointer(file, 0, nullptr, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, nullptr, UserMode,
+                                   &handle);
+    ObDereferenceObject(file);
+    if (!NT_SUCCESS(status))
+        return;
+    PS_CREATE_INFO info = {.Size = sizeof(info), .State = PsCreateFailOnSectionCreate};
+    /* the handle of this state is the first field after the state. */
+    *(HANDLE *)&info.InitState = handle;
+    if (!NT_SUCCESS(KiCopyToUser(create_info, &info, sizeof(info))))
+        ObCloseHandle(handle, UserMode);
+}
+
 NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle, ACCESS_MASK process_access,
     ACCESS_MASK thread_access, POBJECT_ATTRIBUTES process_attributes, POBJECT_ATTRIBUTES thread_attributes,
     ULONG process_flags, ULONG thread_flags, PRTL_USER_PROCESS_PARAMETERS parameters, PVOID create_info,
@@ -1184,8 +1232,12 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
 {
     if (!process_handle || !thread_handle || !parameters)
         return STATUS_INVALID_PARAMETER;
-    /* kernelbase of 26100 adds 0x200 to every creation without CREATE_SUSPENDED, and resumes only the thread after. */
-    if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES | 0x200)) ||
+    /*
+     * kernelbase of 26100 adds 0x200 to every creation without CREATE_SUSPENDED, and resumes only the thread after.
+     * 0x100 is its INHERIT_PARENT_AFFINITY, read in CreateProcessInternalW of 26300: a child has its parent's
+     * affinity here in any case, see PspCreateProcess.
+     */
+    if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES | 0x100 | 0x200)) ||
         (thread_flags & ~1u))
         return STATUS_NOT_SUPPORTED;
     if (create_info) {
@@ -1259,6 +1311,8 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         /* a creator without a console, like the elevation broker, passes on the console of the parent it names. */
         status = create_process(&params, token, 0, creator->Console ? creator->Console : parent->Console, TRUE, parent,
                                 &process, &thread, process_sd, thread_sd, KeGetPreviousMode());
+    if (!NT_SUCCESS(status) && create_info)
+        report_failed_image(&params.Image, status, create_info);
     free_params(&params);
     if (token)
         ObDereferenceObject(token);

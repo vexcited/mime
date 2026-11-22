@@ -334,7 +334,7 @@ static const struct {
 } g_system_assemblies[] = {
     {L"Microsoft.Windows.Common-Controls", L"comctl32.dll", 6,
      L"<windowClass>Static</windowClass><windowClass>Button</windowClass><windowClass>Edit</windowClass>"
-     L"<windowClass>ListBox</windowClass><windowClass>ComboBox</windowClass>"},
+     L"<windowClass>ListBox</windowClass><windowClass>ComboBox</windowClass><windowClass>ScrollBar</windowClass>"},
     {L"Microsoft.Windows.GdiPlus", L"gdiplus.dll", 0, nullptr},
 };
 
@@ -876,13 +876,13 @@ static void build_assembly_information(GEN *g, SECTION *s)
     }
     BUF *u = &s->UserData;
     ULONG global = buf_reserve(u, sizeof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION), 4);
-    ULONG length = 0, at = buf_string(u, g->AppDirectory, &length);
+    /* ntdll reads the directory at an offset from the global information, not from the section. */
+    ULONG length = 0, at = buf_string(u, g->AppDirectory, &length) - global;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, Size) = sizeof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION);
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryPathType) = ACTCTX_PATH_TYPE_WIN32_FILE;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryLength) = length;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryOffset) = at;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ResourceName) = g->ResourceName;
-    s->UserFixups[s->UserFixupCount++] = offsetof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryOffset);
 }
 
 /* a redirection to one path in a single segment. */

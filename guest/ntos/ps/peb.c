@@ -33,6 +33,7 @@ static FAST_MUTEX g_lock;
 static PVOID g_api_set_section, g_leap_section, g_csr_section[2];
 static SIZE_T g_api_set_size;
 static ULONG64 g_csr_server_base[2];
+static PUCHAR g_csr_base[2];
 
 void PspInitializePebBlocks(void)
 {
@@ -180,6 +181,8 @@ typedef struct CSR_HEAP_CELL {
 #define CSR_TIME_OF_DAY 0x8d0
 #define CSR_LOCALE_NAME 0x908
 #define CSR_USER_SID 0xf3c /* session 1 only: the sid of the user whose locale the heap holds. */
+#define CSR_NLS_USER_INFO CSR_LOCALE_NAME
+#define CSR_NLS_USER_INFO_SIZE 0x67c
 
 static NTSTATUS build_csr(ULONG slot, PVOID *out)
 {
@@ -214,6 +217,7 @@ static NTSTATUS build_csr(ULONG slot, PVOID *out)
         if (HalBootInfo->locale_lcid && HalBootInfo->locale_lcid != 0x0409)
             memset(b + CSR_LOCALE_NAME, 0, 6 * sizeof(WCHAR));
     }
+    g_csr_base[slot] = b;
     *out = section;
     return STATUS_SUCCESS;
 }
@@ -233,6 +237,24 @@ NTSTATUS PspCsrSharedSection(ULONG session, PVOID *section, ULONG64 *server, ULO
     *server = g_csr_server_base[slot];
     *static_data = g_csr_server_base[slot] + CSR_STATIC_ARRAY;
     return STATUS_SUCCESS;
+}
+
+/*
+ * the locale settings of the user, the NLS_USER_INFO kernelbase asks csrss for with request 0x1001b when the count
+ * at its end differs from the one in the shared heap. the answer is the copy the heap holds, so the counts agree and
+ * the process keeps its cache.
+ */
+NTSTATUS PspCsrNlsUserInfo(ULONG session, PVOID buffer, ULONG length)
+{
+    PVOID section;
+    ULONG64 server, static_data;
+    ULONG slot = session ? 1 : 0;
+    if (length != CSR_NLS_USER_INFO_SIZE)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = PspCsrSharedSection(session, &section, &server, &static_data);
+    if (NT_SUCCESS(status))
+        memcpy(buffer, g_csr_base[slot] + CSR_NLS_USER_INFO, length);
+    return status;
 }
 
 static NTSTATUS build_leap(void)

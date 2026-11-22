@@ -1584,6 +1584,7 @@ void PspNotifyProcess(PEPROCESS process, BOOLEAN create);
 void PspInitializePebBlocks(void);
 NTSTATUS PspMapPebBlocks(PEPROCESS process, PPEB peb);
 NTSTATUS PspCsrSharedSection(ULONG session, PVOID *section, ULONG64 *server, ULONG64 *static_data);
+NTSTATUS PspCsrNlsUserInfo(ULONG session, PVOID buffer, ULONG length);
 void ExInitializeCsr(void);
 void PspNotifyThread(PETHREAD thread, BOOLEAN create);
 void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, PFILE_OBJECT file);

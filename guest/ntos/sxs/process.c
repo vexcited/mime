@@ -219,6 +219,87 @@ static NTSTATUS install(PEPROCESS process, const void *data)
     return STATUS_SUCCESS;
 }
 
+/*
+ * the newest system among the supportedOS elements of the manifest and its maxversiontested, kept for the answer to
+ * the create process request of basesrv: kernel32 makes the switch context of the new process from them, and with
+ * none GetVersionEx says 6.2. the ids are those of SbSupportedOsList of kernel32.
+ */
+static void read_compatibility(PEPROCESS process, const void *data)
+{
+    static const struct {
+        GUID Id;
+        USHORT Major, Minor;
+    } systems[] = {
+        {{0xe2011457, 0x1546, 0x43c5, {0xa5, 0xfe, 0x00, 0x8d, 0xee, 0xe3, 0xd3, 0xf0}}, 6, 0},
+        {{0x35138b9a, 0x5d96, 0x4fbd, {0x8e, 0x2d, 0xa2, 0x44, 0x02, 0x25, 0xf9, 0x3a}}, 6, 1},
+        {{0x4a2f28e3, 0x53b9, 0x4441, {0xba, 0x9c, 0xd6, 0x9d, 0x4a, 0x4a, 0x6e, 0x38}}, 6, 2},
+        {{0x1f676c76, 0x80e1, 0x4239, {0x95, 0xbb, 0x83, 0xd0, 0xf6, 0xd0, 0xda, 0x78}}, 6, 3},
+        {{0x8e0f7a12, 0xbfb3, 0x4fe8, {0xb9, 0xa5, 0x48, 0xfd, 0x50, 0xa1, 0x5a, 0x9a}}, 10, 0},
+    };
+    const UCHAR *base = data;
+    const ULONG *header = data;
+    ULONG total = header[3], toc_at = header[4];
+    if (!toc_at || toc_at > total - 16)
+        return;
+    const ULONG *toc = (const ULONG *)(base + toc_at);
+    ULONG count = toc[1], first = toc[2];
+    for (ULONG i = 0; i < count && first <= total - 16 && i < (total - first) / 16; i++) {
+        const ULONG *entry = (const ULONG *)(base + first + i * 16);
+        if (entry[0] != ACTIVATION_CONTEXT_SECTION_COMPATIBILITY_INFO)
+            continue;
+        ULONG at = entry[1], length = entry[2];
+        if (at > total || length > total - at || length < 8)
+            return;
+        ULONG elements = *(const ULONG *)(base + at);
+        const COMPATIBILITY_CONTEXT_ELEMENT *e = (const COMPATIBILITY_CONTEXT_ELEMENT *)(base + at + 8);
+        if (elements > (length - 8) / sizeof(*e))
+            return;
+        for (ULONG j = 0; j < elements; j++) {
+            if (e[j].Type == ACTCTX_COMPATIBILITY_ELEMENT_TYPE_MAXVERSIONTESTED) {
+                process->SxsMaxVersionTested = e[j].MaxVersionTested;
+                continue;
+            }
+            if (e[j].Type != ACTCTX_COMPATIBILITY_ELEMENT_TYPE_OS)
+                continue;
+            for (ULONG k = 0; k < RTL_NUMBER_OF(systems); k++) {
+                if (memcmp(&e[j].Id, &systems[k].Id, sizeof(GUID)))
+                    continue;
+                if (systems[k].Major > process->SxsSupportedOsMajor ||
+                    (systems[k].Major == process->SxsSupportedOsMajor && systems[k].Minor > process->SxsSupportedOsMinor)) {
+                    process->SxsSupportedOsMajor = systems[k].Major;
+                    process->SxsSupportedOsMinor = systems[k].Minor;
+                }
+            }
+        }
+        return;
+    }
+}
+
+/*
+ * the run level the manifest of the program asks for, in the information of the first assembly of the roster. the
+ * layouts are those of sxs.h of ntdll: the roster header counts its entries at 8 and places them at 12, an entry of
+ * 24 bytes places its assembly information at 16, which is packed to four bytes and holds the run level at 100 and the ui access at 104.
+ */
+static void read_run_level(PEPROCESS process, const void *data)
+{
+    const UCHAR *base = data;
+    const ULONG *header = data;
+    ULONG total = header[3], roster_at = header[6];
+    if (!roster_at || roster_at > total || total - roster_at < 20)
+        return;
+    const ULONG *roster = (const ULONG *)(base + roster_at);
+    ULONG count = roster[2], first = roster[3];
+    /* entry 0 is unused, the program's own assembly is entry 1. */
+    if (count < 2 || first > total || (total - first) / 24 < 2)
+        return;
+    ULONG info_at = ((const ULONG *)(base + first + 24))[4];
+    if (info_at > total || total - info_at < 108)
+        return;
+    const ULONG *info = (const ULONG *)(base + info_at);
+    process->SxsRunLevel = info[25];
+    process->SxsUiAccess = info[26];
+}
+
 static BOOLEAN no_manifest(NTSTATUS status)
 {
     return status == STATUS_RESOURCE_DATA_NOT_FOUND || status == STATUS_RESOURCE_TYPE_NOT_FOUND ||
@@ -245,8 +326,11 @@ NTSTATUS PspSxsCreateProcessContext(PEPROCESS process, PCUNICODE_STRING image)
     g_root = nullptr;
     if (no_manifest(status))
         status = STATUS_SUCCESS;
-    else if (NT_SUCCESS(status) && data)
+    else if (NT_SUCCESS(status) && data) {
+        read_compatibility(process, data);
+        read_run_level(process, data);
         status = install(process, data);
+    }
     SxsKDataFree(data);
     ExReleaseFastMutex(&g_lock);
     if (!NT_SUCCESS(status))
