@@ -293,6 +293,7 @@ EXPORTS
     MmUnmapIoSpace
     MmUnmapViewInSystemSpace
     MmUnmapViewOfSection
+    MmUserProbeAddress DATA
     MmWindowLostFault
     MmWindowLostInitialize
     MmWindowLostInterrupt

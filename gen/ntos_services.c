@@ -16,6 +16,7 @@ void NtAddAtom(void);
 void NtAddAtomEx(void);
 void NtAdjustGroupsToken(void);
 void NtAdjustPrivilegesToken(void);
+void NtPrivilegeCheck(void);
 void NtAlertThread(void);
 void NtAlertThreadByThreadId(void);
 void NtAlertThreadByThreadIdEx(void);
@@ -170,6 +171,12 @@ void NtQueryIoCompletion(void);
 void NtQueryKey(void);
 void NtSetInformationKey(void);
 void NtQueryLicenseValue(void);
+void NtQuerySecurityPolicy(void);
+void NtCreatePrivateNamespace(void);
+void NtSetCachedSigningLevel(void);
+void NtGetCachedSigningLevel(void);
+void NtOpenPrivateNamespace(void);
+void NtDeletePrivateNamespace(void);
 void NtGetNlsSectionPtr(void);
 void NtInitializeNlsFiles(void);
 void NtIsUILanguageComitted(void);
@@ -256,6 +263,7 @@ void NtTraceEvent(void);
 void NtUnloadKey(void);
 void NtUnloadKey2(void);
 void NtUnloadKeyEx(void);
+void NtAreMappedFilesTheSame(void);
 void NtUnmapViewOfSection(void);
 void NtUnmapViewOfSectionEx(void);
 void NtUnsubscribeWnfStateChange(void);
@@ -290,6 +298,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtAdjustPrivilegesToken
     KiRegisterService(MIME_SVC_NtAdjustPrivilegesToken, (void *)NtAdjustPrivilegesToken, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtPrivilegeCheck
+    KiRegisterService(MIME_SVC_NtPrivilegeCheck, (void *)NtPrivilegeCheck, STACK_ARGS(3));
 #endif
 #ifdef MIME_SVC_NtAlertThread
     KiRegisterService(MIME_SVC_NtAlertThread, (void *)NtAlertThread, STACK_ARGS(1));
@@ -801,6 +812,24 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtCancelTimer2
     KiRegisterService(MIME_SVC_NtCancelTimer2, (void *)NtCancelTimer2, STACK_ARGS(2));
 #endif
+#ifdef MIME_SVC_NtQuerySecurityPolicy
+    KiRegisterService(MIME_SVC_NtQuerySecurityPolicy, (void *)NtQuerySecurityPolicy, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtSetCachedSigningLevel
+    KiRegisterService(MIME_SVC_NtSetCachedSigningLevel, (void *)NtSetCachedSigningLevel, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtGetCachedSigningLevel
+    KiRegisterService(MIME_SVC_NtGetCachedSigningLevel, (void *)NtGetCachedSigningLevel, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtCreatePrivateNamespace
+    KiRegisterService(MIME_SVC_NtCreatePrivateNamespace, (void *)NtCreatePrivateNamespace, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtOpenPrivateNamespace
+    KiRegisterService(MIME_SVC_NtOpenPrivateNamespace, (void *)NtOpenPrivateNamespace, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtDeletePrivateNamespace
+    KiRegisterService(MIME_SVC_NtDeletePrivateNamespace, (void *)NtDeletePrivateNamespace, STACK_ARGS(1));
+#endif
 #ifdef MIME_SVC_NtQueryLicenseValue
     KiRegisterService(MIME_SVC_NtQueryLicenseValue, (void *)NtQueryLicenseValue, STACK_ARGS(5));
 #endif
@@ -1017,6 +1046,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtUnloadKeyEx
     KiRegisterService(MIME_SVC_NtUnloadKeyEx, (void *)NtUnloadKeyEx, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtAreMappedFilesTheSame
+    KiRegisterService(MIME_SVC_NtAreMappedFilesTheSame, (void *)NtAreMappedFilesTheSame, STACK_ARGS(2));
 #endif
 #ifdef MIME_SVC_NtUnmapViewOfSection
     KiRegisterService(MIME_SVC_NtUnmapViewOfSection, (void *)NtUnmapViewOfSection, STACK_ARGS(2));
