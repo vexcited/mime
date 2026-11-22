@@ -321,6 +321,18 @@ typedef struct {
 
 #define SIO_WS2_POLL 0xC800001F
 
+/* the input of SIO_EXT_SENDMSG, the arguments ws2_32's WSASendMsg got after the socket. */
+typedef struct {
+    LPWSAMSG Msg;
+    DWORD Flags;
+    LPDWORD Sent;
+    LPWSAOVERLAPPED Overlapped;
+    LPWSAOVERLAPPED_COMPLETION_ROUTINE Routine;
+} WS_SENDMSG_REQUEST;
+
+int WSAAPI WSASendMsg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent, LPWSAOVERLAPPED overlapped,
+                      LPWSAOVERLAPPED_COMPLETION_ROUTINE routine);
+
 static int WSPAPI wsp_ioctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, DWORD out_size,
                             LPDWORD returned, LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine,
                             LPWSATHREADID thread, LPINT error)
@@ -338,6 +350,24 @@ static int WSPAPI wsp_ioctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVO
         }
         if (returned)
             *returned = in_size;
+        return 0;
+    }
+    /*
+     * ws2_32's WSASendMsg is this control on the base provider. read from WSPIoctl of mswsock 26100: the output is
+     * zeroed first, a missing input is WSAEFAULT, and a failed send is not a failed control, its error is the output
+     * and the control succeeds with 4 bytes.
+     */
+    if (code == SIO_EXT_SENDMSG) {
+        WS_SENDMSG_REQUEST *m = in;
+        *(INT *)out = 0;
+        if (!m) {
+            *error = WSAEFAULT;
+            return SOCKET_ERROR;
+        }
+        if (WSASendMsg(s, m->Msg, m->Flags, m->Sent, m->Overlapped, m->Routine))
+            *(INT *)out = (INT)GetLastError();
+        *returned = sizeof(INT);
+        *error = 0;
         return 0;
     }
     return result(WSAIoctl(s, code, in, in_size, out, out_size, returned, overlapped, routine), error);

@@ -738,18 +738,23 @@ static int transfer(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD 
     if ((!buffers && count) || (!send && !flags))
         return fail(sock, WSAEFAULT);
     DWORD f = send ? (flags ? *flags : 0) : *flags;
-    DWORD allowed = send ? (MSG_OOB | MSG_DONTROUTE | MSG_PARTIAL) : (MSG_OOB | MSG_PEEK | MSG_WAITALL | MSG_PARTIAL);
+    DWORD allowed = send ? (MSG_OOB | MSG_DONTROUTE | MSG_PARTIAL)
+                         : (MSG_OOB | MSG_PEEK | MSG_WAITALL | MSG_PARTIAL | MSG_PUSH_IMMEDIATE);
     if (f & ~allowed)
         return fail(sock, WSAEOPNOTSUPP);
     if ((f & MSG_OOB) && sock->type != SOCK_STREAM)
         return fail(sock, WSAEOPNOTSUPP);
     if ((f & MSG_WAITALL) && (sock->type != SOCK_STREAM || overlapped))
         return fail(sock, WSAEOPNOTSUPP);
+    /* measured on windows: a receive may ask not to be held back for more data, on a stream or a datagram socket, but
+       not while it asks to wait for all of it. data is never held back here, so the flag changes nothing. */
+    if ((f & MSG_PUSH_IMMEDIATE) && (f & MSG_WAITALL))
+        return fail(sock, WSAEOPNOTSUPP);
     MIME_AFD_TRANSFER t;
     memset(&t, 0, sizeof(t));
     t.Buffers = (ULONG64)(ULONG_PTR)buffers;
     t.BufferCount = count;
-    t.Flags = f & ~MSG_PARTIAL;
+    t.Flags = f & ~(MSG_PARTIAL | MSG_PUSH_IMMEDIATE);
     t.AfdFlags = overlapped ? MIME_AFD_OVERLAPPED : 0;
     MIME_AFD_ADDRESS dest;
     if (send && to && sock->type == SOCK_DGRAM) {
@@ -1140,8 +1145,15 @@ static int WSAAPI wsa_send_msg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent
         return WsFail(error);
     BOOL stream = sock->type == SOCK_STREAM;
     release(sock);
+    /* measured on windows 26100: a stream socket in any state answers WSAEINVAL, and so does a datagram socket that is
+       not connected when the message names no destination. */
     if (stream)
-        return WsFail(WSAEOPNOTSUPP);
+        return WsFail(WSAEINVAL);
+    if (!msg->name || !msg->namelen) {
+        MIME_AFD_STATE st;
+        if (!afd_state(s, &st) || st.State != MIME_AFD_STATE_CONNECTED)
+            return WsFail(WSAEINVAL);
+    }
     return transfer(s, TRUE, msg->lpBuffers, msg->dwBufferCount, sent, &flags, msg->name, msg->namelen, nullptr, nullptr,
                     overlapped, routine);
 }
@@ -1767,6 +1779,25 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
         if (!in || in_size < sizeof(BOOL))
             error = WSAEFAULT;
         break;
+    case SIO_IDEAL_SEND_BACKLOG_QUERY: {
+        /*
+         * measured on windows 26100: a datagram socket has no ideal send backlog, WSAEOPNOTSUPP, a stream that is
+         * not connected answers WSAENOTCONN, and a new connection 65536. windows moves the value with the
+         * connection afterwards, here it stays.
+         */
+        MIME_AFD_STATE st;
+        if (sock->type != SOCK_STREAM) {
+            error = WSAEOPNOTSUPP;
+        } else if (!afd_state(s, &st) || st.State != MIME_AFD_STATE_CONNECTED) {
+            error = WSAENOTCONN;
+        } else if (!out || out_size < sizeof(ULONG)) {
+            error = WSAEFAULT;
+        } else {
+            *(ULONG *)out = 0x10000;
+            size = sizeof(ULONG);
+        }
+        break;
+    }
     case SIO_BASE_HANDLE:
     case SIO_BSP_HANDLE:
     case SIO_BSP_HANDLE_SELECT:
