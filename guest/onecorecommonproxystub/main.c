@@ -1,8 +1,9 @@
 /*
- * OneCoreCommonProxyStub.dll: the proxies and stubs windows names for IServiceProvider. The one interface is described
- * in the proxy file the build generates, see gen/onecorecommonproxystub/ps.h.
+ * OneCoreCommonProxyStub.dll: the proxies and stubs windows names for IServiceProvider and the Delivery Optimization
+ * interfaces. They are described in the proxy file the build generates, see gen/onecorecommonproxystub/ps.h.
  */
 #include <mime/win32/shldisp.h>
+#include <mime/win32/deliveryoptimization.h>
 #include <mime/win32/rpcproxy.h>
 #include <mime/win32/rpcndr.h>
 
