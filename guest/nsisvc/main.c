@@ -1,11 +1,13 @@
 /*
- * nsisvc.dll: the network store interface service. On Windows it hands the network parameters of the stack to the tools
- * that read them, over an rpc interface of its own. Mime's iphlpapi reads the host's stack directly, so this one only has
- * the states of the service that others depend on, and a stop that goes through the same steps: it starts as the
- * service does, runs taking a stop and an interrogation, and answers every other control with the error of an unknown one.
+ * nsisvc.dll: the network store interface service. on windows it serves the store over rpc to the callers that may
+ * not open the device, and hands them the change notifications netio.sys reports to it from the kernel. here the
+ * interface winnsi.dll calls is the same, see rpc.c, and the changes are found by the service itself: it waits on the
+ * device for a table to change, as any program may, and compares the table before and after.
  */
-#include <mime/win32/winbase.h>
-#include <mime/win32/winsvc.h>
+#include "nsisvc_private.h"
+
+WINBASEAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCWSTR text, DWORD revision,
+                                                                            PSECURITY_DESCRIPTOR *sd, PULONG size);
 
 typedef DWORD(WINAPI *REGISTER_STOP)(HANDLE *wait, const WCHAR *service, HANDLE event, void *callback, void *context,
                                      DWORD flags);
@@ -17,6 +19,7 @@ static void **g_globals;
 static SERVICE_STATUS_HANDLE g_handle;
 static SERVICE_STATUS g_status;
 static HANDLE g_stop_event, g_stop_wait;
+static BOOL g_rpc_registered;
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
@@ -49,9 +52,50 @@ static DWORD WINAPI control_handler(DWORD control, DWORD event_type, LPVOID even
     return NO_ERROR;
 }
 
-/* the stop event fired: the service is down. */
+static RPC_STATUS RPC_ENTRY allow_local(RPC_IF_HANDLE interface_spec, void *context)
+{
+    return RPC_S_OK;
+}
+
+/*
+ * the endpoint is a dynamic one of ncalrpc that the endpoint mapper tells, with the annotation and the security
+ * descriptor of windows' service: everyone and the restricted read, write and execute, the app containers read.
+ */
+static DWORD start_rpc(void)
+{
+    static const WCHAR sddl[] = L"D:(A;;GRGWGX;;;WD)(A;;GRGWGX;;;RC)(A;;GA;;;BA)(A;;GA;;;OW)(A;;GR;;;AC)(A;;GR;;;S-1-15-3-1)"
+                                L"(A;;GR;;;S-1-15-3-2)(A;;GR;;;S-1-15-3-3)"
+                                L"(A;;GR;;;S-1-15-3-4214768333-1334025770-122408079-3919188833)";
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, &sd, nullptr))
+        return GetLastError();
+    RPC_STATUS status = RpcServerUseProtseqW((RPC_WSTR)L"ncalrpc", RPC_C_PROTSEQ_MAX_REQS_DEFAULT, sd);
+    if (status == RPC_S_OK) {
+        status = RpcServerRegisterIf3(nsirpc_s_ifspec, nullptr, nullptr, RPC_IF_AUTOLISTEN, 1234, 0, allow_local, sd);
+        if (status == RPC_S_TYPE_ALREADY_REGISTERED)
+            status = RPC_S_OK;
+    }
+    RPC_BINDING_VECTOR *bindings = nullptr;
+    if (status == RPC_S_OK) {
+        g_rpc_registered = TRUE;
+        status = RpcServerInqBindings(&bindings);
+    }
+    if (status == RPC_S_OK)
+        status = RpcEpRegisterW(nsirpc_s_ifspec, bindings, nullptr, (RPC_WSTR)L"NSI server endpoint");
+    if (bindings)
+        RpcBindingVectorFree(&bindings);
+    LocalFree(sd);
+    return status;
+}
+
+/* the stop event fired: the waiting calls end, the interface goes, then the service is down. */
 static void WINAPI cleanup(void *context, BOOLEAN timed_out)
 {
+    NsiSvcStopNotifications();
+    if (g_rpc_registered) {
+        RpcServerUnregisterIf(nsirpc_s_ifspec, nullptr, 1);
+        g_rpc_registered = FALSE;
+    }
     g_status.dwCurrentState = SERVICE_STOPPED;
     g_status.dwControlsAccepted = 0;
     g_status.dwCheckPoint = 0;
@@ -80,7 +124,11 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
         error = GetLastError();
     else if (!g_globals)
         error = ERROR_INVALID_DATA;
-    else
+    if (!error)
+        error = NsiSvcStartNotifications();
+    if (!error)
+        error = start_rpc();
+    if (!error)
         error = ((REGISTER_STOP)g_globals[GLOBALS_REGISTER_STOP])(&g_stop_wait, L"NSI", g_stop_event, (void *)cleanup,
                                                                   nullptr, WT_EXECUTEONLYONCE | WT_EXECUTELONGFUNCTION);
     if (error) {
