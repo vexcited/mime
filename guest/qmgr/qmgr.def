@@ -1,0 +1,4 @@
+LIBRARY qmgr.dll
+EXPORTS
+    ServiceMain @1
+    BITSServiceMain @2
