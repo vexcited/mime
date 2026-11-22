@@ -97,3 +97,4 @@ EXPORTS
     UnregisterScaleChangeEvent=_UnregisterScaleChangeEvent@4 @96
     UnsubscribeFeatureStateChangeNotification=_UnsubscribeFeatureStateChangeNotification@4 @97
     CommandLineToArgvW=shell32.CommandLineToArgvW @2
+    SHWindowsPolicy=_SHWindowsPolicy@4 @190 NONAME
