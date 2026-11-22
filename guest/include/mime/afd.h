@@ -199,6 +199,20 @@ typedef struct MIME_AFD_LINK {
     UCHAR MacLength;
     UCHAR Mac[8];
     UCHAR Pad[7];
+    /* received and sent since the host started the link; packets of every kind, multicast included */
+    ULONG64 RxBytes;
+    ULONG64 RxPackets;
+    ULONG64 RxMulticast;
+    ULONG64 RxErrors;
+    ULONG64 RxDropped;
+    ULONG64 TxBytes;
+    ULONG64 TxPackets;
+    ULONG64 TxErrors;
+    ULONG64 TxDropped;
+    /* the DHCP lease of the link's ipv4 address, zeros when the host has none or does not tell */
+    UCHAR DhcpServer[4];
+    ULONG DhcpLease;      /* seconds the lease lasts */
+    ULONG64 DhcpObtained; /* seconds since 1970 */
 } MIME_AFD_LINK;
 
 #define MIME_AFD_ADDR_DYNAMIC 0x1

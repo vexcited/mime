@@ -833,6 +833,20 @@ typedef struct MimeNetLink {
     uint8_t mac_length;
     uint8_t mac[8];
     uint8_t pad[7];
+    /* what the link received and sent since the host started it. packets count every kind, multicast included. */
+    uint64_t rx_bytes;
+    uint64_t rx_packets;
+    uint64_t rx_multicast;
+    uint64_t rx_errors;
+    uint64_t rx_dropped;
+    uint64_t tx_bytes;
+    uint64_t tx_packets;
+    uint64_t tx_errors;
+    uint64_t tx_dropped;
+    /* the DHCP lease of the link's IPv4 address, zeros when the host has none or does not tell. */
+    uint8_t dhcp_server[4];
+    uint32_t dhcp_lease;    /* seconds the lease lasts. */
+    uint64_t dhcp_obtained; /* seconds since 1970. */
 } MimeNetLink;
 
 enum {
