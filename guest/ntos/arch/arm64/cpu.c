@@ -61,6 +61,12 @@ PCSTR KiProcessorBrand(void)
     return HalBootInfo->cpu_name;
 }
 
+/* the counter of the architected timer says nothing of the processor, so its speed is the one of the model. */
+ULONG KiProcessorMhz(void)
+{
+    return HalBootInfo->cpu_mhz;
+}
+
 /* the vendor name windows shows for the implementer code. */
 PCSTR KiProcessorVendor(void)
 {

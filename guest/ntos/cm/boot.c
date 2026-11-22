@@ -263,8 +263,8 @@ static void hardware(void)
         set_sz(path, L"Identifier", REG_SZ, identifier);
         set_sz(path, L"VendorIdentifier", REG_SZ, vendor);
         set_sz(path, L"ProcessorNameString", REG_SZ, name);
-        if (HalBootInfo->cpu_mhz)
-            set_dword(path, L"~MHz", HalBootInfo->cpu_mhz);
+        if (KiProcessorMhz())
+            set_dword(path, L"~MHz", KiProcessorMhz());
         KiSetProcessorRegistryValues(path, set);
     }
 }
@@ -303,8 +303,9 @@ static void firmware(void)
     set_sz(sysinfo, L"SystemVersion", REG_SZ, L"1");
 }
 
-#if !defined(__aarch64__)
 #define DISPLAY_DRIVER L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000"
+
+#if !defined(__aarch64__)
 
 /* the pnp identifiers of a host gpu, PCI\VEN_10DE&DEV_28A1&SUBSYS_0B6F1028&REV_A1. */
 static void gpu_hardware_id(const MimeBootGpu *gpu, PWCHAR out, ULONG count)

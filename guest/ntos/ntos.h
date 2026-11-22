@@ -649,6 +649,7 @@ UCHAR KiVirtualizationFlags(void);
 USHORT KiMeasureCyclesPerYield(void);
 PCSTR KiProcessorVendor(void);
 PCSTR KiProcessorBrand(void);
+ULONG KiProcessorMhz(void);
 USHORT KiProcessorModel(void);
 USHORT KiProcessorLevel(void);
 USHORT KiProcessorRevision(void);
