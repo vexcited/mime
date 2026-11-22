@@ -96,7 +96,8 @@ static PKTHREAD volatile g_lock_owner;
 static ULONG g_lock_depth;
 static volatile LONG g_lock_waiters;
 
-void UserEnter(void)
+/* the lock for a call that changes nothing the desktop heap shows, so leaving it does not rewrite the heap. */
+void UserEnterRead(void)
 {
     PKTHREAD self = KeGetCurrentThread();
     if (g_lock_owner == self) {
@@ -118,6 +119,12 @@ void UserEnter(void)
         __atomic_sub_fetch(&g_lock_waiters, 1, __ATOMIC_RELAXED);
     }
     g_lock_depth = 1;
+}
+
+void UserEnter(void)
+{
+    UserEnterRead();
+    DeskTouch();
 }
 
 void UserLeave(void)
@@ -150,6 +157,14 @@ void UserReenter(ULONG depth)
     if (!depth)
         return;
     UserEnter();
+    g_lock_depth = depth;
+}
+
+void UserReenterRead(ULONG depth)
+{
+    if (!depth)
+        return;
+    UserEnterRead();
     g_lock_depth = depth;
 }
 

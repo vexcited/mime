@@ -16,7 +16,8 @@ typedef struct GDI_ENTRY {
 static GDI_ENTRY *g_table;
 static ULONG g_next_free = 1;
 static GDI_OBJECT *g_stock[STOCK_LAST + 1];
-static GDI_OBJECT *g_stock_96[STOCK_LAST + 1]; /* the fonts of a program that does not know the display's dpi. */
+static GDI_OBJECT *g_stock_unaware[STOCK_LAST + 1]; /* the fonts of a program that is not dpi aware. */
+static GDI_OBJECT *g_gui_fonts[16]; /* DEFAULT_GUI_FONT at the dpis from 120 to 480, made when asked. */
 
 static HANDLE make_handle(ULONG index, UCHAR type, UCHAR unique)
 {
@@ -212,7 +213,26 @@ BRUSH *GdiCreateSystemBrush(COLORREF color, int sys_color)
     if (b) {
         b->Header.Flags |= GDI_FLAG_SYSTEM;
         b->SysColor = sys_color;
+        GdiSharedSet(&b->Header);
     }
+    return b;
+}
+
+/* hbrGray of LW_BrushInit in win32kfull 26300: a monochrome 8 by 8 pattern of rows 0x55 and 0xaa, public. */
+BRUSH *GdiCreateGrayBrush(void)
+{
+    SURFACE *pattern = SurfaceCreate(8, 8, 1, 0);
+    BRUSH *b = pattern ? new_brush(BS_PATTERN, 0, 0) : nullptr;
+    if (!b) {
+        SurfaceDestroy(pattern);
+        return nullptr;
+    }
+    for (LONG y = 0; y < 8; y++)
+        for (LONG x = 0; x < 8; x++)
+            SurfacePutRaw(pattern, x, y, (x + y) & 1);
+    b->Pattern = pattern;
+    b->Header.Flags |= GDI_FLAG_SYSTEM;
+    GdiSharedSet(&b->Header);
     return b;
 }
 
@@ -264,47 +284,124 @@ GDI_REGION *GdiCreateRegion(void)
     return r;
 }
 
-static GDI_OBJECT **g_making = g_stock;
+static GDI_OBJECT *publish(GDI_OBJECT *o, int slot)
+{
+    if (!o)
+        return nullptr;
+    o->Flags |= GDI_FLAG_STOCK;
+    GdiSharedSet(o);
+    GdiSharedStock(slot, o->Handle);
+    return o;
+}
 
 static void make_stock(int index, GDI_OBJECT *o)
 {
-    if (!o)
-        return;
-    o->Flags |= GDI_FLAG_STOCK;
-    GdiSharedSet(o);
-    if (g_making == g_stock)
-        GdiSharedStock(index, o->Handle);
-    g_making[index] = o;
+    g_stock[index] = publish(o, index);
 }
 
-static LOGFONTW make_logfont(LONG height, LONG weight, PCWSTR face)
+static GDI_OBJECT *make_font(LONG height, LONG width, LONG weight, UCHAR charset, UCHAR out, UCHAR clip,
+                             UCHAR quality, UCHAR pitch, PCWSTR face)
 {
     LOGFONTW lf;
     memset(&lf, 0, sizeof(lf));
     lf.lfHeight = height;
+    lf.lfWidth = width;
     lf.lfWeight = weight;
-    lf.lfCharSet = DEFAULT_CHARSET;
-    lf.lfQuality = DEFAULT_QUALITY;
-    lf.lfPitchAndFamily = VARIABLE_PITCH | FF_SWISS;
+    lf.lfCharSet = charset;
+    lf.lfOutPrecision = out;
+    lf.lfClipPrecision = clip;
+    lf.lfQuality = quality;
+    lf.lfPitchAndFamily = pitch;
     wcscpy(lf.lfFaceName, face);
-    return lf;
+    FONT *f = new_font(&lf);
+    return f ? &f->Header : nullptr;
 }
 
-static void stock_fonts(UINT dpi)
+/*
+ * the stock fonts of win32kfull. OEM_FIXED_FONT, SYSTEM_FONT and SYSTEM_FIXED_FONT are the faces of the files named
+ * by Gre_Initialize\SmallFont, vgaoem, vgasys and vgafix, or by LargeFont, the 8514 ones, when the dpi of the session
+ * is above 108, and then the small ones are those of a program that is not dpi aware. their logical fonts are the
+ * metrics of the face, so these are the logical fonts of the six files. DEVICE_DEFAULT_FONT is SYSTEM_FONT again,
+ * ANSI_FIXED_FONT and ANSI_VAR_FONT the fonts of the display driver, cdd, which are those at any dpi.
+ */
+static const struct {
+    SHORT Height, Width, Weight;
+    UCHAR CharSet, Pitch;
+    PCWSTR Face;
+} g_system_fonts[2][3] = {
+    {{12, 8, FW_NORMAL, OEM_CHARSET, FIXED_PITCH | FF_MODERN, L"Terminal"},
+     {16, 7, FW_BOLD, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS, L"System"},
+     {15, 8, FW_NORMAL, ANSI_CHARSET, FIXED_PITCH | FF_MODERN, L"Fixedsys"}},
+    {{20, 10, FW_NORMAL, OEM_CHARSET, FIXED_PITCH | FF_MODERN, L"8514oem"},
+     {20, 9, FW_BOLD, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS, L"System"},
+     {20, 10, FW_NORMAL, ANSI_CHARSET, FIXED_PITCH | FF_MODERN, L"Fixedsys"}},
+};
+
+static const int g_system_index[3] = {OEM_FIXED_FONT, SYSTEM_FONT, SYSTEM_FIXED_FONT};
+
+BOOLEAN GdiLargeStockFonts(void)
 {
-    /* bitmap fonts are not supported, so the legacy stock fonts map to outline faces. */
-    /* System is a bitmap font with a 16 pixel cell at 96 dpi. */
-    LOGFONTW lf = make_logfont(16 * (LONG)dpi / 96, FW_BOLD, L"Segoe UI");
-    make_stock(SYSTEM_FONT, &new_font(&lf)->Header);
-    make_stock(DEVICE_DEFAULT_FONT, &new_font(&lf)->Header);
-    lf = make_logfont(-13 * (LONG)dpi / 96, FW_NORMAL, L"Courier New");
-    lf.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
-    make_stock(OEM_FIXED_FONT, &new_font(&lf)->Header);
-    make_stock(ANSI_FIXED_FONT, &new_font(&lf)->Header);
-    make_stock(SYSTEM_FIXED_FONT, &new_font(&lf)->Header);
-    lf = make_logfont(-W32MulDiv(8, (LONG)dpi, 72), FW_NORMAL, L"Microsoft Sans Serif");
-    make_stock(ANSI_VAR_FONT, &new_font(&lf)->Header);
-    make_stock(DEFAULT_GUI_FONT, &new_font(&lf)->Header);
+    return W32SystemDpi() > 108;
+}
+
+static void system_fonts(GDI_OBJECT **table, ULONG set, int slots)
+{
+    for (ULONG i = 0; i < 3; i++) {
+        int index = g_system_index[i];
+        table[index] = publish(make_font(g_system_fonts[set][i].Height, g_system_fonts[set][i].Width,
+                                         g_system_fonts[set][i].Weight, g_system_fonts[set][i].CharSet,
+                                         OUT_STRING_PRECIS, CLIP_STROKE_PRECIS, PROOF_QUALITY,
+                                         g_system_fonts[set][i].Pitch, g_system_fonts[set][i].Face),
+                               slots + index);
+    }
+}
+
+/* the height of DEFAULT_GUI_FONT, 8 points of MS Shell Dlg at a dpi. */
+static LONG gui_height(UINT dpi)
+{
+    return -(LONG)((8 * dpi + 36) / 72);
+}
+
+static GDI_OBJECT *gui_font(LONG height)
+{
+    return make_font(height, 0, FW_NORMAL, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, 0,
+                     L"MS Shell Dlg");
+}
+
+static void stock_fonts(void)
+{
+    UINT dpi = W32SystemDpi();
+    BOOLEAN large = GdiLargeStockFonts();
+    system_fonts(g_stock, large, 0);
+    if (large)
+        system_fonts(g_stock_unaware, 0, 22);
+    if (!g_stock[SYSTEM_FONT])
+        return;
+    const LOGFONTW *system = &((FONT *)g_stock[SYSTEM_FONT])->Logical;
+    make_stock(DEVICE_DEFAULT_FONT,
+               make_font(system->lfHeight, system->lfWidth, system->lfWeight, system->lfCharSet, system->lfOutPrecision,
+                         system->lfClipPrecision, system->lfQuality, system->lfPitchAndFamily, system->lfFaceName));
+    make_stock(ANSI_FIXED_FONT, make_font(12, 9, FW_NORMAL, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_STROKE_PRECIS,
+                                          PROOF_QUALITY, FIXED_PITCH, L"Courier"));
+    make_stock(ANSI_VAR_FONT, make_font(12, 9, FW_NORMAL, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_STROKE_PRECIS,
+                                        PROOF_QUALITY, VARIABLE_PITCH, L"MS Sans Serif"));
+    /* FinishStockFontInit: the gui font at the dpi of the session, and that one scaled to 96 for an unaware program. */
+    LONG height = gui_height(dpi);
+    make_stock(DEFAULT_GUI_FONT, gui_font(height));
+    g_stock_unaware[DEFAULT_GUI_FONT] = publish(gui_font(W32MulDiv(height, 96, (LONG)dpi)), 22 + DEFAULT_GUI_FONT);
+}
+
+/* GreEnsureDpiDepDefaultGuiFontForPlateau: gdi32full asks for the gui font of a dpi the first time it needs it. */
+NTSTATUS NTAPI NtGdiEnsureDpiDepDefaultGuiFontForPlateau(UINT dpi)
+{
+    if (dpi == 96 || dpi % 24 || dpi < 120 || dpi > 480)
+        return STATUS_SUCCESS;
+    ULONG slot = (dpi - 120) / 24;
+    UserEnterRead();
+    if (!g_gui_fonts[slot])
+        g_gui_fonts[slot] = publish(gui_font(gui_height(dpi)), 44 + (int)slot);
+    UserLeave();
+    return STATUS_SUCCESS;
 }
 
 static SURFACE *g_display_bitmap;
@@ -342,21 +439,15 @@ void GdiInitializeStockObjects(void)
         GdiSharedSet(&display->Header);
         g_display_bitmap = display;
     }
-    stock_fonts(W32SystemDpi());
-    /* a program that is not dpi aware has its own fonts, those of a 96 dpi display. */
-    if (W32SystemDpi() != 96) {
-        g_making = g_stock_96;
-        stock_fonts(96);
-        g_making = g_stock;
-    }
+    stock_fonts();
 }
 
 GDI_OBJECT *GdiStockObject(int index)
 {
     if (index < 0 || index > STOCK_LAST)
         return nullptr;
-    if (g_stock_96[index] && DpiCurrentAwareness() == DPI_AWARE_UNAWARE)
-        return g_stock_96[index];
+    if (index != DEFAULT_GUI_FONT && g_stock_unaware[index] && DpiCurrentAwareness() == DPI_AWARE_UNAWARE)
+        return g_stock_unaware[index];
     return g_stock[index];
 }
 
@@ -370,7 +461,10 @@ HANDLE GdiStockHandle(int index)
 
 HANDLE NTAPI NtGdiGetStockObject(int index)
 {
-    UserEnter();
+    /* GreGetStockObject has none for DEFAULT_GUI_FONT, which gdi32full takes from the shared memory by dpi. */
+    if (index == DEFAULT_GUI_FONT)
+        return nullptr;
+    UserEnterRead();
     GDI_OBJECT *o = GdiStockObject(index);
     UserLeave();
     return o ? o->Handle : nullptr;
@@ -378,7 +472,7 @@ HANDLE NTAPI NtGdiGetStockObject(int index)
 
 BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_OBJECT *o = GdiLookup(handle, 0);
     BOOL ok = FALSE;
     if (o && o->Type == GDI_TYPE_PALETTE && o->SelectCount && !(o->Flags & GDI_FLAG_STOCK)) {
@@ -396,7 +490,7 @@ BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
 
 HBRUSH NTAPI NtGdiCreateSolidBrush(COLORREF color, HBRUSH reuse)
 {
-    UserEnter();
+    UserEnterRead();
     BRUSH *b = new_brush(BS_SOLID, color, 0);
     if (b)
         GdiBrushAttrAttach(&b->Header);
@@ -409,7 +503,7 @@ HBRUSH NTAPI NtGdiCreateHatchBrushInternal(ULONG style, COLORREF color, BOOL pen
 {
     if (style > 5)
         return nullptr;
-    UserEnter();
+    UserEnterRead();
     BRUSH *b = new_brush(BS_HATCHED, color, style);
     UserLeave();
     return b ? (HBRUSH)b->Header.Handle : nullptr;
@@ -417,7 +511,7 @@ HBRUSH NTAPI NtGdiCreateHatchBrushInternal(ULONG style, COLORREF color, BOOL pen
 
 HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH reuse)
 {
-    UserEnter();
+    UserEnterRead();
     PEN *p = new_pen((UINT)style & PS_STYLE_MASK, width < 0 ? 0 : width, color, GDI_TYPE_PEN);
     UserLeave();
     return p ? (HPEN)p->Header.Handle : nullptr;
@@ -437,7 +531,7 @@ HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG 
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    UserEnter();
+    UserEnterRead();
     PEN *p = new_pen(style, (LONG)width, brush_style == BS_NULL ? 0 : color, GDI_TYPE_EXTPEN);
     if (p) {
         p->BrushStyle = brush_style;
@@ -456,7 +550,7 @@ HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG
         return nullptr;
     lf.lfFaceName[LF_FACESIZE - 1] = 0;
     FontAskFor(lf.lfFaceName);
-    UserEnter();
+    UserEnterRead();
     FONT *f = new_font(&lf);
     UserLeave();
     return f ? (HFONT)f->Header.Handle : nullptr;
@@ -464,7 +558,7 @@ HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG
 
 int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_OBJECT *o = GdiLookup(handle, 0);
     union {
         LOGBRUSH brush;
@@ -521,6 +615,9 @@ int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
                 out.dib.dshSection = s->UserSection;
                 out.dib.dsOffset = s->UserSectionOffset;
                 out.dib.dsBmih = s->Info;
+                /* the header of a top-down section says its height as a bottom-up one would. */
+                if (out.dib.dsBmih.biHeight < 0)
+                    out.dib.dsBmih.biHeight = -out.dib.dsBmih.biHeight;
                 memcpy(out.dib.dsBitfields, s->Masks, sizeof(s->Masks));
                 if (size >= (int)sizeof(DIBSECTION))
                     needed = sizeof(DIBSECTION);
@@ -555,7 +652,7 @@ static GDI_REGION *region_of(HRGN h)
 
 HRGN NTAPI NtGdiCreateRectRgn(int left, int top, int right, int bottom)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = GdiCreateRegion();
     if (r) {
         RECT rc = {W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
@@ -569,7 +666,7 @@ HRGN NTAPI NtGdiCreateRectRgn(int left, int top, int right, int bottom)
 /* an ellipse in the rectangle, which windows gives no attributes. */
 HRGN NTAPI NtGdiCreateEllipticRgn(int left, int top, int right, int bottom)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = GdiCreateRegion();
     if (r)
         RgnRoundRect(&r->Region, left, top, right, bottom, right > left ? right - left : left - right,
@@ -580,7 +677,7 @@ HRGN NTAPI NtGdiCreateEllipticRgn(int left, int top, int right, int bottom)
 
 HRGN NTAPI NtGdiCreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = GdiCreateRegion();
     if (r)
         RgnRoundRect(&r->Region, left, top, right, bottom, width, height);
@@ -604,7 +701,7 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
         return nullptr;
     HRGN result = nullptr;
     if (NT_SUCCESS(MimeCopyFromUser(rects, (const UCHAR *)data + header.dwSize, header.nCount * sizeof(RECT)))) {
-        UserEnter();
+        UserEnterRead();
         GDI_REGION *r = GdiCreateRegion();
         if (r) {
             if (have_xform)
@@ -621,7 +718,7 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
 
 int NTAPI NtGdiCombineRgn(HRGN dst, HRGN a, HRGN b, int mode)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *d = region_of(dst), *ra = region_of(a), *rb = mode == RGN_COPY ? nullptr : region_of(b);
     int result = ERROR;
     if (d && ra && (mode == RGN_COPY || rb) && mode >= RGN_AND && mode <= RGN_COPY) {
@@ -636,7 +733,7 @@ int NTAPI NtGdiCombineRgn(HRGN dst, HRGN a, HRGN b, int mode)
 
 BOOL NTAPI NtGdiSetRectRgn(HRGN region, int left, int top, int right, int bottom)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = region_of(region);
     RECT rc = {W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
     BOOL ok = r && RgnSetRect(&r->Region, &rc);
@@ -646,7 +743,7 @@ BOOL NTAPI NtGdiSetRectRgn(HRGN region, int left, int top, int right, int bottom
 
 int NTAPI NtGdiOffsetRgn(HRGN region, int x, int y)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = region_of(region);
     int result = ERROR;
     if (r) {
@@ -659,7 +756,7 @@ int NTAPI NtGdiOffsetRgn(HRGN region, int x, int y)
 
 int NTAPI NtGdiGetRgnBox(HRGN region, LPRECT rect)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = region_of(region);
     RECT box = {0, 0, 0, 0};
     int result = ERROR;
@@ -675,7 +772,7 @@ int NTAPI NtGdiGetRgnBox(HRGN region, LPRECT rect)
 
 BOOL NTAPI NtGdiPtInRegion(HRGN region, int x, int y)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = region_of(region);
     BOOL in = r && RgnPtIn(&r->Region, x, y);
     UserLeave();
@@ -687,7 +784,7 @@ BOOL NTAPI NtGdiRectInRegion(HRGN region, LPRECT rect)
     RECT rc;
     if (!NT_SUCCESS(MimeCopyFromUser(&rc, rect, sizeof(rc))))
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = region_of(region);
     BOOL in = r && RgnRectIn(&r->Region, &rc);
     UserLeave();
@@ -696,7 +793,7 @@ BOOL NTAPI NtGdiRectInRegion(HRGN region, LPRECT rect)
 
 BOOL NTAPI NtGdiEqualRgn(HRGN a, HRGN b)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *ra = region_of(a), *rb = region_of(b);
     BOOL eq = ra && rb && RgnEqual(&ra->Region, &rb->Region);
     UserLeave();
@@ -705,7 +802,7 @@ BOOL NTAPI NtGdiEqualRgn(HRGN a, HRGN b)
 
 DWORD NTAPI NtGdiGetRegionData(HRGN region, DWORD size, LPRGNDATA data)
 {
-    UserEnter();
+    UserEnterRead();
     GDI_REGION *r = region_of(region);
     DWORD needed = 0;
     if (r) {

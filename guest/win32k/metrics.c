@@ -2,6 +2,7 @@
 #include "win32k.h"
 
 BRUSH *GdiCreateSystemBrush(COLORREF color, int sys_color);
+BRUSH *GdiCreateGrayBrush(void);
 
 W32_DISPLAY W32Display;
 
@@ -92,6 +93,7 @@ BOOLEAN MetricsHighContrast(void)
 
 static COLORREF g_colors[NUM_SYSCOLORS];
 static BRUSH *g_brushes[NUM_SYSCOLORS];
+static BRUSH *g_gray;
 
 /* read system DPI once from host boot information, as on Windows. */
 static void read_display(void)
@@ -137,6 +139,7 @@ void MetricsInitialize(void)
         g_colors[i] = g_default_colors[i];
         g_brushes[i] = GdiCreateSystemBrush(g_colors[i], i);
     }
+    g_gray = GdiCreateGrayBrush();
     W32SystemFont = W32MessageFontForDpi(W32Display.Dpi);
 }
 
@@ -176,6 +179,11 @@ HBRUSH MetricsSysColorBrush(int index)
     return index >= 0 && index < NUM_SYSCOLORS && g_brushes[index] ? (HBRUSH)g_brushes[index]->Header.Handle : nullptr;
 }
 
+HBRUSH MetricsGrayBrush(void)
+{
+    return g_gray ? (HBRUSH)g_gray->Header.Handle : nullptr;
+}
+
 static int scale(int v, UINT dpi)
 {
     return W32MulDiv(v, (LONG)dpi, 96);
@@ -187,7 +195,40 @@ static int screen(int v, ULONG awareness)
     return DpiScale(v, W32SystemDpi(), DpiScaleOf(awareness));
 }
 
-/* a metric at a dpi, with screen sizes in the pixels of an awareness. */
+/* GetCharDimensions of user32: the average width of the 52 latin letters, the way dialog units are measured. */
+static int font_char_width(const LOGFONTW *lf, UINT dpi)
+{
+    static const WCHAR letters[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    FONT_INSTANCE *font = FontRealize(lf, dpi);
+    if (!font)
+        return 0;
+    if (!(font->Metrics.tmPitchAndFamily & TMPF_FIXED_PITCH))
+        return font->Metrics.tmAveCharWidth;
+    return (FontTextWidth(font, letters, 52, 0) / 26 + 1) / 2;
+}
+
+/* the menu check mark of win32kbase: the menu font with its leading, made odd. */
+static int menu_check(UINT dpi)
+{
+    LOGFONTW lf = W32MessageFontForDpi(dpi);
+    FONT_INSTANCE *font = FontRealize(&lf, dpi);
+    if (!font)
+        return scale(15, dpi);
+    return ((font->Metrics.tmHeight + font->Metrics.tmExternalLeading + 1) & ~1) - 1;
+}
+
+/* GetCursorSizesIndexFromDpi and GetCursorSizeFromIndex of win32kfull: cursors come in five sizes. */
+static int cursor_size(UINT dpi)
+{
+    return dpi < 144 ? 32 : dpi < 192 ? 48 : dpi < 288 ? 64 : dpi < 384 ? 96 : 128;
+}
+
+/*
+ * a metric at a dpi, with screen sizes in the pixels of an awareness. the ones that depend on the dpi follow
+ * ScaleSystemMetricForDPIWithoutCache of win32kfull 26300, and the caption buttons ThemeGetSystemMetricsForDpi of
+ * uxtheme, which on windows answers for every themed program: the width is the height in the ratio of the buttons
+ * of the theme, 36 to 22, and a small button is square.
+ */
 int MetricsGetFor(int index, UINT dpi, ULONG awareness)
 {
     if (!dpi)
@@ -222,7 +263,7 @@ int MetricsGetFor(int index, UINT dpi, ULONG awareness)
         return scale(17, dpi);
     case SM_CYCAPTION:
     case SM_CYSMCAPTION:
-        return scale(23, dpi);
+        return scale(22, dpi) + 1;
     case SM_CXBORDER:
     case SM_CYBORDER:
     case SM_CXFOCUSBORDER:
@@ -233,15 +274,16 @@ int MetricsGetFor(int index, UINT dpi, ULONG awareness)
         return scale(3, dpi);
     case SM_CXICON:
     case SM_CYICON:
+        return scale(32, dpi);
     case SM_CXCURSOR:
     case SM_CYCURSOR:
-        return scale(32, dpi);
+        return cursor_size(dpi);
     case SM_CYMENU:
-        return scale(20, dpi);
+        return scale(19, dpi) + 1;
     case SM_CXFULLSCREEN:
         return screen(W32Display.Work.right, awareness) - screen(W32Display.Work.left, awareness);
     case SM_CYFULLSCREEN:
-        return screen(W32Display.Work.bottom, awareness) - screen(W32Display.Work.top, awareness) - scale(23, dpi);
+        return screen(W32Display.Work.bottom, awareness) - screen(W32Display.Work.top, awareness) - scale(22, dpi) - 1;
     case SM_MOUSEPRESENT:
     case SM_MOUSEWHEELPRESENT:
     case SM_SAMEDISPLAYFORMAT:
@@ -249,13 +291,16 @@ int MetricsGetFor(int index, UINT dpi, ULONG awareness)
     case SM_CMOUSEBUTTONS:
         return 5;
     case SM_CXMIN:
-    case SM_CXMINTRACK:
-        return scale(136, dpi);
+    case SM_CXMINTRACK: {
+        /* three caption buttons of the width without the theme, the frame, two average letters and the icon. */
+        LOGFONTW lf = W32MessageFontForDpi(dpi);
+        return 3 * scale(22, dpi) + 2 * (frame + padded + 2 * font_char_width(&lf, dpi)) + scale(22, dpi) + 4;
+    }
     case SM_CYMIN:
     case SM_CYMINTRACK:
-        return scale(39, dpi);
+        return 2 * (frame + padded) + scale(22, dpi) + 1;
     case SM_CXSIZE:
-        return scale(36, dpi);
+        return W32MulDiv(scale(22, dpi), 36, 22);
     case SM_CYSIZE:
     case SM_CXSMSIZE:
     case SM_CYSMSIZE:
@@ -290,7 +335,7 @@ int MetricsGetFor(int index, UINT dpi, ULONG awareness)
         return scale(19, dpi);
     case SM_CXMENUCHECK:
     case SM_CYMENUCHECK:
-        return scale(15, dpi);
+        return menu_check(dpi);
     case SM_CXMAXTRACK:
         return screen(W32Display.Width, awareness) + 2 * (frame + padded);
     case SM_CYMAXTRACK:
@@ -319,11 +364,11 @@ static void fill_nonclient(NONCLIENTMETRICSW *m, UINT dpi)
     m->iBorderWidth = 1;
     m->iScrollWidth = scale(17, dpi);
     m->iScrollHeight = scale(17, dpi);
-    m->iCaptionWidth = scale(36, dpi);
-    m->iCaptionHeight = scale(23, dpi);
+    m->iCaptionWidth = W32MulDiv(scale(22, dpi), 36, 22);
+    m->iCaptionHeight = scale(22, dpi);
     m->lfCaptionFont = W32CaptionFontForDpi(dpi);
     m->iSmCaptionWidth = scale(22, dpi);
-    m->iSmCaptionHeight = scale(23, dpi);
+    m->iSmCaptionHeight = scale(22, dpi);
     m->lfSmCaptionFont = W32CaptionFontForDpi(dpi);
     m->iMenuWidth = scale(19, dpi);
     m->iMenuHeight = scale(19, dpi);
@@ -589,8 +634,9 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
                 g_colors[i] = MetricsHighContrast() ? g_high_contrast_colors[i] : g_default_colors[i];
                 if (g_brushes[i])
                     g_brushes[i]->Color = g_colors[i];
+                UserSharedColor(i, g_colors[i], g_colors[i]);
             }
-            WndSystemChanged();
+            WndSystemChanged(TRUE);
         }
         return TRUE;
     }
@@ -621,6 +667,43 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
 }
 
 /* from 0x1000 on the odd actions set. the older ones follow no rule, and these are the ones that set. */
+/*
+ * SetSysColors of user32, xxxSetSysColors and SetSysColor of win32kbase 26300: each index below 31 takes its
+ * colour, the system brush with it, and nothing is saved. with SSCF_NOTIFY the strip is drawn again, the top level
+ * windows get WM_SYSCOLORCHANGE and everything is repainted. it succeeds whatever the indices are.
+ */
+#define SSCF_NOTIFY 0x1
+
+BOOL NTAPI NtUserSetSysColors(int count, const INT *indices, const COLORREF *colors, DWORD flags)
+{
+    ULONG n = (ULONG)count;
+    if (n > 0x10000000)
+        return FALSE;
+    INT *index = n ? W32Alloc(n * sizeof(INT)) : nullptr;
+    COLORREF *color = n ? W32Alloc(n * sizeof(COLORREF)) : nullptr;
+    BOOL ok = !n || (index && color && NT_SUCCESS(MimeCopyFromUser(index, indices, n * sizeof(INT))) &&
+                     NT_SUCCESS(MimeCopyFromUser(color, colors, n * sizeof(COLORREF))));
+    if (ok) {
+        UserEnter();
+        for (ULONG i = 0; i < n; i++) {
+            if ((ULONG)index[i] >= NUM_SYSCOLORS)
+                continue;
+            g_colors[index[i]] = color[i] & 0xFFFFFF;
+            if (g_brushes[index[i]])
+                g_brushes[index[i]]->Color = g_colors[index[i]];
+            UserSharedColor(index[i], color[i], g_colors[index[i]]);
+        }
+        if (flags & SSCF_NOTIFY)
+            WndSystemChanged(FALSE);
+        UserLeave();
+    }
+    if (index)
+        W32Free(index);
+    if (color)
+        W32Free(color);
+    return ok;
+}
+
 static BOOL sets_parameter(UINT action)
 {
     static const UCHAR setters[] = {0x02, 0x04, 0x06, 0x0B, 0x0F, 0x11, 0x13, 0x14, 0x15, 0x17, 0x1A, 0x1C, 0x1D, 0x1E, 0x20,

@@ -484,6 +484,7 @@ void PaintPresent(WND *top)
     /* draw a pending frame before the first present. */
     if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && !(top->LayerFlags & MIME_LAYER_UPDATE))
         return;
+    DeskTouch();
     RECT dirty = s->Dirty;
     s->Dirty = (RECT){0, 0, 0, 0};
     /* the border only changes when the program painted against the client edge. */

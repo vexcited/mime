@@ -41,6 +41,8 @@ static inline LONG W32MulDiv(LONG a, LONG b, LONG c)
  * user callbacks and while sleeping in a message loop.
  */
 void UserEnter(void);
+void UserEnterRead(void);
+void UserReenterRead(ULONG depth);
 void UserLeave(void);
 ULONG UserLeaveAll(void);
 void UserReenter(ULONG depth);
@@ -338,7 +340,8 @@ typedef struct DC {
     UCHAR Awareness; /* the DPI awareness of the window or thread it belongs to: what HORZRES and mapping modes show. */
     struct FONT_INSTANCE *Realized;
     FONT *RealizedFor;
-    RECT Bounds;
+    RECT Bounds;      /* what was drawn since SetBoundsRect reset it, in device units, empty for none. */
+    BOOLEAN BoundsOn; /* SetBoundsRect enabled the accumulation. */
     ULONG PathState;
     GDI_PATH Path;
     int PixelFormat; /* memory DCs; window DCs use the window's. */
@@ -388,6 +391,9 @@ void DcTransformPoint(DC *dc, LONG *x, LONG *y); /* world transform only. */
 void DcGetXform(DC *dc, XFORM *out);
 BOOLEAN DcIsScaled(DC *dc);
 void DcDeviceToLogical(DC *dc, LONG *x, LONG *y);
+/* what a drawing touched, in surface units: marked drawn on the surface, and kept by SetBoundsRect when enabled. */
+void DcMarkDrawn(DC *dc, const RECT *r, const REGION *clip);
+void DcAccumulateBounds(DC *dc, const RECT *r, const REGION *clip);
 LONG DcPenWidth(DC *dc); /* the selected pen's width in device pixels, at least 1. */
 BOOLEAN DcIsPathOpen(DC *dc);
 /* path recording, logical coordinates; used by the drawing services while a path is open. */
@@ -547,6 +553,7 @@ typedef struct USER_OBJECT {
     LONG RefCount;
     ULONG DeskOffset; /* where the desktop heap mirrors it, 0 while it does not, deskheap.c. */
     ULONG DeskScroll; /* the scroll bars of a window there. */
+    LIST_ENTRY Live;  /* the objects of its type that have a handle. */
 } USER_OBJECT;
 
 HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type);
@@ -556,6 +563,8 @@ void UserReference(USER_OBJECT *object);
 void UserDereference(USER_OBJECT *object);
 /* the next object of a type from an index on, which moves past it. */
 USER_OBJECT *UserNextObject(ULONG *index, UCHAR type);
+/* the next object of a type that has a handle, from null, in no order. */
+USER_OBJECT *UserNextLive(USER_OBJECT *previous, UCHAR type);
 
 /* threads, processes, queues. */
 
@@ -652,6 +661,9 @@ typedef struct W32THREAD {
     LIST_ENTRY Input;
     LIST_ENTRY Sent;        /* messages sent to this thread by others. */
     ULONG DeskInfo;         /* its CLIENTTHREADINFO in the desktop heap, see deskheap.c. */
+    ULONG NoPaintSerial;    /* the state of DeskCleanSerial in which no window of the thread needed painting. */
+    ULONG TimerSerial;      /* the state of DeskCleanSerial in which TimerDue was found. */
+    LONG64 TimerDue;
     BOOLEAN ClientSetup;    /* ClientThreadSetup of user32 was asked for, see service_enter of main.c. */
     SENT_MESSAGE *Receiving; /* sent message being processed. */
     BOOLEAN Replied;         /* the message being processed was answered before its procedure returned. */
@@ -739,6 +751,8 @@ void UserSharedMonitors(void);
 /* deskheap.c: the heap of the desktop user32 reads. */
 struct WND_CLASS;
 void DeskSync(void);
+void DeskTouch(void);
+ULONG DeskCleanSerial(void);
 void DeskObjectFreed(USER_OBJECT *object);
 NTSTATUS DeskAttachThread(struct W32PROCESS *p);
 void DeskProcessExited(struct W32PROCESS *p);
@@ -854,6 +868,7 @@ typedef struct WND_CLASS {
     PUCHAR Extra;
     ULONG DeskOffset, DeskSize;     /* its block in the heap of the desktop, deskheap.c. */
     ULONG DeskName, DeskNameSize;   /* its ansi name there. */
+    ULONG DeskWritten;              /* the sync that last wrote it. */
 } WND_CLASS;
 
 #define WNDF_DESTROYING 0x0001
@@ -957,6 +972,7 @@ typedef struct WND {
     UINT Dpi;
     UCHAR Awareness;  /* the DPI awareness it was created with, its rectangles are in that awareness' coordinates. */
     UINT MonitorDpi;  /* the dpi of the monitor the window was last on, which is the one it follows when it moves. */
+    HWND InheritMonitor; /* the window whose monitor this one follows instead of its own, NtUserInheritWindowMonitor. */
     USHORT DeferredDpi; /* the dpi the program was last told of while its changes are deferred, else 0. */
     UCHAR Hosting;    /* the DPI hosting behavior of its thread when it was created, 1 is mixed. */
     UCHAR ControlDpi; /* DCDC_*, what a dialog does to this control when the dpi changes. */
@@ -1108,7 +1124,8 @@ void ScrollBarInfo(const WND *w, int bar, SCROLLBARINFO *info);
 /* high contrast is on: the system colors are the high contrast ones and the visual style is off. */
 BOOLEAN MetricsHighContrast(void);
 /* the system colors or the visual style changed: every window is told and drawn again. */
-void WndSystemChanged(void);
+/* the colours of the system changed, and with them the theme when it says so. */
+void WndSystemChanged(BOOLEAN theme);
 /* a color of the Window or Menu class of the visual style, light or dark. */
 BOOLEAN FrameThemeColor(BOOLEAN menu, BOOLEAN dark, int part, int state, int prop, COLORREF *out);
 BOOLEAN FrameBorderColor(BOOLEAN dark, BOOLEAN active, ULONG *argb);
@@ -1272,6 +1289,7 @@ extern BOOLEAN InputCursorHidden; /* the host shows no cursor. */
 POINT InputClampCursor(POINT pt);
 void InputUpdatePointer(void);
 void InputCursorMoved(void);
+void InputSetCursorPos(POINT physical);
 void InputCursorShown(void);
 void InputForegroundChanged(void);
 BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected);
@@ -1437,6 +1455,8 @@ extern ULONG ScreenLayerStamp;
 extern ULONG ScreenSerial;
 extern ULONG VkProcessCount;
 HBRUSH MetricsSysColorBrush(int index);
+HBRUSH MetricsGrayBrush(void);
+void UserSharedColor(int index, COLORREF unmatched, COLORREF color);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
 void MetricsDisplayChanged(void);

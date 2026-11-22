@@ -36,7 +36,7 @@ DWORD NTAPI NtUserGetQueueStatus(UINT flags)
         W32SetLastError(ERROR_INVALID_FLAGS);
         return 0;
     }
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     DWORD r = t ? queue_status(t, flags, TRUE) : 0;
     UserLeave();
@@ -49,7 +49,7 @@ DWORD NTAPI NtUserGetQueueStatusReadonly(UINT flags)
         W32SetLastError(ERROR_INVALID_FLAGS);
         return 0;
     }
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     DWORD r = t ? queue_status(t, flags, FALSE) : 0;
     UserLeave();
@@ -214,10 +214,12 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         r = (ULONG_PTR)(LONG_PTR)MetricsGet((int)param1, (UINT)param2);
         break;
     case MIME_TWOPARAM_SETCURSORPOS:
-        InputCursorPos = (POINT){(LONG)param1, (LONG)param2};
-        DpiPointConvert(&InputCursorPos, DpiCurrentAwareness(), DPI_PHYSICAL);
-        InputCursorMoved();
+    {
+        POINT pt = {(LONG)param1, (LONG)param2};
+        DpiPointConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
+        InputSetCursorPos(pt);
         r = 1;
+    }
         break;
     case MIME_TWOPARAM_HOSTMOVESIZE: {
         WND *w = WndLookup((HWND)param1);

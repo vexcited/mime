@@ -129,7 +129,9 @@ void GdiSharedSet(const GDI_OBJECT *object)
     BOOLEAN stock = (object->Flags & GDI_FLAG_STOCK) != 0;
     GDI_SHARED_ENTRY *e = (GDI_SHARED_ENTRY *)g_base + (handle & 0xffff);
     e->Kernel = 0xff00000000000000ull | ((handle >> 24) & 0xff) << 16 | (handle & 0xffff);
-    e->Process = stock ? 0 : (ULONG)(ULONG_PTR)object->OwnerPid;
+    /* an object of win32k itself, as a brush of a system color, is public like a stock one: gdi32 refuses to select
+       an object of another process. */
+    e->Process = stock || (object->Flags & GDI_FLAG_SYSTEM) ? 0 : (ULONG)(ULONG_PTR)object->OwnerPid;
     e->Upper = (USHORT)(handle >> 16);
     e->Type = (UCHAR)((handle >> 16) & 0x1f);
     e->Flags = stock && (e->Type == 0x10 || e->Type == 0x09);
@@ -358,10 +360,14 @@ NTSTATUS NTAPI NtGdiGetEntry(ULONG index, PVOID entry)
     return MimeCopyToUser(entry, &copy, sizeof(copy));
 }
 
-/* the handles of the stock objects by their index, up to 21, DEFAULT_BITMAP, which gdi32 hands out for a bitmap of size 0. */
+/*
+ * the handles of the stock objects by their index, up to 21, DEFAULT_BITMAP, which gdi32 hands out for a bitmap of size
+ * 0. gdi32full's GetStockObject reads 22 more at 0x180160, the fonts of a program that is not dpi aware, and 16 at
+ * 0x180210, the gui fonts of the dpis from 120 to 480, so they are slots 22 to 59 here.
+ */
 void GdiSharedStock(int index, HANDLE handle)
 {
-    if (ready() && index >= 0 && index <= 21)
+    if (ready() && index >= 0 && index < 60)
         *(PULONG64)(g_base + GDI_SHARED_STOCK + index * 8) = (ULONG64)(ULONG_PTR)handle;
 }
 
@@ -382,7 +388,7 @@ NTSTATUS GdiSharedMap(W32PROCESS *p)
 /* the cookie of the attributes, one for the session, never 0. gdi32 calls it once as it loads. */
 ULONG64 NTAPI NtGdiInit2(void)
 {
-    UserEnter();
+    UserEnterRead();
     W32PROCESS *p = W32GetProcess();
     if (p)
         GdiSharedMap(p);

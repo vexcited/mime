@@ -13,6 +13,18 @@ typedef struct USER_ENTRY {
 
 static USER_ENTRY *g_user_table;
 static ULONG g_user_next = USER_FIRST_INDEX;
+#define USER_LIVE_TYPES 16
+static LIST_ENTRY g_user_live[USER_LIVE_TYPES];
+
+static PLIST_ENTRY live_list(UCHAR type)
+{
+    if (type >= USER_LIVE_TYPES)
+        return nullptr;
+    PLIST_ENTRY list = &g_user_live[type];
+    if (!list->Flink)
+        InitializeListHead(list);
+    return list;
+}
 
 /* windows hwnds look like 0x00010042: generation in the high word, index in the low word. */
 HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type)
@@ -34,6 +46,11 @@ HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type)
             object->Type = type;
             object->Handle = (HANDLE)(ULONG_PTR)(((ULONG)gen << 16) | i);
             object->RefCount = 1;
+            PLIST_ENTRY list = live_list(type);
+            if (list)
+                InsertTailList(list, &object->Live);
+            else
+                object->Live.Flink = object->Live.Blink = nullptr;
             return object->Handle;
         }
     }
@@ -46,7 +63,19 @@ void UserFreeHandle(USER_OBJECT *object)
     if (g_user_table && i < USER_MAX_HANDLES && g_user_table[i].Object == object) {
         DeskObjectFreed(object);
         g_user_table[i].Object = nullptr;
+        if (object->Live.Flink)
+            RemoveEntryList(&object->Live);
+        object->Live.Flink = object->Live.Blink = nullptr;
     }
+}
+
+USER_OBJECT *UserNextLive(USER_OBJECT *previous, UCHAR type)
+{
+    PLIST_ENTRY list = live_list(type);
+    if (!list)
+        return nullptr;
+    PLIST_ENTRY e = previous ? previous->Live.Flink : list->Flink;
+    return e == list ? nullptr : CONTAINING_RECORD(e, USER_OBJECT, Live);
 }
 
 USER_OBJECT *UserNextObject(ULONG *index, UCHAR type)
@@ -450,7 +479,7 @@ int NTAPI NtUserGetClassName(HWND hwnd, BOOL real, PUNICODE_STRING user_name)
     UNICODE_STRING s;
     if (!NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s))))
         return 0;
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     WCHAR name[256];
     ULONG n = 0;

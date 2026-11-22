@@ -231,6 +231,8 @@ static LRESULT call_sent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG k
 
 void MsgProcessSent(W32THREAD *t)
 {
+    if (!IsListEmpty(&t->Sent))
+        DeskTouch();
     while (!IsListEmpty(&t->Sent)) {
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
         if (sm->ResultCall) {
@@ -471,6 +473,8 @@ typedef struct TIMER {
 } TIMER;
 
 static LIST_ENTRY g_timers = {&g_timers, &g_timers};
+/* moves at each change of a timer, which TimerNextDue keeps its answer for. */
+static ULONG g_timer_serial = 1;
 
 static ULONG64 now_ms(void)
 {
@@ -516,6 +520,7 @@ UINT_PTR TimerSet(W32THREAD *t, HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC p
     tm->Proc = proc;
     tm->System = system;
     tm->Due = now_ms() + elapse;
+    g_timer_serial++;
     QueueWake(t, 0);
     return hwnd ? (id ? id : 1) : id;
 }
@@ -524,6 +529,7 @@ BOOLEAN TimerKill(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system)
 {
     TIMER *tm = find_timer(t, hwnd, id, system);
     if (tm) {
+        g_timer_serial++;
         RemoveEntryList(&tm->Links);
         W32Free(tm);
     }
@@ -554,6 +560,7 @@ void TimerRemoveWindow(WND *w)
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
         e = e->Flink;
         if (tm->Hwnd == h) {
+            g_timer_serial++;
             RemoveEntryList(&tm->Links);
             W32Free(tm);
         }
@@ -566,6 +573,7 @@ void TimerRemoveThread(W32THREAD *t)
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
         e = e->Flink;
         if (tm->Thread == t) {
+            g_timer_serial++;
             RemoveEntryList(&tm->Links);
             W32Free(tm);
         }
@@ -574,12 +582,16 @@ void TimerRemoveThread(W32THREAD *t)
 
 LONG64 TimerNextDue(W32THREAD *t)
 {
+    if (t->TimerSerial == g_timer_serial)
+        return t->TimerDue;
     LONG64 best = -1;
     for (PLIST_ENTRY e = g_timers.Flink; e != &g_timers; e = e->Flink) {
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
         if (tm->Thread == t && (best < 0 || (LONG64)tm->Due < best))
             best = (LONG64)tm->Due;
     }
+    t->TimerSerial = g_timer_serial;
+    t->TimerDue = best;
     return best;
 }
 
@@ -621,6 +633,7 @@ BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN rem
             continue;
         /* the caret blinks inside win32k, its timer never reaches the window. */
         if (tm->System && CaretTimer(t, tm->Hwnd, tm->Id)) {
+            g_timer_serial++;
             tm->Due = now + tm->Elapse;
             continue;
         }
@@ -633,6 +646,7 @@ BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN rem
         out->time = (DWORD)now;
         out->pt = InputCursorPos;
         if (remove) {
+            g_timer_serial++;
             tm->Due = now + tm->Elapse;
             /* rotate so timers with equal periods take turns. */
             RemoveEntryList(&tm->Links);
@@ -725,7 +739,7 @@ static UINT wanted_kinds(UINT flags)
     return kinds;
 }
 
-BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait)
+static BOOLEAN peek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait)
 {
     BOOLEAN remove = (flags & PM_REMOVE) != 0;
     UINT kinds = wanted_kinds(flags);
@@ -737,6 +751,9 @@ BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flag
     }
     for (;;) {
         t->LastRead = W32TickCount();
+        /* a posted message changes nothing the desktop heap shows, the input and window commands may. */
+        if (!IsListEmpty(&t->Input))
+            DeskTouch();
         MsgProcessSent(t);
         t->WakeBits = 0;
 
@@ -744,6 +761,7 @@ scan_posted:
         for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink) {
             QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
             if (qm->Kind == QM_WINDOW_SHOW || qm->Kind == QM_WINDOW_PLACEMENT) {
+                DeskTouch();
                 RemoveEntryList(e);
                 WND *w = WndLookup(qm->Msg.hwnd);
                 if (w && w->Thread == t) {
@@ -836,8 +854,10 @@ scan_posted:
                 out->lParam = 0;
                 out->time = W32TickCount();
                 out->pt = InputCursorPos;
-                if (remove)
+                if (remove && (w->Flags & WNDF_INTERNAL_PAINT)) {
+                    DeskTouch();
                     w->Flags &= ~WNDF_INTERNAL_PAINT;
+                }
                 return TRUE;
             }
         }
@@ -863,7 +883,7 @@ scan_posted:
         t->InWait = TRUE;
         ULONG depth = UserLeaveAll();
         NTSTATUS status = KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
-        UserReenter(depth);
+        UserReenterRead(depth);
         t->InWait = FALSE;
         t->LastRead = W32TickCount();
         if (status == STATUS_THREAD_IS_TERMINATING) {
@@ -874,6 +894,15 @@ scan_posted:
             return TRUE;
         }
     }
+}
+
+/* the modal loops of the window manager change windows after a message, which a wait in peek let the heap sync. */
+BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait)
+{
+    BOOLEAN got = peek(t, out, hwnd, min, max, flags, wait);
+    if (got)
+        DeskTouch();
+    return got;
 }
 
 ULONG MsgInSendFlags(W32THREAD *t)
@@ -915,14 +944,14 @@ static void get_message_hook(W32THREAD *t, MSG *m, UINT flags)
 
 BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
     /* existing queue contents no longer count as new input for MsgWaitForMultipleObjects. */
     if (t)
         t->ChangeBits = 0;
-    if (t && MsgPeek(t, &m, hwnd, min, max, PM_REMOVE, TRUE)) {
+    if (t && peek(t, &m, hwnd, min, max, PM_REMOVE, TRUE)) {
         DpiPixelConvert(&m.pt, DPI_PHYSICAL, DpiThreadAwareness(t));
         get_message_hook(t, &m, PM_REMOVE);
     }
@@ -934,13 +963,13 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
 
 BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT flags)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
     if (t)
         t->ChangeBits = 0;
-    BOOLEAN got = t && MsgPeek(t, &m, hwnd, min, max, flags, FALSE);
+    BOOLEAN got = t && peek(t, &m, hwnd, min, max, flags, FALSE);
     if (got) {
         DpiPixelConvert(&m.pt, DPI_PHYSICAL, DpiThreadAwareness(t));
         get_message_hook(t, &m, flags);
@@ -953,7 +982,7 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
 
 BOOL NTAPI NtUserWaitMessage(void)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     if (t) {
         t->LastRead = W32TickCount();
@@ -970,7 +999,7 @@ BOOL NTAPI NtUserWaitMessage(void)
             t->InWait = TRUE;
             ULONG depth = UserLeaveAll();
             KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
-            UserReenter(depth);
+            UserReenterRead(depth);
             t->InWait = FALSE;
             t->LastRead = W32TickCount();
             MsgProcessSent(t);
@@ -1062,7 +1091,7 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         return WAIT_FAILED_VALUE;
     }
     resolve_standard_handles(handles, count);
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     LONG64 deadline = timeout == WAIT_FOREVER ? -1 : (LONG64)now_ms() + timeout;
     DWORD result = WAIT_FAILED_VALUE;
@@ -1098,7 +1127,7 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         ULONG depth = UserLeaveAll();
         NTSTATUS status = ExWaitHandlesAndObject(count, handles, WaitAny, (flags & MWMO_ALERTABLE) != 0, pw, UserMode,
                                                  &t->Event);
-        UserReenter(depth);
+        UserReenterRead(depth);
         t->InWait = FALSE;
         t->LastRead = W32TickCount();
         if (status == STATUS_USER_APC || status == STATUS_ALERTED) {
@@ -1231,7 +1260,7 @@ BOOL NTAPI NtUserTranslateMessage(const MSG *user_msg, UINT flags)
 
 BOOL NTAPI NtUserGetMessagePos(void)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     POINT at = t ? t->MessagePos : (POINT){0, 0};
     DpiPixelConvert(&at, DPI_PHYSICAL, DpiThreadAwareness(t));
@@ -1976,6 +2005,13 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_NCMOUSELEAVE:
     case WM_NCRBUTTONUP: {
         POINT pt = {(SHORT)LOWORD(lparam), (SHORT)HIWORD(lparam)};
+        if (msg == WM_NCMOUSEMOVE || msg == WM_NCMOUSELEAVE)
+            ScrollMouse(w, msg, (LONG)wparam, pt);
+        /* a press on a scroll bar is the command that tracks it, as xxxHandleNCMouseGuys sends it. */
+        if ((msg == WM_NCLBUTTONDOWN || msg == WM_NCLBUTTONDBLCLK) && (wparam == HTVSCROLL || wparam == HTHSCROLL)) {
+            MsgSend(w, WM_SYSCOMMAND, wparam == HTVSCROLL ? SC_VSCROLL : SC_HSCROLL, lparam);
+            return 0;
+        }
         LRESULT r = FrameMouse(w, msg, (LONG)wparam, pt);
         /* a press that no caption button took moves or sizes the window. */
         if (msg == WM_NCLBUTTONDOWN && !w->Header.Destroyed && !w->CaptionTracking)
@@ -1987,6 +2023,11 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         if (MoveSizeDefault(w, msg, wparam, lparam))
             return 0;
         switch (wparam & 0xFFF0) {
+        case SC_VSCROLL:
+        case SC_HSCROLL:
+            ScrollTrack(w, (wparam & 0xFFF0) == SC_VSCROLL ? SB_VERT : SB_HORZ,
+                        (POINT){(SHORT)LOWORD(lparam), (SHORT)HIWORD(lparam)});
+            break;
         case SC_CLOSE:
             if (!(WndTopLevel(w)->Flags & WNDF_NOCLOSE))
                 MsgSend(w, WM_CLOSE, 0, 0);

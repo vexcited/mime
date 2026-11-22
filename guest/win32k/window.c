@@ -51,8 +51,17 @@ WND *WndDesktop(void)
 /* the dpi of the monitor a window is mostly on. */
 UINT WndMonitorDpi(const WND *w)
 {
+    WND *top = WndTopLevel((WND *)w) ? WndTopLevel((WND *)w) : (WND *)w;
+    /* a window told to follow another takes its monitor, a few links deep at most. */
+    for (int depth = 0; depth < 4 && top->InheritMonitor; depth++) {
+        WND *source = WndLookup(top->InheritMonitor);
+        WND *next = source ? (WndTopLevel(source) ? WndTopLevel(source) : source) : nullptr;
+        if (!next || next == top)
+            break;
+        top = next;
+    }
     RECT physical;
-    WndPhysicalRect(WndTopLevel((WND *)w) ? WndTopLevel((WND *)w) : w, &physical);
+    WndPhysicalRect(top, &physical);
     return MonitorDpiOfRect(&physical);
 }
 
@@ -529,7 +538,14 @@ WND *WndFindNeedsPaint(W32THREAD *t, HWND filter)
             return f;
         return find_paint(f->FirstChild, t);
     }
-    return find_paint(g_desktop->FirstChild, t);
+    /* an empty queue is asked again and again with nothing changed in between. */
+    ULONG serial = DeskCleanSerial();
+    if (serial && t->NoPaintSerial == serial)
+        return nullptr;
+    WND *w = find_paint(g_desktop->FirstChild, t);
+    if (!w && serial)
+        t->NoPaintSerial = serial;
+    return w;
 }
 
 /* host configuration. */
@@ -931,7 +947,11 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         else
             InputSetForeground(nullptr);
     }
-    if ((!visible || (w->Style & WS_MINIMIZE)) && w->Thread && w != g_hiding_destroyed) {
+    /*
+     * a window that is hidden gives the focus it or a child holds to its parent. one that was hidden already keeps
+     * it: a dialog page sets the focus to one of its controls, is moved in place and only then shown.
+     */
+    if (((was_visible && !visible) || (w->Style & WS_MINIMIZE)) && w->Thread && w != g_hiding_destroyed) {
         W32THREAD *t = w->Thread;
         WND *focus = WndLookup(t->Focus);
         if (focus && (focus == w || WndIsChildOf(focus, w)))
@@ -994,7 +1014,7 @@ static void post_theme_change(WND *w)
             post_theme_change(c);
 }
 
-void WndSystemChanged(void)
+void WndSystemChanged(BOOLEAN theme)
 {
     OemBitmapsInvalidate();
     WND *desktop = WndDesktop();
@@ -1003,7 +1023,8 @@ void WndSystemChanged(void)
             continue;
         if (c->Thread)
             QueuePost(c->Thread, WndHandle(c), WM_SYSCOLORCHANGE, 0, 0);
-        post_theme_change(c);
+        if (theme)
+            post_theme_change(c);
         if (c->Style & WS_VISIBLE)
             WndInvalidateRegion(c, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
     }
@@ -1168,7 +1189,7 @@ void WndCheckMonitorDpi(WND *w)
     if (!WndIsTopLevel(w) || w->Awareness < DPI_AWARE_PER_MONITOR ||
         (w->Flags & WNDF_DESTROYING) || (w->Style & WS_MINIMIZE) || (w->ExStyle & 0x80000000u))
         return;
-    UINT dpi = MonitorDpiOfRect(&w->WindowRect), old = w->Dpi ? w->Dpi : W32SystemDpi();
+    UINT dpi = WndMonitorDpi(w), old = w->Dpi ? w->Dpi : W32SystemDpi();
     /* only a move to a monitor of another dpi counts, not the dpi a test gave the window. */
     if (!dpi || dpi == w->MonitorDpi)
         return;
@@ -1190,6 +1211,35 @@ void WndCheckMonitorDpi(WND *w)
     if (alive(w))
         WndUpdateHostConfig(w, FALSE);
     UserDereference(&w->Header);
+}
+
+/*
+ * NtUserInheritWindowMonitor: a window takes the monitor of another and follows it from then on, as the list of a
+ * combo box takes the monitor of its box, or its own again for none. xxxInheritWindowMonitor of win32kfull 26300
+ * keeps the other window in a property of the window; the desktop and message windows are left alone.
+ */
+BOOL NTAPI NtUserInheritWindowMonitor(HWND hwnd, HWND from)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = FALSE;
+    ULONG fnid = w && w->Class ? w->Class->Fnid & 0x2FFF : 0;
+    if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    } else if (w == g_desktop || fnid == FNID_DESKTOP || fnid == FNID_MESSAGEWND) {
+    } else if (!w->Thread || w->Thread->Process != W32GetProcess()) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    } else if (from && !WndLookup(from)) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    } else {
+        w->InheritMonitor = from != hwnd ? from : nullptr;
+        UserReference(&w->Header);
+        WndCheckMonitorDpi(w);
+        UserDereference(&w->Header);
+        ok = TRUE;
+    }
+    UserLeave();
+    return ok;
 }
 
 /* the scales a display can have: 100 to 250 percent in steps of 25, then 300 to 500 in steps of 50. */
@@ -1845,6 +1895,7 @@ static void free_window(WND *w)
     if (InputForeground == w)
         InputSetForeground(nullptr);
     MenuWindowDestroyed(w);
+    ScrollWindowDestroyed(w);
     ClipboardWindowDestroyed(w);
     DndWindowDestroyed(w);
     TrayWindowDestroyed(w);
@@ -2691,6 +2742,24 @@ BOOL NTAPI NtUserClearWindowState(HWND hwnd, DWORD flag)
 }
 
 /*
+ * AlterWindowStyle of user32 26300: the scroll bar bits and the low control bits of the style, 0x30023f, change by
+ * the mask with no message. a window of another process stays as it is and the call still succeeds.
+ */
+BOOL NTAPI NtUserAlterWindowStyle(HWND hwnd, DWORD mask, DWORD flags)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w && w->Thread && w->Thread->Process == W32GetProcess()) {
+        mask &= 0x30023F;
+        w->Style = (w->Style & ~mask) | (flags & mask);
+    } else if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return w != nullptr;
+}
+
+/*
  * user32 names the procedure a window runs with when it takes over a window of no class of its own, as DefDlgProc
  * makes a window a dialog. a window keeps the first one, of its own process; 0x4000 marks it cleaned up.
  */
@@ -2827,7 +2896,7 @@ static WND *root_owner(WND *w)
 
 HWND NTAPI NtUserGetAncestor(HWND hwnd, UINT flags)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd), *r = nullptr;
     if (w && w != g_desktop) {
         switch (flags) {
@@ -2971,6 +3040,59 @@ LONG NTAPI NtUserSetWindowLong(HWND hwnd, int index, LONG value, BOOL ansi)
     }
     UserLeave();
     return old;
+}
+
+/*
+ * as xxxSetWindowWord of win32kfull: a word of the extra bytes, or the low words of the user data and of the style
+ * with no message. any other index is ERROR_INVALID_INDEX.
+ */
+WORD NTAPI NtUserSetWindowWord(HWND hwnd, int index, WORD value)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    WORD old = 0;
+    if (can_touch(w)) {
+        if (index == GWLP_USERDATA) {
+            old = (WORD)w->UserData;
+            w->UserData = (w->UserData & ~(LONG_PTR)0xFFFF) | value;
+        } else if (index == GWL_STYLE) {
+            old = (WORD)w->Style;
+            w->Style = (w->Style & 0xFFFF0000u) | value;
+        } else if (index >= 0 && w->Extra && (ULONG)index + sizeof(WORD) <= w->ExtraSize) {
+            memcpy(&old, w->Extra + index, sizeof(WORD));
+            memcpy(w->Extra + index, &value, sizeof(WORD));
+            WndExtraChanged(w, (ULONG)index, sizeof(WORD));
+        } else {
+            W32SetLastError(ERROR_INVALID_INDEX);
+        }
+    } else if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return old;
+}
+
+BOOL NTAPI NtUserSetWindowContextHelpId(HWND hwnd, DWORD id)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w)
+        w->ContextHelpId = id;
+    else
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    UserLeave();
+    return w != nullptr;
+}
+
+DWORD NTAPI NtUserGetWindowContextHelpId(HWND hwnd)
+{
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    DWORD id = w ? w->ContextHelpId : 0;
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    UserLeave();
+    return id;
 }
 
 BOOL NTAPI NtUserDefSetText(HWND hwnd, PUNICODE_STRING user_text)
@@ -3290,6 +3412,43 @@ BOOL NTAPI NtUserSetForegroundWindow(HWND hwnd)
 }
 
 /*
+ * AllowSetForegroundWindow and LockSetForegroundWindow, which user32 26300 passes straight through. every process may
+ * take the foreground here, so what is left is the answers windows 11 26300 gives a caller that may, measured with
+ * fgallow.c of the research repository: any process or one that has windows, and a lock that is taken or given once.
+ */
+#define ASFW_ANY ((DWORD)-1)
+#define LSFW_LOCK 1
+#define LSFW_UNLOCK 2
+
+static LONG g_foreground_locked;
+
+BOOL NTAPI NtUserAllowSetForegroundWindow(DWORD pid)
+{
+    if (pid == ASFW_ANY)
+        return TRUE;
+    PEPROCESS process = nullptr;
+    /* the system process of windows has no part in the window manager; the one of mime keeps the desktop. */
+    BOOL ok = pid && NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process)) &&
+              process != PsInitialSystemProcess && PsGetProcessWin32Process(process) != nullptr;
+    if (process)
+        ObDereferenceObject(process);
+    if (!ok)
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    return ok;
+}
+
+BOOL NTAPI NtUserLockSetForegroundWindow(UINT code)
+{
+    LONG expected = code == LSFW_LOCK ? 0 : 1;
+    BOOL ok = (code == LSFW_LOCK || code == LSFW_UNLOCK) &&
+              __atomic_compare_exchange_n(&g_foreground_locked, &expected, code == LSFW_LOCK, FALSE, __ATOMIC_SEQ_CST,
+                                          __ATOMIC_SEQ_CST);
+    if (!ok)
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    return ok;
+}
+
+/*
  * WindowFromPoint, which user32 26300 passes straight through: the point comes by value, both halves in the first
  * argument of a 64-bit caller. the answer is the deepest visible window there, in the units of the caller.
  */
@@ -3301,7 +3460,7 @@ HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
 #else
     POINT pt = {(LONG)point, (LONG)second};
 #endif
-    UserEnter();
+    UserEnterRead();
     HWND found = nullptr;
     DpiPixelConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
     WND *desktop = WndDesktop();
@@ -3341,7 +3500,7 @@ HWND NTAPI NtUserSetActiveWindow(HWND hwnd)
 
 HWND NTAPI NtUserGetForegroundWindow(void)
 {
-    UserEnter();
+    UserEnterRead();
     HWND h = WndHandle(InputForeground);
     UserLeave();
     return h;

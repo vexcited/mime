@@ -238,7 +238,7 @@ void NTAPI GdiFlushUserBatch(void)
     MimeCopyToUser(teb + FIELD_OFFSET(TEB, GdiBatchCount), &zero, sizeof(zero));
     MimeCopyToUser(teb + FIELD_OFFSET(TEB, GdiTebBatch), &head, FIELD_OFFSET(BATCH, Buffer));
     if (read && count - 1 < BATCH_MAX_COUNT) {
-        UserEnter();
+        UserEnterRead();
         DC *dc = b->Hdc ? DcLookup((HDC)(ULONG_PTR)b->Hdc) : nullptr;
         if (dc && dc->Header.OwnerPid != PsGetCurrentProcessId())
             dc = nullptr;
@@ -259,7 +259,7 @@ void GdiThreadExitBatch(void)
     if (!b)
         return;
     if (NT_SUCCESS(MimeCopyFromUser(b, teb + FIELD_OFFSET(TEB, GdiTebBatch), sizeof(BATCH))) && count - 1 < BATCH_MAX_COUNT) {
-        UserEnter();
+        UserEnterRead();
         const UCHAR *p = b->Buffer, *end = b->Buffer + BATCH_BYTES;
         while (count-- && p + 4 <= end) {
             ULONG size = *(const USHORT *)p;

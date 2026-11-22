@@ -960,7 +960,7 @@ NTSTATUS NTAPI NtUserGetDisplayConfigBufferSizes(ULONG flags, PUINT user_paths)
     NTSTATUS status = STATUS_INVALID_PARAMETER;
     if (config_kind(flags)) {
         video_read();
-        UserEnter();
+        UserEnterRead();
         count = config_paths();
         UserLeave();
         status = STATUS_SUCCESS;
@@ -987,7 +987,7 @@ NTSTATUS NTAPI NtUserQueryDisplayConfig(ULONG flags, PUINT user_paths, PVOID use
         return STATUS_INVALID_PARAMETER;
     UCHAR records[MIME_MAX_MONITORS][QDC_RECORD];
     video_read();
-    UserEnter();
+    UserEnterRead();
     ULONG count = config_paths();
     for (ULONG i = 0; i < count && i < room; i++)
         config_record(i, records[i]);

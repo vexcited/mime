@@ -594,7 +594,14 @@ FONT_INSTANCE *DcGetFont(DC *dc)
 {
     if (dc->Realized && dc->RealizedFor == dc->State.Font)
         return dc->Realized;
-    dc->Realized = FontRealize(&dc->State.Font->Logical, dc->Dpi);
+    /*
+     * ANSI_VAR_FONT and ANSI_FIXED_FONT are the fonts of the display driver, 12 by 9, which win32kfull maps as device
+     * fonts, without their width: MS Sans Serif 12 by 9 is 13 by 5 so, and 16 by 7 from CreateFont.
+     */
+    LOGFONTW lf = dc->State.Font->Logical;
+    if (dc->State.Font->Header.Flags & GDI_FLAG_STOCK)
+        lf.lfWidth = 0;
+    dc->Realized = FontRealize(&lf, dc->Dpi);
     dc->RealizedFor = dc->State.Font;
     return dc->Realized;
 }
@@ -603,7 +610,7 @@ FONT_INSTANCE *DcGetFont(DC *dc)
 
 HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcCreate(DC_MEMORY);
     HDC result = nullptr;
     if (dc) {
@@ -631,7 +638,7 @@ HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
  */
 HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *ref = DcLookup(hdc);
     DC *dc = ref ? DcCreate(DC_METAFILE) : nullptr;
     HDC result = nullptr;
@@ -661,7 +668,7 @@ HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port,
     if (!NT_SUCCESS(W32CaptureString(device, &name, nullptr)))
         return nullptr;
     HDC h = nullptr;
-    UserEnter();
+    UserEnterRead();
     if (!name || !*name || !_wcsicmp(name, L"DISPLAY")) {
         h = PaintGetDC(WndDesktop(), nullptr, DCX_WINDOW);
     } else {
@@ -682,7 +689,7 @@ static BOOLEAN palette_display(const DC *dc)
 
 int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int v = 0;
     ULONG awareness = dc ? dc->Awareness : DpiCurrentAwareness();
@@ -873,7 +880,7 @@ static BOOL set_map_mode(DC *dc, int mode, DWORD *old)
 /* private. like windows, fixed mapping modes ignore it. */
 BOOL NTAPI NtGdiMimeSetExtent(HDC hdc, UINT which, int x, int y, LPSIZE old)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     SIZE prev = {0, 0};
     BOOL ok = dc != nullptr;
@@ -903,7 +910,7 @@ BOOL NTAPI NtGdiSetVirtualResolution(HDC hdc, int px, int py, int mx, int my)
     /* setting all four enables it, all four zero clears it. */
     if (px ? (!py || !mx || !my) : (py || mx || my))
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     if (dc) {
         dc->VirtualPixels = (SIZE){px, py};
@@ -917,7 +924,7 @@ BOOL NTAPI NtGdiSetMiterLimit(HDC hdc, DWORD limit, DWORD *old)
 {
     float value, prev = 0;
     memcpy(&value, &limit, sizeof(value));
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL ok = dc && value >= 1.0f;
     if (dc)
@@ -936,7 +943,7 @@ BOOL NTAPI NtGdiSetMiterLimit(HDC hdc, DWORD limit, DWORD *old)
 
 BOOL NTAPI NtGdiGetMiterLimit(HDC hdc, DWORD *limit)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     float value = dc ? dc->State.MiterLimit : 0;
     UserLeave();
@@ -952,7 +959,7 @@ BOOL NTAPI NtGdiGetMiterLimit(HDC hdc, DWORD *limit)
 /* as win32kfull's NtGdiGetAndSetDCDword, see the indices in ntuser.h: the old value goes to result. */
 BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     DWORD old = 0;
     BOOL ok = dc != nullptr;
@@ -1008,7 +1015,7 @@ BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result
  */
 DWORD NTAPI NtGdiSetLayout(HDC hdc, LONG width, DWORD layout)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     DWORD old = GDI_ERROR;
     if (dc) {
@@ -1022,7 +1029,7 @@ DWORD NTAPI NtGdiSetLayout(HDC hdc, LONG width, DWORD layout)
 
 BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     DWORD v = 0;
     BOOL ok = dc != nullptr;
@@ -1085,7 +1092,7 @@ BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
 
 BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     POINT p = {0, 0};
     BOOL ok = dc != nullptr;
@@ -1144,7 +1151,7 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
             W32Free(pts);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL ok = dc != nullptr;
     if (dc) {
@@ -1175,7 +1182,7 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
 /* private: NtGdiSetViewportOrgEx and friends share one service through the window org slot. */
 BOOL NTAPI NtGdiSetViewportOrgEx(HDC hdc, int x, int y, LPPOINT old)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     POINT prev = {0, 0};
     if (dc) {
@@ -1190,7 +1197,7 @@ BOOL NTAPI NtGdiSetViewportOrgEx(HDC hdc, int x, int y, LPPOINT old)
 
 BOOL NTAPI NtGdiSetWindowOrgEx(HDC hdc, int x, int y, LPPOINT old)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     POINT prev = {0, 0};
     if (dc) {
@@ -1205,7 +1212,7 @@ BOOL NTAPI NtGdiSetWindowOrgEx(HDC hdc, int x, int y, LPPOINT old)
 
 BOOL NTAPI NtGdiMoveTo(HDC hdc, int x, int y, POINT *old)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     POINT prev = {0, 0};
     if (dc && DcIsPathOpen(dc))
@@ -1224,7 +1231,7 @@ BOOL NTAPI NtGdiMoveTo(HDC hdc, int x, int y, POINT *old)
 
 HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     HANDLE h = nullptr;
     if (dc) {
@@ -1280,7 +1287,7 @@ HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
 
 HBITMAP NTAPI NtGdiSelectBitmap(HDC hdc, HBITMAP bitmap)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     SURFACE *s = SurfaceLookup(bitmap);
     HBITMAP old = nullptr;
@@ -1309,7 +1316,7 @@ HBITMAP NTAPI NtGdiSelectBitmap(HDC hdc, HBITMAP bitmap)
 /* the memory dc a bitmap is selected into. the stock bitmap that every new memory dc holds belongs to none. */
 HDC NTAPI NtGdiGetDCforBitmap(HBITMAP bitmap)
 {
-    UserEnter();
+    UserEnterRead();
     SURFACE *s = SurfaceLookup(bitmap);
     HDC found = nullptr;
     if (s && s->Header.SelectCount && !(s->Header.Flags & (GDI_FLAG_STOCK | GDI_FLAG_SYSTEM))) {
@@ -1323,7 +1330,7 @@ HDC NTAPI NtGdiGetDCforBitmap(HBITMAP bitmap)
 
 HBRUSH NTAPI NtGdiSelectBrush(HDC hdc, HBRUSH brush)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BRUSH *b = (BRUSH *)GdiLookup(brush, GDI_TYPE_BRUSH);
     HBRUSH old = nullptr;
@@ -1339,7 +1346,7 @@ HBRUSH NTAPI NtGdiSelectBrush(HDC hdc, HBRUSH brush)
 
 HPEN NTAPI NtGdiSelectPen(HDC hdc, HPEN pen)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     PEN *p = (PEN *)GdiLookup(pen, GDI_TYPE_PEN);
     if (!p)
@@ -1375,7 +1382,7 @@ HFONT DcSelectFont(DC *dc, FONT *f)
  */
 HFONT NTAPI NtGdiSelectFont(HDC hdc, HFONT font)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = (DC *)GdiLookup(hdc, GDI_TYPE_DC);
     HFONT old = dc ? (HFONT)dc->State.Font->Header.Handle : nullptr;
     dc = DcLookup(hdc);
@@ -1392,7 +1399,7 @@ HFONT NTAPI NtGdiSelectFont(HDC hdc, HFONT font)
 
 int NTAPI NtGdiSaveDC(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int level = 0;
     if (dc) {
@@ -1418,7 +1425,7 @@ int NTAPI NtGdiSaveDC(HDC hdc)
 
 BOOL NTAPI NtGdiRestoreDC(HDC hdc, int saved)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL ok = FALSE;
     if (dc) {
@@ -1486,7 +1493,7 @@ int DcSelectClip(DC *dc, const REGION *region, int mode)
 
 int NTAPI NtGdiExtSelectClipRgn(HDC hdc, HRGN region, int mode)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int result = ERROR;
     if (dc) {
@@ -1510,7 +1517,7 @@ static void metafile_clip(DC *dc, REGION *out)
 
 int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     RECT box = {0, 0, 0, 0};
     int result = ERROR;
@@ -1551,7 +1558,7 @@ int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
 
 int NTAPI NtGdiGetRandomRgn(HDC hdc, HRGN region, int which)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     GDI_REGION *r = (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION);
     int result = -1;
@@ -1587,7 +1594,7 @@ int NTAPI NtGdiGetRandomRgn(HDC hdc, HRGN region, int which)
 
 static int clip_rect_op(HDC hdc, int left, int top, int right, int bottom, int mode)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int result = ERROR;
     if (dc) {
@@ -1620,7 +1627,7 @@ int NTAPI NtGdiExcludeClipRect(HDC hdc, int left, int top, int right, int bottom
 /* the clip region moves by a logical distance, scaled to the device. without one there is nothing to move. */
 int NTAPI NtGdiOffsetClipRgn(HDC hdc, int x, int y)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int result = ERROR;
     if (dc) {
@@ -1641,7 +1648,7 @@ int NTAPI NtGdiOffsetClipRgn(HDC hdc, int x, int y)
 /* whether a logical point or a part of a logical rectangle is inside the clip of the dc, -1 for no dc. */
 BOOL NTAPI NtGdiPtVisible(HDC hdc, int x, int y)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL result = -1;
     if (dc) {
@@ -1661,7 +1668,7 @@ BOOL NTAPI NtGdiRectVisible(HDC hdc, const RECT *user_rect)
     RECT r;
     if (!user_rect || !NT_SUCCESS(MimeCopyFromUser(&r, user_rect, sizeof(r))))
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL result = FALSE;
     if (dc) {
@@ -1681,7 +1688,7 @@ BOOL NTAPI NtGdiRectVisible(HDC hdc, const RECT *user_rect)
 /* SetBrushOrgEx when gdi32 cannot batch it: the old origin goes back and DC_ATTR+0x158 follows. */
 BOOL NTAPI NtGdiSetBrushOrg(HDC hdc, int x, int y, POINT *old)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     POINT was = {0, 0};
     if (dc) {
@@ -1697,7 +1704,7 @@ BOOL NTAPI NtGdiSetBrushOrg(HDC hdc, int x, int y, POINT *old)
 /* the clip region joins the meta region and the dc has no clip region left. */
 int NTAPI NtGdiSetMetaRgn(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int result = ERROR;
     if (dc) {
@@ -1720,6 +1727,108 @@ int NTAPI NtGdiSetMetaRgn(HDC hdc)
 BOOL NTAPI NtGdiFlush(void)
 {
     return TRUE;
+}
+
+/* ------------------------------------------------------------------ bounds */
+
+static void bounds_union(DC *dc, const RECT *r)
+{
+    if (RectEmpty(r))
+        return;
+    if (RectEmpty(&dc->Bounds))
+        dc->Bounds = *r;
+    else
+        RectUnion(&dc->Bounds, &dc->Bounds, r);
+}
+
+void DcAccumulateBounds(DC *dc, const RECT *r, const REGION *clip)
+{
+    if (!dc->BoundsOn)
+        return;
+    RECT d = *r;
+    if (clip && !RectIntersect(&d, &d, &clip->Extents))
+        return;
+    RectOffset(&d, -dc->Origin.x, -dc->Origin.y);
+    bounds_union(dc, &d);
+}
+
+void DcMarkDrawn(DC *dc, const RECT *r, const REGION *clip)
+{
+    if (dc->Surface)
+        SurfaceMarkDrawn(dc->Surface, r, clip);
+    DcAccumulateBounds(dc, r, clip);
+}
+
+static RECT ordered(LONG left, LONG top, LONG right, LONG bottom)
+{
+    return (RECT){W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
+}
+
+/*
+ * GrepSetBoundsRect of win32kfull 26300: the answer is the state before, enabled or not and empty or not, then
+ * DCB_RESET empties the bounds, DCB_ACCUMULATE adds the rectangle in logical units, and DCB_ENABLE or DCB_DISABLE
+ * turn the accumulation of what is drawn on or off. measured with bounds.c of the research repository.
+ */
+UINT NTAPI NtGdiSetBoundsRect(HDC hdc, const RECT *user_rect, UINT flags)
+{
+    RECT r = {};
+    if (!user_rect)
+        flags &= ~DCB_ACCUMULATE;
+    else if (!NT_SUCCESS(MimeCopyFromUser(&r, user_rect, sizeof(r))))
+        return 0;
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    UINT old = 0;
+    if (dc) {
+        old = (dc->BoundsOn ? DCB_ENABLE : DCB_DISABLE) | (RectEmpty(&dc->Bounds) ? DCB_RESET : DCB_SET);
+        if (flags & DCB_RESET)
+            dc->Bounds = (RECT){};
+        if (flags & DCB_ACCUMULATE) {
+            DcLogicalToDevice(dc, &r.left, &r.top);
+            DcLogicalToDevice(dc, &r.right, &r.bottom);
+            RECT device = ordered(r.left, r.top, r.right, r.bottom);
+            bounds_union(dc, &device);
+        }
+        if (flags & DCB_ENABLE)
+            dc->BoundsOn = TRUE;
+        else if (flags & DCB_DISABLE)
+            dc->BoundsOn = FALSE;
+    }
+    UserLeave();
+    return old;
+}
+
+/* GrepGetBoundsRect: the bounds inside the clip of the dc, in logical units, emptied after with DCB_RESET. */
+UINT NTAPI NtGdiGetBoundsRect(HDC hdc, RECT *user_rect, UINT flags)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    UINT result = 0;
+    RECT out = {};
+    if (dc && RectEmpty(&dc->Bounds)) {
+        result = DCB_RESET;
+    } else if (dc) {
+        out = dc->Bounds;
+        REGION clip;
+        RgnInit(&clip);
+        if (DcGetClip(dc, &clip)) {
+            RECT c = clip.Extents;
+            RectOffset(&c, -dc->Origin.x, -dc->Origin.y);
+            if (!RectIntersect(&out, &out, &c))
+                out = (RECT){};
+        }
+        RgnFree(&clip);
+        DcDeviceToLogical(dc, &out.left, &out.top);
+        DcDeviceToLogical(dc, &out.right, &out.bottom);
+        out = ordered(out.left, out.top, out.right, out.bottom);
+        result = DCB_SET;
+    }
+    if (dc && (flags & DCB_RESET))
+        dc->Bounds = (RECT){};
+    UserLeave();
+    if (result && !NT_SUCCESS(MimeCopyToUser(user_rect, &out, sizeof(out))))
+        return 0;
+    return result;
 }
 
 /* ------------------------------------------------------------------ world transform */
@@ -1748,7 +1857,7 @@ BOOL NTAPI NtGdiModifyWorldTransform(HDC hdc, const XFORM *user_xform, DWORD mod
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL ok = dc && dc->State.GraphicsMode == GM_ADVANCED;
     if (ok) {
@@ -1784,7 +1893,7 @@ BOOL NTAPI NtGdiModifyWorldTransform(HDC hdc, const XFORM *user_xform, DWORD mod
 
 BOOL NTAPI NtGdiGetTransform(HDC hdc, DWORD which, XFORM *user_xform)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     XFORM xf = {1, 0, 0, 1, 0, 0};
     BOOL ok = dc != nullptr;
@@ -1833,7 +1942,7 @@ BOOL NTAPI NtGdiGetTransform(HDC hdc, DWORD which, XFORM *user_xform)
 /* the format is a property of the window, set once; memory dcs keep their own. */
 BOOL NTAPI NtGdiSetPixelFormat(HDC hdc, int format)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     ULONG error = 0;
     if (!dc) {
@@ -1861,7 +1970,7 @@ BOOL NTAPI NtGdiSetPixelFormat(HDC hdc, int format)
  */
 BOOL NTAPI NtGdiComputeXformCoefficients(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     BOOL scale = dc && (!dc->State.HasXform || (dc->State.World.eM12 == 0 && dc->State.World.eM21 == 0));
     UserLeave();
@@ -1870,7 +1979,7 @@ BOOL NTAPI NtGdiComputeXformCoefficients(HDC hdc)
 
 BOOL NTAPI NtGdiUpdateTransform(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     BOOL ok = DcLookup(hdc) != nullptr;
     UserLeave();
     return ok;
@@ -1882,7 +1991,7 @@ BOOL NTAPI NtGdiUpdateTransform(HDC hdc)
  */
 static BOOL scale_extent(HDC hdc, BOOLEAN viewport, int xn, int xd, int yn, int yd, SIZE *user_old)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     SIZE old = {0, 0};
     BOOL ok = dc != nullptr;
@@ -1930,7 +2039,7 @@ BOOL NTAPI NtGdiCombineTransform(XFORM *user_out, const XFORM *user_a, const XFO
 /* the width of the window of the dc, or of its surface. */
 LONG NTAPI NtGdiGetDeviceWidth(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     LONG width = -1;
     if (dc && dc->Window)
@@ -1944,7 +2053,7 @@ LONG NTAPI NtGdiGetDeviceWidth(HDC hdc)
 /* gdi32full calls it only under LAYOUT_RTL, whose mirroring is not drawn yet, see NtGdiSetLayout. */
 BOOL NTAPI NtGdiMirrorWindowOrg(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     BOOL ok = DcLookup(hdc) != nullptr;
     UserLeave();
     return ok;

@@ -65,6 +65,67 @@ HWND NTAPI NtUserSetCapture(HWND hwnd)
     return old;
 }
 
+/* the windows of a thread, or of the one in the foreground for no thread: active, focus, capture and caret. */
+BOOL NTAPI NtUserGetGUIThreadInfo(DWORD thread_id, GUITHREADINFO *user_info)
+{
+    GUITHREADINFO info;
+    if (!NT_SUCCESS(MimeCopyFromUser(&info.cbSize, &user_info->cbSize, sizeof(info.cbSize))) ||
+        info.cbSize != sizeof(info)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    memset(&info, 0, sizeof(info));
+    info.cbSize = sizeof(info);
+    UserEnter();
+    W32THREAD *t = nullptr;
+    if (thread_id) {
+        for (W32THREAD *c = W32NextThread(nullptr); c && !t; c = W32NextThread(c))
+            if ((DWORD)(ULONG_PTR)c->Tid == thread_id)
+                t = c;
+    } else if (InputForeground) {
+        t = InputForeground->Thread;
+    }
+    if (t) {
+        W32THREAD *owner = W32InputOwner(t);
+        info.hwndActive = owner->Active;
+        info.hwndFocus = owner->Focus;
+        info.hwndCapture = owner->Capture;
+        info.hwndCaret = t->Caret.Hwnd;
+        if (t->Caret.Hwnd) {
+            info.rcCaret = (RECT){t->Caret.X, t->Caret.Y, t->Caret.X + t->Caret.Width, t->Caret.Y + t->Caret.Height};
+            info.flags |= GUI_CARETBLINKING;
+        }
+    }
+    UserLeave();
+    if (!t) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return NT_SUCCESS(MimeCopyToUser(user_info, &info, sizeof(info)));
+}
+
+/*
+ * SetCursorPos and SetPhysicalCursorPos of user32 26300, the point in the units of the caller: kept inside the clip
+ * of the cursor and the screen, and followed by a mouse move that the hardware did not make, as zzzSetCursorPos
+ * does. measured with cur.c of the research repository.
+ */
+void InputSetCursorPos(POINT physical)
+{
+    InputCursorPos = physical;
+    InputCursorMoved();
+    queue_mouse_refresh();
+}
+
+BOOL NTAPI NtUserSetCursorPos(int x, int y)
+{
+    POINT pt = {x, y};
+    UserEnter();
+    DpiPointConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
+    InputSetCursorPos(pt);
+    UserLeave();
+    return TRUE;
+}
+
 /* ReleaseCapture of user32 26300, which SetCapture of no window was before. */
 BOOL NTAPI NtUserReleaseCapture(void)
 {
@@ -557,8 +618,11 @@ static void queue_mouse_refresh(void)
         return;
     if (!IsListEmpty(&t->Input)) {
         QUEUED_MESSAGE *last = CONTAINING_RECORD(t->Input.Blink, QUEUED_MESSAGE, Links);
-        if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id)
+        if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id) {
+            last->Input.x = ev.x;
+            last->Input.y = ev.y;
             return;
+        }
     }
     QueuePostInput(t, &ev, mouse_key_state(&ev), IMO_HARDWARE, 0);
 }

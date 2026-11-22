@@ -423,7 +423,7 @@ BOOL NTAPI NtUserEnumDisplayMonitors(HDC hdc, const RECT *user_clip, MONITORENUM
 /* the name of the display of a monitor, at most 32 characters with the terminator. */
 BOOL NTAPI NtUserGetHDevName(HMONITOR monitor, PWSTR user_name)
 {
-    UserEnter();
+    UserEnterRead();
     LONG index = MonitorIndexOfHandle(monitor);
     MIME_MONITOR_INFO m;
     BOOLEAN found = index >= 0 && MonitorGet((ULONG)index, &m);

@@ -25,6 +25,10 @@ void NtGdiCreateRectRgn(void);
 void NtGdiCreateRoundRectRgn(void);
 void NtGdiCreateSolidBrush(void);
 void NtGdiDdDDICreateDCFromMemory(void);
+void NtDxgkEnumAdapters3(void);
+void NtGdiDdDDIOpenAdapterFromLuid(void);
+void NtGdiDdDDICloseAdapter(void);
+void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIDestroyDCFromMemory(void);
 void NtGdiDeleteObjectApp(void);
 void NtGdiDoPalette(void);
@@ -74,6 +78,7 @@ void NtGdiFrameRgn(void);
 void NtGdiGetAndSetDCDword(void);
 void NtGdiGetAppClipBox(void);
 void NtGdiGetBitmapBits(void);
+void NtGdiGetBoundsRect(void);
 void NtGdiGetCharABCWidthsW(void);
 void NtGdiGetCharWidthW(void);
 void NtGdiGetDCforBitmap(void);
@@ -153,6 +158,7 @@ void NtGdiSelectClipPath(void);
 void NtGdiSelectFont(void);
 void NtGdiSelectPen(void);
 void NtGdiSetBitmapBits(void);
+void NtGdiSetBoundsRect(void);
 void NtGdiSetDIBitsToDeviceInternal(void);
 void NtGdiSetMetaRgn(void);
 void NtGdiSetMiterLimit(void);
@@ -226,6 +232,8 @@ void NtUserActivateKeyboardLayout(void);
 void NtUserBitBltSysBmp(void);
 void NtUserGetOemBitmapSize(void);
 void NtUserSetForegroundWindow(void);
+void NtUserAllowSetForegroundWindow(void);
+void NtUserLockSetForegroundWindow(void);
 void NtUserWindowFromPoint(void);
 void NtUserGetHDevName(void);
 void NtUserGetDpiForMonitor(void);
@@ -242,6 +250,10 @@ void NtUserDisplayConfigGetDeviceInfo(void);
 void NtUserFindWindowEx(void);
 void NtUserForceWindowToDpiForTest(void);
 void NtUserGetAncestor(void);
+void NtUserMapDesktopObject(void);
+void NtUserSetWindowWord(void);
+void NtUserSetWindowContextHelpId(void);
+void NtUserGetWindowContextHelpId(void);
 void NtUserGetAsyncKeyState(void);
 void NtUserGetClassInfoEx(void);
 void NtUserGetClassName(void);
@@ -258,6 +270,7 @@ void NtUserGetCursorPos(void);
 void NtUserGetDC(void);
 void NtUserGetDCEx(void);
 void NtUserGetForegroundWindow(void);
+void NtUserGetGUIThreadInfo(void);
 void NtUserGetGuiResources(void);
 void NtUserGetIconInfo(void);
 void NtUserGetKeyState(void);
@@ -287,6 +300,11 @@ void NtUserGetWindowPlacement(void);
 void NtUserGetWindowRgnEx(void);
 void NtUserInitializeClientPfnArrays(void);
 void NtUserInternalGetWindowText(void);
+void NtUserInheritWindowMonitor(void);
+void NtUserAlterWindowStyle(void);
+void NtUserSetSysColors(void);
+void NtUserEnsureDpiDepSysMetCacheForPlateau(void);
+void NtGdiEnsureDpiDepDefaultGuiFontForPlateau(void);
 void NtUserInvalidateRect(void);
 void NtUserIsChildWindowDpiMessageEnabled(void);
 void NtUserIsClipboardFormatAvailable(void);
@@ -333,6 +351,7 @@ void NtUserSetClassWord(void);
 void NtUserSetClipboardData(void);
 void NtUserSetClipboardViewer(void);
 void NtUserSetCursor(void);
+void NtUserSetCursorPos(void);
 void NtUserSetCursorIconData(void);
 void NtUserGetDoubleClickTime(void);
 void NtUserSetThreadState(void);
@@ -509,6 +528,26 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtGdiCreateSolidBrush & 0xFFF] = (SERVICE){(void *)NtGdiCreateSolidBrush, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtGdiCreateSolidBrush has no syscall number"
+#endif
+#ifdef MIME_SVC_NtDxgkEnumAdapters3
+    table[MIME_SVC_NtDxgkEnumAdapters3 & 0xFFF] = (SERVICE){(void *)NtDxgkEnumAdapters3, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtDxgkEnumAdapters3 has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiDdDDIOpenAdapterFromLuid
+    table[MIME_SVC_NtGdiDdDDIOpenAdapterFromLuid & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIOpenAdapterFromLuid, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiDdDDIOpenAdapterFromLuid has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiDdDDICloseAdapter
+    table[MIME_SVC_NtGdiDdDDICloseAdapter & 0xFFF] = (SERVICE){(void *)NtGdiDdDDICloseAdapter, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiDdDDICloseAdapter has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiDdDDIQueryAdapterInfo
+    table[MIME_SVC_NtGdiDdDDIQueryAdapterInfo & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIQueryAdapterInfo, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiDdDDIQueryAdapterInfo has no syscall number"
 #endif
 #ifdef MIME_SVC_NtGdiDdDDICreateDCFromMemory
     table[MIME_SVC_NtGdiDdDDICreateDCFromMemory & 0xFFF] = (SERVICE){(void *)NtGdiDdDDICreateDCFromMemory, STACK_ARGS(1), 1, 0};
@@ -754,6 +793,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtGdiGetAppClipBox & 0xFFF] = (SERVICE){(void *)NtGdiGetAppClipBox, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtGdiGetAppClipBox has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiGetBoundsRect
+    table[MIME_SVC_NtGdiGetBoundsRect & 0xFFF] = (SERVICE){(void *)NtGdiGetBoundsRect, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtGdiGetBoundsRect has no syscall number"
 #endif
 #ifdef MIME_SVC_NtGdiGetBitmapBits
     table[MIME_SVC_NtGdiGetBitmapBits & 0xFFF] = (SERVICE){(void *)NtGdiGetBitmapBits, STACK_ARGS(3), 1, 0};
@@ -1150,6 +1194,11 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtGdiSelectPen has no syscall number"
 #endif
+#ifdef MIME_SVC_NtGdiSetBoundsRect
+    table[MIME_SVC_NtGdiSetBoundsRect & 0xFFF] = (SERVICE){(void *)NtGdiSetBoundsRect, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtGdiSetBoundsRect has no syscall number"
+#endif
 #ifdef MIME_SVC_NtGdiSetBitmapBits
     table[MIME_SVC_NtGdiSetBitmapBits & 0xFFF] = (SERVICE){(void *)NtGdiSetBitmapBits, STACK_ARGS(3), 1, 0};
 #else
@@ -1475,6 +1524,12 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserEnumDisplaySettings has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserAllowSetForegroundWindow
+    table[MIME_SVC_NtUserAllowSetForegroundWindow & 0xFFF] = (SERVICE){(void *)NtUserAllowSetForegroundWindow, STACK_ARGS(1), 1, 0};
+#endif
+#ifdef MIME_SVC_NtUserLockSetForegroundWindow
+    table[MIME_SVC_NtUserLockSetForegroundWindow & 0xFFF] = (SERVICE){(void *)NtUserLockSetForegroundWindow, STACK_ARGS(1), 1, 0};
+#endif
 #ifdef MIME_SVC_NtUserSetForegroundWindow
     table[MIME_SVC_NtUserSetForegroundWindow & 0xFFF] = (SERVICE){(void *)NtUserSetForegroundWindow, STACK_ARGS(1), 1, 0};
 #else
@@ -1600,6 +1655,26 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserGetAncestor has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserSetWindowContextHelpId
+    table[MIME_SVC_NtUserSetWindowContextHelpId & 0xFFF] = (SERVICE){(void *)NtUserSetWindowContextHelpId, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserSetWindowContextHelpId has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetWindowContextHelpId
+    table[MIME_SVC_NtUserGetWindowContextHelpId & 0xFFF] = (SERVICE){(void *)NtUserGetWindowContextHelpId, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserGetWindowContextHelpId has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetWindowWord
+    table[MIME_SVC_NtUserSetWindowWord & 0xFFF] = (SERVICE){(void *)NtUserSetWindowWord, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserSetWindowWord has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserMapDesktopObject
+    table[MIME_SVC_NtUserMapDesktopObject & 0xFFF] = (SERVICE){(void *)NtUserMapDesktopObject, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserMapDesktopObject has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserGetAsyncKeyState
     table[MIME_SVC_NtUserGetAsyncKeyState & 0xFFF] = (SERVICE){(void *)NtUserGetAsyncKeyState, STACK_ARGS(1), 1, 0};
 #else
@@ -1674,6 +1749,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserGetForegroundWindow & 0xFFF] = (SERVICE){(void *)NtUserGetForegroundWindow, STACK_ARGS(0), 1, 0};
 #else
 #warning "NtUserGetForegroundWindow has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetGUIThreadInfo
+    table[MIME_SVC_NtUserGetGUIThreadInfo & 0xFFF] = (SERVICE){(void *)NtUserGetGUIThreadInfo, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserGetGUIThreadInfo has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserGetGuiResources
     table[MIME_SVC_NtUserGetGuiResources & 0xFFF] = (SERVICE){(void *)NtUserGetGuiResources, STACK_ARGS(2), 1, 0};
@@ -1819,6 +1899,31 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserInitializeClientPfnArrays & 0xFFF] = (SERVICE){(void *)NtUserInitializeClientPfnArrays, STACK_ARGS(4), 1, 0};
 #else
 #warning "NtUserInitializeClientPfnArrays has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserEnsureDpiDepSysMetCacheForPlateau
+    table[MIME_SVC_NtUserEnsureDpiDepSysMetCacheForPlateau & 0xFFF] = (SERVICE){(void *)NtUserEnsureDpiDepSysMetCacheForPlateau, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserEnsureDpiDepSysMetCacheForPlateau has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiEnsureDpiDepDefaultGuiFontForPlateau
+    table[MIME_SVC_NtGdiEnsureDpiDepDefaultGuiFontForPlateau & 0xFFF] = (SERVICE){(void *)NtGdiEnsureDpiDepDefaultGuiFontForPlateau, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiEnsureDpiDepDefaultGuiFontForPlateau has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetSysColors
+    table[MIME_SVC_NtUserSetSysColors & 0xFFF] = (SERVICE){(void *)NtUserSetSysColors, STACK_ARGS(4), 1, 0};
+#else
+#warning "NtUserSetSysColors has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserAlterWindowStyle
+    table[MIME_SVC_NtUserAlterWindowStyle & 0xFFF] = (SERVICE){(void *)NtUserAlterWindowStyle, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserAlterWindowStyle has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserInheritWindowMonitor
+    table[MIME_SVC_NtUserInheritWindowMonitor & 0xFFF] = (SERVICE){(void *)NtUserInheritWindowMonitor, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserInheritWindowMonitor has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserInternalGetWindowText
     table[MIME_SVC_NtUserInternalGetWindowText & 0xFFF] = (SERVICE){(void *)NtUserInternalGetWindowText, STACK_ARGS(3), 1, 0};
@@ -2049,6 +2154,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserSetClipboardViewer & 0xFFF] = (SERVICE){(void *)NtUserSetClipboardViewer, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtUserSetClipboardViewer has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetCursorPos
+    table[MIME_SVC_NtUserSetCursorPos & 0xFFF] = (SERVICE){(void *)NtUserSetCursorPos, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserSetCursorPos has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserSetCursor
     table[MIME_SVC_NtUserSetCursor & 0xFFF] = (SERVICE){(void *)NtUserSetCursor, STACK_ARGS(1), 1, 0};

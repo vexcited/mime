@@ -94,7 +94,7 @@ BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
 
 HANDLE NTAPI NtUserGetProp(HWND hwnd, ATOM atom)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     WND_PROP *p = w ? find_prop(w, atom) : nullptr;
     HANDLE data = p ? p->Data : nullptr;

@@ -37,8 +37,11 @@ typedef struct USER_CELL {
 #define PSI_COLOR_UNMATCHED 0x115c
 #define PSI_COLOR 0x11d8
 #define PSI_BRUSH 0x1258
+#define PSI_GRAY_BRUSH 0x1350
 #define PSI_PFN_WORKER 0x1d50   /* 18 workers. */
 #define PSI_SYSMET 0x768
+#define PSI_DPI_METRICS 0x8ec /* 30 metrics for each of 18 dpis, see dpi_metrics. */
+#define PSI_SYSTEM_DPI 0x1b56
 #define USER_COLORS 31
 
 /*
@@ -109,6 +112,67 @@ void UserSharedForeground(HWND window)
 {
     if (g_shared)
         *(PULONG64)(g_shared + USER_PSI + 0x1de0) = (ULONG64)(ULONG_PTR)window;
+}
+
+/*
+ * the metrics that depend on the dpi, which user32 26300 answers GetSystemMetrics and GetSystemMetricsForDpi from
+ * with no call: 30 of them for each of 18 dpis, the system dpi first, then 96 to 480 by steps of 24, see
+ * GetDpiCacheIndex. an entry of -1 makes user32 call NtUserEnsureDpiDepSysMetCacheForPlateau. win32kbase fills them
+ * with ScaleSystemMetricForDPIWithoutCache, which is what MetricsGetFor follows. the reference machine had no
+ * theme, so its caption buttons were the unthemed 22 pixels wide.
+ */
+#define DPI_METRIC_DPIS 18
+#define DPI_METRIC_SLOTS 30
+
+static const UCHAR g_dpi_metrics[DPI_METRIC_SLOTS] = {
+    SM_CXVSCROLL,  SM_CYHSCROLL,  SM_CYCAPTION,  SM_CYVTHUMB,   SM_CXHTHUMB,     SM_CXICON,       SM_CYICON,
+    SM_CXCURSOR,   SM_CYCURSOR,   SM_CYMENU,     SM_CYVSCROLL,  SM_CXHSCROLL,    SM_CXSIZE,       SM_CYSIZE,
+    SM_CXFRAME,    SM_CYFRAME,    SM_CXMINTRACK, SM_CYMINTRACK, SM_CXICONSPACING, SM_CYICONSPACING, SM_CXSMICON,
+    SM_CYSMICON,   SM_CYSMCAPTION, SM_CXSMSIZE,  SM_CYSMSIZE,   SM_CXMENUSIZE,   SM_CYMENUSIZE,   SM_CXMENUCHECK,
+    SM_CYMENUCHECK, SM_CXPADDEDBORDER,
+};
+
+static int dpi_index(UINT dpi)
+{
+    if (dpi == *(PUSHORT)(g_shared + USER_PSI + PSI_SYSTEM_DPI))
+        return 0;
+    if (dpi < 96 || dpi % 24 || (dpi - 72) / 24 >= DPI_METRIC_DPIS)
+        return -1;
+    return (int)(dpi - 72) / 24;
+}
+
+static void dpi_metrics(ULONG index, UINT dpi)
+{
+    PLONG slot = (PLONG)(g_shared + USER_PSI + PSI_DPI_METRICS) + index * DPI_METRIC_SLOTS;
+    for (ULONG i = 0; i < DPI_METRIC_SLOTS; i++)
+        slot[i] = MetricsGetFor(g_dpi_metrics[i], dpi, DpiCurrentAwareness());
+}
+
+static void all_dpi_metrics(void)
+{
+    dpi_metrics(0, *(PUSHORT)(g_shared + USER_PSI + PSI_SYSTEM_DPI));
+    for (ULONG i = 1; i < DPI_METRIC_DPIS; i++)
+        dpi_metrics(i, 72 + 24 * i);
+}
+
+BOOL NTAPI NtUserEnsureDpiDepSysMetCacheForPlateau(UINT dpi)
+{
+    UserEnter();
+    int index = g_shared ? dpi_index(dpi) : -1;
+    if (index >= 0)
+        dpi_metrics((ULONG)index, dpi);
+    UserLeave();
+    return index >= 0;
+}
+
+/* the colours user32 answers GetSysColor with, as asked and as matched to the display, see SetSysColor. */
+void UserSharedColor(int index, COLORREF unmatched, COLORREF color)
+{
+    if (!g_shared || index < 0 || index >= USER_COLORS)
+        return;
+    PUCHAR psi = g_shared + USER_PSI;
+    *(PULONG)(psi + PSI_COLOR_UNMATCHED + index * 4) = unmatched;
+    *(PULONG)(psi + PSI_COLOR + index * 4) = color;
 }
 
 void UserSharedKeysChanged(void)
@@ -215,11 +279,14 @@ static NTSTATUS build(void)
     memcpy(psi + PSI_PFN_WORKER_HEAD, pfn + 48, 11 * 8);
     memcpy(psi + PSI_PFN_WORKER, pfn + 48, 18 * 8);
     for (int i = 0; i < USER_COLORS; i++) {
-        COLORREF color = MetricsSysColor(i);
-        *(PULONG)(psi + PSI_COLOR_UNMATCHED + i * 4) = color;
-        *(PULONG)(psi + PSI_COLOR + i * 4) = color;
+        UserSharedColor(i, MetricsSysColor(i), MetricsSysColor(i));
         *(PULONG64)(psi + PSI_BRUSH + i * 8) = (ULONG64)(ULONG_PTR)MetricsSysColorBrush(i);
     }
+    /* hbrGray, which DrawFrameControl of user32 dithers a checked three-state box with. */
+    *(PULONG64)(psi + PSI_GRAY_BRUSH) = (ULONG64)(ULONG_PTR)MetricsGrayBrush();
+    /* the dpi of the session, which user32 makes the context of a system aware program from. */
+    *(PUSHORT)(psi + PSI_SYSTEM_DPI) = (USHORT)W32SystemDpi();
+    all_dpi_metrics();
     UserSharedMonitors();
     DbgPrint("csr: the server information of win32k keeps the metrics, the fonts, the atoms and the bitmaps of the "
              "reference machine\n");

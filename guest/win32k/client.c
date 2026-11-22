@@ -267,6 +267,7 @@ typedef struct CAPTURE {
     ULONG Free;     /* the next byte of data, from the start of the message or of the remote data. */
     ULONG End;
     PUCHAR Remote;  /* the data in memory of the process, over 0x800 bytes. */
+    alignas(8) UCHAR Inline[256]; /* most messages fit, and need no pool. */
 } CAPTURE;
 
 /* AllocCallbackMessage: the fields, room for a pointer of 8 bytes per pointer, then the data. */
@@ -288,7 +289,7 @@ static BOOLEAN capture_begin(CAPTURE *c, ULONG head, ULONG pointers, ULONG data)
         c->Free = table;
         c->End = table + data;
     }
-    c->Message = W32Alloc(c->Length);
+    c->Message = c->Length <= sizeof(c->Inline) ? c->Inline : W32Alloc(c->Length);
     if (!c->Message) {
         if (c->Remote) {
             SIZE_T size = 0;
@@ -330,7 +331,8 @@ static void capture_end(CAPTURE *c)
         PVOID base = c->Remote;
         ZwFreeVirtualMemory((HANDLE)-1, &base, &size, MEM_RELEASE);
     }
-    W32Free(c->Message);
+    if (c->Message != c->Inline)
+        W32Free(c->Message);
 }
 
 /* ------------------------------------------------------------------ window procedures */

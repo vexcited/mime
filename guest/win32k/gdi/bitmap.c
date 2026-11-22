@@ -475,7 +475,7 @@ static SURFACE *copy_surface(SURFACE *src)
  */
 HBRUSH NTAPI NtGdiCreatePatternBrushInternal(HBITMAP bitmap, BOOL pen, BOOL b8x8)
 {
-    UserEnter();
+    UserEnterRead();
     SURFACE *src = SurfaceLookup(bitmap);
     SURFACE *pattern = src ? copy_surface(src) : nullptr;
     BRUSH *b = pattern ? GdiCreateBrush(BS_PATTERN, 0, (ULONG_PTR)bitmap) : nullptr;
@@ -504,7 +504,7 @@ HBRUSH NTAPI NtGdiCreateDIBBrush(PVOID packed, ULONG usage, UINT size, BOOL b8x8
     PUCHAR bits = d.HeaderSize <= size && bytes <= size - d.HeaderSize ? W32Alloc(bytes) : nullptr;
     HBRUSH h = nullptr;
     if (bits && NT_SUCCESS(MimeCopyFromUser(bits, (const UCHAR *)packed + d.HeaderSize, bytes))) {
-        UserEnter();
+        UserEnterRead();
         SURFACE *view = wrap_dib_bits(&d, info, bits, (ULONG)d.Height, 0);
         SURFACE *pattern = view ? SurfaceCreate(d.Width, d.Height, 32, 0) : nullptr;
         if (pattern)
@@ -535,7 +535,7 @@ HBITMAP NTAPI NtGdiCreateBitmap(int width, int height, UINT planes, UINT bpp, co
     if (width <= 0 || height <= 0 || planes != 1)
         return nullptr;
     UCHAR depth = bpp <= 1 ? 1 : bpp <= 4 ? 4 : bpp <= 8 ? 8 : bpp <= 16 ? 16 : bpp <= 24 ? 24 : 32;
-    UserEnter();
+    UserEnterRead();
     SURFACE *s = SurfaceCreate(width, height, depth, 0);
     HBITMAP h = nullptr;
     if (s && GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
@@ -558,7 +558,7 @@ HBITMAP NTAPI NtGdiCreateCompatibleBitmap(HDC hdc, int width, int height)
         return nullptr;
     if (!width || !height)
         return NtGdiCreateBitmap(1, 1, 1, 1, nullptr);
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     UCHAR bpp = 32;
     if (dc && dc->Surface && (dc->Flags & DC_MEMORY))
@@ -618,7 +618,7 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
         W32Free(info);
         return nullptr;
     }
-    UserEnter();
+    UserEnterRead();
     SURFACE *s = W32Alloc(sizeof(SURFACE));
     HBITMAP h = nullptr;
     if (s) {
@@ -682,7 +682,7 @@ ULONG GdiDibColorTable(HDC hdc, WORD start, WORD count, PVOID user_entries, BOOL
         return 0;
     RGBQUAD entries[256];
     ULONG n = 0;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup((HDC)object);
     SURFACE *s = dc ? dc->Surface : nullptr;
     if (s && (s->Flags & SURF_USER_BITS) && s->Bpp <= 8 && start < s->ColorCount) {
@@ -747,7 +747,7 @@ NTSTATUS NTAPI NtGdiDdDDICreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *user_desc
     PALETTEENTRY table[256];
     if (bpp == 8 && !NT_SUCCESS(MimeCopyFromUser(table, d.pColorTable, sizeof(table))))
         return STATUS_INVALID_PARAMETER;
-    UserEnter();
+    UserEnterRead();
     NTSTATUS status = STATUS_NO_MEMORY;
     SURFACE *s = W32Alloc(sizeof(SURFACE));
     DC *dc = s ? DcCreate(DC_MEMORY) : nullptr;
@@ -797,7 +797,7 @@ NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *u
     D3DKMT_DESTROYDCFROMMEMORY d;
     if (!user_desc || !NT_SUCCESS(MimeCopyFromUser(&d, user_desc, sizeof(d))))
         return STATUS_INVALID_PARAMETER;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(d.hDc);
     SURFACE *s = SurfaceLookup(d.hBitmap);
     NTSTATUS status = STATUS_INVALID_PARAMETER;
@@ -868,7 +868,7 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
     }
     if (!lines)
         bits = nullptr;
-    UserEnter();
+    UserEnterRead();
     SURFACE *s = SurfaceLookup(bitmap);
     if (!s || usage > DIB_PAL_COLORS) {
         UserLeave();
@@ -1147,7 +1147,7 @@ HBITMAP NTAPI NtGdiCreateDIBitmapInternal(HDC hdc, int width, int height, DWORD 
     UCHAR bpp = (init & 2) ? d.Bpp : mono ? 1 : 32;
     /* without CBM_CREATEDIB windows makes a bitmap compatible with the dc, monochrome for a fresh memory dc. */
     HBITMAP compatible = !(init & 2) && hdc ? NtGdiCreateCompatibleBitmap(hdc, width, height) : nullptr;
-    UserEnter();
+    UserEnterRead();
     if (hdc && !DcLookup(hdc)) {
         UserLeave();
         W32Free(info);
@@ -1173,7 +1173,7 @@ HBITMAP NTAPI NtGdiCreateDIBitmapInternal(HDC hdc, int width, int height, DWORD 
         BOOLEAN coded;
         SURFACE *src = capture_dib(bits, user_info, usage, 0, &buffer, &captured, &coded);
         if (src) {
-            UserEnter();
+            UserEnterRead();
             if (SurfaceLookup(h) == s)
                 for (LONG y = 0; y < s->Height && y < src->Height; y++)
                     for (LONG x = 0; x < s->Width && x < src->Width; x++)
@@ -1198,7 +1198,7 @@ int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC hdc, int x, int y, DWORD width, DWO
     SURFACE *src = capture_dib(bits, info, usage, lines, &buffer, &captured, &coded);
     if (!src)
         return 0;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int result = 0;
     if (dc && dc->Surface) {
@@ -1220,7 +1220,7 @@ int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC hdc, int x, int y, DWORD width, DWO
                 BltSurface(dc->Surface, &clip, dx, dy, (LONG)width, (LONG)height, src, src_x, band_top, SRCCOPY, dc);
             }
             RECT r = {dx, dy, dx + (LONG)width, dy + (LONG)height};
-            SurfaceMarkDrawn(dc->Surface, &r, &clip);
+            DcMarkDrawn(dc, &r, &clip);
         }
         RgnFree(&clip);
         result = (int)(lines ? lines : (DWORD)src->Height);
@@ -1244,7 +1244,7 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
         UCHAR code = (UCHAR)(rop >> 16);
         if ((code ^ (code << 2)) & 0xCC)
             return 0;
-        UserEnter();
+        UserEnterRead();
         DC *dc = DcLookup(hdc);
         BOOL ok = dc && GdiPatBltDc(dc, x, y, width, height, rop, nullptr);
         UserLeave();
@@ -1253,7 +1253,7 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
     SURFACE *src = capture_dib(bits, info, usage, 0, &buffer, &captured, &coded);
     if (!src)
         return 0;
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int result = 0;
     if (dc && dc->Surface) {
@@ -1277,7 +1277,7 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
                 StretchSurface(dc->Surface, &clip, &dst_rect, src, &src_rect, rop, dc->State.StretchMode);
             }
             RECT dirty = {W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
-            SurfaceMarkDrawn(dc->Surface, &dirty, &clip);
+            DcMarkDrawn(dc, &dirty, &clip);
         }
         RgnFree(&clip);
         /* windows answers the height of the dib, whatever part of it was drawn. */
@@ -1295,7 +1295,7 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
 /* rows are top-down and padded to 16 bits, the layout of CreateBitmap. */
 LONG NTAPI NtGdiGetBitmapBits(HBITMAP bitmap, ULONG size, PUCHAR user_bits)
 {
-    UserEnter();
+    UserEnterRead();
     SURFACE *s = SurfaceLookup(bitmap);
     LONG result = 0;
     PUCHAR copy = nullptr;
@@ -1333,7 +1333,7 @@ LONG NTAPI NtGdiSetBitmapBits(HBITMAP bitmap, ULONG size, const UCHAR *user_bits
         W32Free(copy);
         return 0;
     }
-    UserEnter();
+    UserEnterRead();
     SURFACE *s = SurfaceLookup(bitmap);
     LONG result = 0;
     if (s) {

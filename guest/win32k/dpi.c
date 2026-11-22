@@ -448,14 +448,13 @@ UINT DpiWindowDpi(WND *w)
     return DpiChildMessageEnabled(w) ? WndGetDpi(w) : W32SystemDpi();
 }
 
-/* the dpi the process draws at: 96 while it is not aware of the dpi, measured on windows 11 26100 at 100%. */
+/*
+ * the dpi of the session when the process started, whatever it is aware of: xxxInitProcessInfo of win32kbase keeps
+ * the one of gpsi. user32 makes the context of a system aware program from it.
+ */
 UINT NTAPI NtUserGetDpiForCurrentProcess(void)
 {
-    UserEnter();
-    W32PROCESS *p = W32GetProcess();
-    UINT dpi = p ? DpiScaleOf(p->DpiAwareness) : 96;
-    UserLeave();
-    return dpi;
+    return W32SystemDpi();
 }
 
 /*

@@ -5,14 +5,19 @@
  *
  * on an x64 machine the stub calls the 64-bit service itself: it enters the 64-bit code segment with a far call,
  * makes the system call with the arguments widened, and comes back with a far return. none of these services takes a
- * structure whose layout depends on the caller's pointers, and none calls back into user mode. on arm64, where xta64
- * runs 32-bit code and serves every service, the stub calls Wow64Transition as the stubs of the 32-bit ntdll do.
+ * structure whose layout depends on the caller's pointers. a service may call back into user mode, a window message
+ * for one: the callback is dispatched on the stack the call was made on, and wow64 resumes 32-bit code below the
+ * stack pointer of its cpu context. so the stub does as wow64cpu does, which keeps the 64-bit stack in r14 and the
+ * context in r13 while 32-bit code runs: it writes the 32-bit stack pointer into the context and makes the call on
+ * the 64-bit stack. on arm64, where xta64 runs 32-bit code and serves every service, the stub calls Wow64Transition
+ * as the stubs of the 32-bit ntdll do.
  * written by the generator in scratch/dlls/wow/genmime86.py of the research repository.
  */
 #include "mime_svc_win32k.h"
 
 #define NATIVE_ARCHITECTURE 0x7FFE026A /* KUSER_SHARED_DATA.NativeProcessorArchitecture */
 #define SYSTEM_CALL 0x7FFE0308         /* KUSER_SHARED_DATA.SystemCall */
+#define CPU_ESP 0x48                   /* Esp in the context wow64cpu 26300 has in r13, see CpupReturnFromSimulatedCode */
 
 
     .section .text$NtGdiMimeAudioControl, "xr", one_only, "_NtGdiMimeAudioControl@8"
@@ -35,9 +40,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -46,9 +54,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeAudioControl, "dr", one_only, "__imp__NtGdiMimeAudioControl@8"
     .globl "__imp__NtGdiMimeAudioControl@8"
@@ -76,9 +86,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -87,9 +100,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeAudioCreate, "dr", one_only, "__imp__NtGdiMimeAudioCreate@8"
     .globl "__imp__NtGdiMimeAudioCreate@8"
@@ -117,9 +132,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -128,9 +146,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGamma, "dr", one_only, "__imp__NtGdiMimeGamma@8"
     .globl "__imp__NtGdiMimeGamma@8"
@@ -158,9 +178,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -169,9 +192,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGfxShare, "dr", one_only, "__imp__NtGdiMimeGfxShare@8"
     .globl "__imp__NtGdiMimeGfxShare@8"
@@ -199,9 +224,12 @@
     calll *(%edx)
     ret $12
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -212,9 +240,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGpuAddBlock, "dr", one_only, "__imp__NtGdiMimeGpuAddBlock@12"
     .globl "__imp__NtGdiMimeGpuAddBlock@12"
@@ -242,9 +272,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -253,9 +286,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGpuGetSurface, "dr", one_only, "__imp__NtGdiMimeGpuGetSurface@8"
     .globl "__imp__NtGdiMimeGpuGetSurface@8"
@@ -283,16 +318,21 @@
     calll *(%edx)
     ret $0
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl $MIME_SVC_NtGdiMimeGpuKick, %eax
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGpuKick, "dr", one_only, "__imp__NtGdiMimeGpuKick@0"
     .globl "__imp__NtGdiMimeGpuKick@0"
@@ -320,9 +360,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -331,9 +374,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGpuOpen, "dr", one_only, "__imp__NtGdiMimeGpuOpen@8"
     .globl "__imp__NtGdiMimeGpuOpen@8"
@@ -361,9 +406,12 @@
     calll *(%edx)
     ret $12
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -374,9 +422,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeGpuWait, "dr", one_only, "__imp__NtGdiMimeGpuWait@12"
     .globl "__imp__NtGdiMimeGpuWait@12"
@@ -404,9 +454,12 @@
     calll *(%edx)
     ret $20
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -421,9 +474,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeSetExtent, "dr", one_only, "__imp__NtGdiMimeSetExtent@20"
     .globl "__imp__NtGdiMimeSetExtent@20"
@@ -451,9 +506,12 @@
     calll *(%edx)
     ret $12
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -464,9 +522,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeVkAlloc, "dr", one_only, "__imp__NtGdiMimeVkAlloc@12"
     .globl "__imp__NtGdiMimeVkAlloc@12"
@@ -494,18 +554,23 @@
     calll *(%edx)
     ret $4
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl $MIME_SVC_NtGdiMimeVkFree, %eax
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeVkFree, "dr", one_only, "__imp__NtGdiMimeVkFree@4"
     .globl "__imp__NtGdiMimeVkFree@4"
@@ -533,16 +598,21 @@
     calll *(%edx)
     ret $0
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl $MIME_SVC_NtGdiMimeVkKick, %eax
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeVkKick, "dr", one_only, "__imp__NtGdiMimeVkKick@0"
     .globl "__imp__NtGdiMimeVkKick@0"
@@ -570,18 +640,23 @@
     calll *(%edx)
     ret $4
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl $MIME_SVC_NtGdiMimeVkOpen, %eax
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeVkOpen, "dr", one_only, "__imp__NtGdiMimeVkOpen@4"
     .globl "__imp__NtGdiMimeVkOpen@4"
@@ -609,9 +684,12 @@
     calll *(%edx)
     ret $12
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -622,9 +700,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtGdiMimeVkWait, "dr", one_only, "__imp__NtGdiMimeVkWait@12"
     .globl "__imp__NtGdiMimeVkWait@12"
@@ -652,9 +732,12 @@
     calll *(%edx)
     ret $12
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -665,9 +748,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeCallMenu, "dr", one_only, "__imp__NtUserMimeCallMenu@12"
     .globl "__imp__NtUserMimeCallMenu@12"
@@ -695,9 +780,12 @@
     calll *(%edx)
     ret $20
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -712,9 +800,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeCapture, "dr", one_only, "__imp__NtUserMimeCapture@20"
     .globl "__imp__NtUserMimeCapture@20"
@@ -742,9 +832,12 @@
     calll *(%edx)
     ret $16
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -757,9 +850,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeDnd, "dr", one_only, "__imp__NtUserMimeDnd@16"
     .globl "__imp__NtUserMimeDnd@16"
@@ -787,9 +882,12 @@
     calll *(%edx)
     ret $24
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x40, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -806,9 +904,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x40, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeDndData, "dr", one_only, "__imp__NtUserMimeDndData@24"
     .globl "__imp__NtUserMimeDndData@24"
@@ -836,9 +936,12 @@
     calll *(%edx)
     ret $20
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -853,9 +956,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeDndProvide, "dr", one_only, "__imp__NtUserMimeDndProvide@20"
     .globl "__imp__NtUserMimeDndProvide@20"
@@ -883,9 +988,12 @@
     calll *(%edx)
     ret $8
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -894,9 +1002,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeExitWindows, "dr", one_only, "__imp__NtUserMimeExitWindows@8"
     .globl "__imp__NtUserMimeExitWindows@8"
@@ -924,9 +1034,12 @@
     calll *(%edx)
     ret $16
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -939,9 +1052,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeGetMenuItemInfo, "dr", one_only, "__imp__NtUserMimeGetMenuItemInfo@16"
     .globl "__imp__NtUserMimeGetMenuItemInfo@16"
@@ -969,9 +1084,12 @@
     calll *(%edx)
     ret $20
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -986,9 +1104,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeIme, "dr", one_only, "__imp__NtUserMimeIme@20"
     .globl "__imp__NtUserMimeIme@20"
@@ -1016,9 +1136,12 @@
     calll *(%edx)
     ret $16
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -1031,9 +1154,11 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeShell, "dr", one_only, "__imp__NtUserMimeShell@16"
     .globl "__imp__NtUserMimeShell@16"
@@ -1061,9 +1186,12 @@
     calll *(%edx)
     ret $12
     .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
+    /* the arguments are read off the 32-bit stack, and the call is made on the 64-bit one. */
 1:  movl %esp, %esp
     movl %ebp, %ebp
+    movl %esp, CPU_ESP(%r13)
+    xchgq %rsp, %r14
+    subq $0x30, %rsp
     movl 0x8(%rbp), %eax
     movq %rax, %r10
     movl 0xc(%rbp), %eax
@@ -1074,139 +1202,14 @@
     testb $1, SYSTEM_CALL
     jne 2f
     syscall
+4:  addq $0x30, %rsp
+    xchgq %rsp, %r14
     lretl
 2:  int $0x2E
-    lretl
+    jmp 4b
     .code32
     .section .rdata$NtUserMimeTray, "dr", one_only, "__imp__NtUserMimeTray@12"
     .globl "__imp__NtUserMimeTray@12"
     .p2align 2
 "__imp__NtUserMimeTray@12":
     .long "_NtUserMimeTray@12"
-
-    .section .text$NtUserCallHwndParam, "xr", one_only, "_NtUserCallHwndParam@12"
-    .code32
-    .globl "_NtUserCallHwndParam@12"
-    .p2align 4
-"_NtUserCallHwndParam@12":
-    cmpw $9, NATIVE_ARCHITECTURE
-    jne 3f
-    pushl %ebp
-    movl %esp, %ebp
-    subl $0x20, %esp
-    andl $-16, %esp
-    lcall $0x33, $1f
-    movl %ebp, %esp
-    popl %ebp
-    ret $12
-3:  movl $MIME_SVC_NtUserCallHwndParam, %eax
-    movl __imp__Wow64Transition, %edx
-    calll *(%edx)
-    ret $12
-    .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
-1:  movl %esp, %esp
-    movl %ebp, %ebp
-    movl 0x8(%rbp), %eax
-    movq %rax, %r10
-    movl 0xc(%rbp), %eax
-    movq %rax, %rdx
-    movl 0x10(%rbp), %eax
-    movq %rax, %r8
-    movl $MIME_SVC_NtUserCallHwndParam, %eax
-    testb $1, SYSTEM_CALL
-    jne 2f
-    syscall
-    lretl
-2:  int $0x2E
-    lretl
-    .code32
-    .section .rdata$NtUserCallHwndParam, "dr", one_only, "__imp__NtUserCallHwndParam@12"
-    .globl "__imp__NtUserCallHwndParam@12"
-    .p2align 2
-"__imp__NtUserCallHwndParam@12":
-    .long "_NtUserCallHwndParam@12"
-
-    .section .text$NtUserCallOneParam, "xr", one_only, "_NtUserCallOneParam@8"
-    .code32
-    .globl "_NtUserCallOneParam@8"
-    .p2align 4
-"_NtUserCallOneParam@8":
-    cmpw $9, NATIVE_ARCHITECTURE
-    jne 3f
-    pushl %ebp
-    movl %esp, %ebp
-    subl $0x20, %esp
-    andl $-16, %esp
-    lcall $0x33, $1f
-    movl %ebp, %esp
-    popl %ebp
-    ret $8
-3:  movl $MIME_SVC_NtUserCallOneParam, %eax
-    movl __imp__Wow64Transition, %edx
-    calll *(%edx)
-    ret $8
-    .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
-1:  movl %esp, %esp
-    movl %ebp, %ebp
-    movl 0x8(%rbp), %eax
-    movq %rax, %r10
-    movl 0xc(%rbp), %eax
-    movq %rax, %rdx
-    movl $MIME_SVC_NtUserCallOneParam, %eax
-    testb $1, SYSTEM_CALL
-    jne 2f
-    syscall
-    lretl
-2:  int $0x2E
-    lretl
-    .code32
-    .section .rdata$NtUserCallOneParam, "dr", one_only, "__imp__NtUserCallOneParam@8"
-    .globl "__imp__NtUserCallOneParam@8"
-    .p2align 2
-"__imp__NtUserCallOneParam@8":
-    .long "_NtUserCallOneParam@8"
-
-    .section .text$NtUserCallTwoParam, "xr", one_only, "_NtUserCallTwoParam@12"
-    .code32
-    .globl "_NtUserCallTwoParam@12"
-    .p2align 4
-"_NtUserCallTwoParam@12":
-    cmpw $9, NATIVE_ARCHITECTURE
-    jne 3f
-    pushl %ebp
-    movl %esp, %ebp
-    subl $0x20, %esp
-    andl $-16, %esp
-    lcall $0x33, $1f
-    movl %ebp, %esp
-    popl %ebp
-    ret $12
-3:  movl $MIME_SVC_NtUserCallTwoParam, %eax
-    movl __imp__Wow64Transition, %edx
-    calll *(%edx)
-    ret $12
-    .code64
-    /* the far call left its return where a near call leaves its own, the arguments are past the homes. */
-1:  movl %esp, %esp
-    movl %ebp, %ebp
-    movl 0x8(%rbp), %eax
-    movq %rax, %r10
-    movl 0xc(%rbp), %eax
-    movq %rax, %rdx
-    movl 0x10(%rbp), %eax
-    movq %rax, %r8
-    movl $MIME_SVC_NtUserCallTwoParam, %eax
-    testb $1, SYSTEM_CALL
-    jne 2f
-    syscall
-    lretl
-2:  int $0x2E
-    lretl
-    .code32
-    .section .rdata$NtUserCallTwoParam, "dr", one_only, "__imp__NtUserCallTwoParam@12"
-    .globl "__imp__NtUserCallTwoParam@12"
-    .p2align 2
-"__imp__NtUserCallTwoParam@12":
-    .long "_NtUserCallTwoParam@12"
