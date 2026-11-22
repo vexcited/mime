@@ -408,16 +408,15 @@ static ULONG STDMETHODCALLTYPE fence_release(ID3D11Fence *iface)
     ULONG refs = InterlockedDecrement(&f->child.refs);
     if (!refs) {
         D3dDevice *device = f->child.device;
-        /* work submitted may still wait on or signal it. */
-        if (f->last_use > D3dCompleted(device)) {
-            /* a pending program wait goes out with the next batch, so submit it. */
-            D3dSubmit(device, VK_NULL_HANDLE, nullptr, nullptr);
-            D3dWaitSerial(device, device->next_serial - 1);
-        }
+        /*
+         * work submitted may still wait on or signal it, and a pending program wait goes out with the next batch.
+         * submitting that batch here would take the serial the immediate context gave the commands it is recording,
+         * and what they use would be freed before they run.
+         */
         if (f->entry)
-            device->shared.adapter->lpVtbl->ReleaseSemaphore(device->shared.adapter, device->shared.vk, f->entry);
+            D3dDefer(device, f->last_use, D3D_GARBAGE_SHARED_SEMAPHORE, (UINT64)(UINT_PTR)f->entry);
         else
-            device->vk.vkDestroySemaphore(device->vk.device, f->semaphore, nullptr);
+            D3dDefer(device, f->last_use, D3D_GARBAGE_SEMAPHORE, (UINT64)f->semaphore);
         MimeShareClose(&f->share);
         D3dChildRelease(&f->child);
         HeapFree(GetProcessHeap(), 0, f);

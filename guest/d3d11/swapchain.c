@@ -551,8 +551,7 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
             return DXGI_ERROR_WAS_STILL_DRAWING;
         /* wait for the oldest pending frame to show to make room. */
         UINT64 until = MimeVblankTime(&vblank, oldest);
-        if (until > now)
-            Sleep((DWORD)((until - now) * 1000 / vblank.frequency) + 1);
+        MimeSleepUntil(until);
         QueryPerformanceCounter(&counter);
         now = (UINT64)counter.QuadPart;
     }

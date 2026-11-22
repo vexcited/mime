@@ -87,6 +87,7 @@
     X(vkCreatePipelineLayout)                                                                                          \
     X(vkCreateDescriptorPool)                                                                                          \
     X(vkAllocateDescriptorSets)                                                                                        \
+    X(vkFreeDescriptorSets)                                                                                            \
     X(vkUpdateDescriptorSets)                                                                                          \
     X(vkCreateShadersEXT)                                                                                              \
     X(vkDestroyShaderEXT)                                                                                              \
@@ -609,6 +610,8 @@ typedef enum D3dGarbageType {
     D3D_GARBAGE_MEMORY,
     D3D_GARBAGE_HEAP,
     D3D_GARBAGE_COMMAND_POOL,
+    D3D_GARBAGE_SEMAPHORE,
+    D3D_GARBAGE_SHARED_SEMAPHORE,
 } D3dGarbageType;
 
 typedef struct D3dGarbage {
@@ -765,6 +768,7 @@ void D3dDefer(D3dDevice *device, UINT64 serial, D3dGarbageType type, UINT64 hand
 void D3dDeferFree(D3dDevice *device, UINT64 serial, D3dAllocation *alloc);
 HRESULT D3dMemoryInit(D3dDevice *device);
 UINT D3dCbvIndex(D3dDevice *device, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
+void D3dCbvForget(D3dDevice *device, VkBuffer buffer);
 
 D3dDevice *D3dDeviceFrom(ID3D11Device *iface);
 HRESULT D3dCreateDevice(IDXGIAdapter *adapter, UINT flags, const D3D_FEATURE_LEVEL *levels, UINT count,

@@ -192,6 +192,8 @@ static UINT sweep_blocks(D3dDevice *device, BOOL now)
         D3dBlock *block = *link;
         if (block->empty_since && (now || tick - block->empty_since >= EMPTY_MS)) {
             *link = block->next;
+            if (block->buffer)
+                D3dCbvForget(device, block->buffer);
             destroy_block(device, block);
             freed++;
         } else {
@@ -213,6 +215,8 @@ void D3dMemorySweep(D3dDevice *device, BOOL now)
             D3dRingChunk *chunk = *link;
             if (chunk->serial <= completed) {
                 *link = chunk->next;
+                if (chunk->table_set)
+                    device->vk.vkFreeDescriptorSets(device->vk.device, device->table_pool, 1, &chunk->table_set);
                 D3dFree(device, &chunk->alloc);
                 HeapFree(GetProcessHeap(), 0, chunk);
             } else {
@@ -634,8 +638,11 @@ VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk)
     info.descriptorPool = device->table_pool;
     info.descriptorSetCount = 1;
     info.pSetLayouts = &device->table_layout;
-    if (vk->vkAllocateDescriptorSets(vk->device, &info, &chunk->table_set) != VK_SUCCESS)
+    if (vk->vkAllocateDescriptorSets(vk->device, &info, &chunk->table_set) != VK_SUCCESS) {
+        chunk->table_set = VK_NULL_HANDLE;
+        D3dLog("d3d11: no descriptor set for a binding table chunk");
         return VK_NULL_HANDLE;
+    }
     VkDescriptorBufferInfo buffers[D3D_STAGES];
     VkWriteDescriptorSet writes[D3D_STAGES];
     for (UINT i = 0; i < D3D_STAGES; i++) {
