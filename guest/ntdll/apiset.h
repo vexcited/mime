@@ -350,6 +350,8 @@
     {L"ext-ms-win-authz-context-l1-1", L"authz.dll", 0},
     {L"ext-ms-win-base-psapi-l1-1", L"psapi.dll", 0},
     {L"ext-ms-win-base-rstrtmgr-l1-1", L"rstrtmgr.dll", 0},
+    {L"ext-ms-win-bluetooth-apis-internal-l1-1", L"bluetoothapis.dll", 0},
+    {L"ext-ms-win-bluetooth-apis-l1-1", L"bluetoothapis.dll", 0},
     {L"ext-ms-win-cluster-clusapi-l1-1", L"clusapi.dll", 6},
     {L"ext-ms-win-cluster-resutils-l1-1", L"resutils.dll", 3},
     {L"ext-ms-win-cng-rng-l1-1", L"bcryptprimitives.dll", 1},

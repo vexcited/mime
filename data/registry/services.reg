@@ -341,3 +341,43 @@
 "Start"=dword:00000003
 "ErrorControl"=dword:00000001
 "Group"="AudioGroup"
+; the bluetooth support service, mime's own bthserv.dll in svchost -k LocalService, as windows 11 registers it: started
+; on demand by the arrival of a radio or by a client that asks the endpoint mapper for its rpc interface.
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv]
+"Description"="The Bluetooth service supports discovery and association of remote Bluetooth devices.  Stopping or disabling this service may cause already installed Bluetooth devices to fail to operate properly and prevent new devices from being discovered or associated."
+"DisplayName"="Bluetooth Support Service"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:84,03,00,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,c0,d4,01,00,01,00,00,00,e0,93,04,00,00,00,00,00,00,00,00,00
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalService -p"
+"ObjectName"="NT AUTHORITY\\LocalService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000003
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\bthserv.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\Parameters\BluetoothControlPanelTasks]
+"State"=dword:00000000
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\TriggerInfo\0]
+"Action"=dword:00000001
+"GUID"=hex:2a,30,50,08,44,b3,da,4f,9b,e9,90,57,6b,8d,46,f0
+"Type"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\TriggerInfo\1]
+"Action"=dword:00000001
+"Data0"=hex:44,00,30,00,39,00,42,00,44,00,45,00,42,00,35,00,2d,00,36,00,31,00,37,00,31,00,2d,00,34,00,41,00,33,00,34,00,2d,00,42,00,46,00,45,00,32,00,2d,00,30,00,36,00,46,00,41,00,38,00,32,00,36,00,35,00,32,00,35,00,36,00,38,00,3a,00,46,00,43,00,43,00,41,00,45,00,39,00,36,00,32,00,2d,00,34,00,37,00,32,00,32,00,2d,00,34,00,30,00,43,00,37,00,2d,00,41,00,34,00,36,00,44,00,2d,00,46,00,45,00,35,00,31,00,35,00,33,00,32,00,38,00,30,00,37,00,32,00,33,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\TriggerInfo\2]
+"Action"=dword:00000001
+"Data0"=hex:32,00,41,00,43,00,42,00,39,00,44,00,36,00,38,00,2d,00,42,00,34,00,33,00,34,00,2d,00,34,00,42,00,33,00,45,00,2d,00,42,00,39,00,36,00,36,00,2d,00,45,00,30,00,36,00,42,00,34,00,42,00,33,00,41,00,38,00,34,00,43,00,42,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
