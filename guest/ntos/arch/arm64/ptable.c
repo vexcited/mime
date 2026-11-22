@@ -261,7 +261,10 @@ BOOLEAN NTAPI MmIsAddressValid(PVOID va)
     ULONG64 *root = v >= 0xFFFF000000000000ull ? g_kernel_root
                                                : (ULONG64 *)HalPhysmap(KI_READ_SYSREG(ttbr0_el1) & MM_PTE_ADDR_MASK);
     ULONG64 *pte = MiWalk(root, v, FALSE, 3);
-    return pte && (*pte & MM_PTE_VALID);
+    if (pte && (*pte & MM_PTE_VALID))
+        return TRUE;
+    /* an image the list of modules names is resident for whoever asks, see mm/sysimage.c. */
+    return v >= MIME_KVA_SYSTEM && MiSystemImageFault(v);
 }
 
 /* the system process ttbr0: user space is empty, the kernel lives in ttbr1. */

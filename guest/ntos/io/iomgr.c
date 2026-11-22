@@ -35,16 +35,6 @@ NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp)
     return STATUS_INVALID_DEVICE_REQUEST;
 }
 
-/* the drivers built into the kernel, in the order they started, which the module list names an image for. */
-static PDRIVER_OBJECT g_builtin_drivers[96];
-static LONG g_builtin_driver_count;
-
-PDRIVER_OBJECT IoBuiltinDriver(ULONG index)
-{
-    return index < (ULONG)g_builtin_driver_count && index < RTL_NUMBER_OF(g_builtin_drivers) ? g_builtin_drivers[index]
-                                                                                             : nullptr;
-}
-
 NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *out)
 {
     PDRIVER_OBJECT driver;
@@ -89,9 +79,6 @@ NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *ou
         ObDereferenceObject(driver);
         return status;
     }
-    LONG slot = __atomic_fetch_add(&g_builtin_driver_count, 1, __ATOMIC_SEQ_CST);
-    if (slot < (LONG)RTL_NUMBER_OF(g_builtin_drivers))
-        g_builtin_drivers[slot] = driver;
     if (out)
         *out = driver;
     else

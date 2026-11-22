@@ -66,6 +66,8 @@ PMDL NTAPI MmCreateMdl(PMDL mdl, PVOID base, SIZE_T length)
 static ULONG64 frame_of(ULONG64 *root, ULONG_PTR va)
 {
     ULONG64 pte = MiReadPte(root, va);
+    if (!(pte & MM_PTE_VALID) && root == MiKernelRoot() && MiSystemImageFault(va))
+        pte = MiReadPte(root, va);
     if (!(pte & MM_PTE_VALID))
         return 0;
     return (pte & MM_PTE_ADDR_MASK) >> PAGE_SHIFT;

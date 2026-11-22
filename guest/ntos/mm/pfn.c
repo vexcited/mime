@@ -713,6 +713,8 @@ LARGE_INTEGER NTAPI MmGetPhysicalAddress(PVOID va)
 {
     LARGE_INTEGER r;
     if ((ULONG_PTR)va >= MIME_KVA_SYSTEM && (ULONG_PTR)va < MIME_KVA_SYSTEM + MIME_KVA_SYSTEM_SIZE) {
+        if (!(MiReadPte(MiKernelRoot(), (ULONG_PTR)va) & MM_PTE_VALID))
+            MiSystemImageFault((ULONG_PTR)va);
         r.QuadPart = (LONGLONG)((MiReadPte(MiKernelRoot(), (ULONG_PTR)va) & MM_PTE_ADDR_MASK) + ((ULONG_PTR)va & 0xFFF));
         return r;
     }

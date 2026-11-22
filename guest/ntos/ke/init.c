@@ -312,6 +312,9 @@ static void KiPhase1Initialization(PVOID context)
         KiLogPrintf("cannot load win32k.sys: %08x", status);
     }
 
+    /* the filter manager is a boot driver of every windows, loaded before any driver that imports from it. */
+    MmLoadExportDriver("FLTMGR.SYS");
+
     extern void ExPopulateReference(void);
     KiBootStamp("win32k");
     ExPopulateReference();

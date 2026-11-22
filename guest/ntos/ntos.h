@@ -1113,6 +1113,7 @@ void MiInitializeLoadedModules(void);
 PKLDR_DATA_TABLE_ENTRY MiKernelModule(void);
 PKLDR_DATA_TABLE_ENTRY MiLookupModule(ULONG_PTR address);
 NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out);
+NTSTATUS MmLoadExportDriver(const char *name);
 NTSTATUS IopCreateDriverObject(PCUNICODE_STRING name, PCUNICODE_STRING registry, PCUNICODE_STRING service,
                                PKLDR_DATA_TABLE_ENTRY module, PDRIVER_OBJECT *out);
 void IopDeleteDriverObject(PVOID object);
@@ -1120,8 +1121,17 @@ BOOLEAN KiDispatchKernelTrap(struct _KTRAP_FRAME *frame);
 NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp);
 
 void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY module);
-typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PVOID base, SIZE_T size, PCUNICODE_STRING name);
+typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PKLDR_DATA_TABLE_ENTRY module);
 ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context);
+/* the images of microsoft's files that the list of loaded modules names, see mm/sysimage.c. */
+void MiInitializeSystemImages(void);
+void MiSyncSystemImages(void);
+BOOLEAN MiIsSystemImageRecord(PKLDR_DATA_TABLE_ENTRY module);
+BOOLEAN MiSystemImageFault(ULONG_PTR va);
+PLIST_ENTRY MiPlaceLoadedModule(PKLDR_DATA_TABLE_ENTRY module);
+void MiForgetLoadedModule(PKLDR_DATA_TABLE_ENTRY module);
+void MiLockLoadedModules(void);
+void MiUnlockLoadedModules(void);
 PVOID MiFindKernelExport(PVOID image_base, const char *name);
 PVOID MiFindModuleExport(const char *module, const char *name);
 NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read);
@@ -1683,7 +1693,6 @@ extern POBJECT_TYPE IoFileObjectTypeObject;
 
 void IoInitialize(void);
 NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *out);
-PDRIVER_OBJECT IoBuiltinDriver(ULONG index);
 NTSTATUS IopCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                        ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode);
 NTSTATUS IopCreateFileEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,

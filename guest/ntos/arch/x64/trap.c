@@ -356,6 +356,10 @@ static void kernel_exception(PKTRAP_FRAME frame)
         __asm__ volatile("mov %0, %%dr6" ::"r"(0xFFFF0FF0ull));
         return;
     }
+    /* a page that is not there of an image the list of modules names is read from its file, at any irql. */
+    if (frame->Vector == 14 && frame->Cr2 > MIME_USER_ADDRESS_LIMIT && !(frame->ErrorCode & 1) &&
+        MiSystemImageFault(frame->Cr2))
+        return;
     /* a fault on kernel memory, or a trap that is not a page fault, is rare enough to keep a line of. */
     if (frame->Vector != 14 || frame->Cr2 > MIME_USER_ADDRESS_LIMIT)
         KiLogPrintf("kernel exception %u at rip %p rsp %p cr2 %p err %x", frame->Vector, (PVOID)frame->Rip,

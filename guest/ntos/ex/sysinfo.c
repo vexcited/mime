@@ -929,22 +929,9 @@ static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG
 
 /*
  * windows builds this list from PsLoadedModuleList alone, the images loaded into the kernel in their load order, the
- * kernel first: measured on windows 11 26300, no image of a process is in it, in either class. most of what those
- * images are is built into this kernel, so the list is the one of the reference, row by row: a row with no object is
- * part of every installation, a row with one is listed while that driver exists, and the images really loaded take
- * their own row or follow the rows, then the built in drivers the reference has no row for.
+ * kernel first: measured on windows 11 26300, no image of a process is in it, in either class. here too, see
+ * mm/sysimage.c for what the list holds.
  */
-typedef struct {
-    PCSTR Path;
-    ULONG Size, Flags, CheckSum;
-    USHORT LoadCount;
-    PCWSTR Object;
-} SYSTEM_MODULE_ROW;
-
-static const SYSTEM_MODULE_ROW g_module_rows[] = {
-#include "sysmodules.h"
-};
-
 typedef struct {
     CHAR Path[256];
     USHORT NameOffset, PathLength, LoadCount;
@@ -954,187 +941,40 @@ typedef struct {
 
 typedef struct {
     SYSTEM_MODULE *Modules;
-    ULONG Capacity, Count, Images;
+    ULONG Capacity, Count;
 } MODULE_LIST;
 
-/* the address a module without an image of its own stands at, kept for as long as the machine runs. */
-static struct {
-    CHAR Leaf[48];
-    PVOID Base;
-} g_module_bases[256];
-static KSPIN_LOCK g_module_bases_lock;
-
-static CHAR lower(CHAR c)
+static void module_callback(PVOID context, ULONG index, PKLDR_DATA_TABLE_ENTRY module)
 {
-    return c >= 'A' && c <= 'Z' ? (CHAR)(c + 32) : c;
-}
-
-static BOOLEAN same_leaf(PCSTR a, PCSTR b)
-{
-    for (; *a && *b; a++, b++)
-        if (lower(*a) != lower(*b))
-            return FALSE;
-    return *a == *b;
-}
-
-static PVOID module_base(PCSTR leaf, ULONG size)
-{
-    PVOID base = nullptr;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_module_bases_lock);
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_module_bases); i++) {
-        if (!g_module_bases[i].Leaf[0]) {
-            ULONG n = 0;
-            for (; leaf[n] && n < sizeof(g_module_bases[i].Leaf) - 1; n++)
-                g_module_bases[i].Leaf[n] = leaf[n];
-            g_module_bases[i].Base = MmAllocateSystemVa(BYTES_TO_PAGES(size));
-        } else if (!same_leaf(g_module_bases[i].Leaf, leaf)) {
-            continue;
-        }
-        base = g_module_bases[i].Base;
-        break;
-    }
-    KeReleaseSpinLock(&g_module_bases_lock, irql);
-    return base;
-}
-
-static SYSTEM_MODULE *add_system_module(MODULE_LIST *list, PCSTR path, PCUNICODE_STRING wide)
-{
+    MODULE_LIST *list = context;
     if (list->Count >= list->Capacity)
-        return nullptr;
+        return;
     SYSTEM_MODULE *m = &list->Modules[list->Count++];
     memset(m, 0, sizeof(*m));
-    ULONG n = wide ? wide->Length / sizeof(WCHAR) : (ULONG)strlen(path), at = 0;
+    ULONG n = module->FullDllName.Length / sizeof(WCHAR), at = 0;
     for (ULONG i = 0; i < n && at < sizeof(m->Path) - 1; i++) {
-        WCHAR c = wide ? wide->Buffer[i] : (WCHAR)(UCHAR)path[i];
+        WCHAR c = module->FullDllName.Buffer[i];
         m->Path[at++] = c < 0x80 ? (CHAR)c : '?';
         if (c == L'\\')
             m->NameOffset = (USHORT)at;
     }
     m->PathLength = (USHORT)at;
-    m->LoadCount = 1;
-    m->Flags = 0x49104000;
-    return m;
-}
-
-static SYSTEM_MODULE *find_system_module(MODULE_LIST *list, ULONG from, ULONG to, PCSTR leaf)
-{
-    for (ULONG i = from; i < to && i < list->Count; i++)
-        if (same_leaf(list->Modules[i].Path + list->Modules[i].NameOffset, leaf))
-            return &list->Modules[i];
-    return nullptr;
-}
-
-/* an image the kernel loaded, with the checksum and timestamp of its headers. */
-static void module_callback(PVOID context, ULONG index, PVOID base, SIZE_T size, PCUNICODE_STRING name)
-{
-    SYSTEM_MODULE *m = add_system_module(context, nullptr, name);
-    if (!m)
-        return;
-    m->Base = base;
-    m->Size = (ULONG)size;
-    const IMAGE_DOS_HEADER *dos = base;
-    if (dos->e_magic != 0x5A4D || dos->e_lfanew <= 0)
-        return;
-    const IMAGE_NT_HEADERS64 *nt = (const void *)((const UCHAR *)base + dos->e_lfanew);
-    if (nt->Signature != 0x4550)
-        return;
-    m->CheckSum = nt->OptionalHeader.CheckSum;
-    m->TimeDateStamp = nt->FileHeader.TimeDateStamp;
-}
-
-static PDRIVER_OBJECT driver_named(PCWSTR name)
-{
-    UNICODE_STRING n;
-    RtlInitUnicodeString(&n, name);
-    PDRIVER_OBJECT driver = nullptr;
-    if (!NT_SUCCESS(ObReferenceObjectByName(&n, OBJ_CASE_INSENSITIVE, nullptr, 0, IoDriverObjectType, KernelMode,
-                                            nullptr, (PVOID *)&driver)))
-        return nullptr;
-    ObDereferenceObject(driver);
-    return driver;
+    m->LoadCount = module->LoadCount;
+    m->Flags = module->Flags;
+    m->Base = module->DllBase;
+    m->Size = module->SizeOfImage;
+    m->CheckSum = module->CheckSum;
+    m->TimeDateStamp = module->TimeDateStamp;
 }
 
 static NTSTATUS collect_system_modules(MODULE_LIST *list)
 {
-    enum { IMAGES = 64, DRIVERS = 96 };
-    list->Capacity = 2 * IMAGES + RTL_NUMBER_OF(g_module_rows) + DRIVERS;
+    MiSyncSystemImages();
+    list->Capacity = 512;
     list->Modules = ExAllocatePool2(POOL_FLAG_PAGED, list->Capacity * sizeof(SYSTEM_MODULE), KI_TAG('S', 'y', 'M', 'o'));
     if (!list->Modules)
         return STATUS_INSUFFICIENT_RESOURCES;
-    /* the loaded images first, at the head of the room, then the list itself after them. */
-    list->Capacity = IMAGES;
     MiEnumerateSystemImages(module_callback, list);
-    ULONG images = list->Count;
-    list->Capacity = 2 * IMAGES + RTL_NUMBER_OF(g_module_rows) + DRIVERS;
-    BOOLEAN image_used[IMAGES] = {};
-    PDRIVER_OBJECT row_drivers[RTL_NUMBER_OF(g_module_rows)];
-    ULONG row_driver_count = 0;
-    for (ULONG r = 0; r < RTL_NUMBER_OF(g_module_rows); r++) {
-        const SYSTEM_MODULE_ROW *row = &g_module_rows[r];
-        PCSTR leaf = row->Path + strlen(row->Path);
-        while (leaf > row->Path && leaf[-1] != '\\')
-            leaf--;
-        SYSTEM_MODULE *image = find_system_module(list, 0, images, leaf);
-        if (image) {
-            SYSTEM_MODULE *m = &list->Modules[list->Count++];
-            *m = *image;
-            m->Flags = row->Flags;
-            m->LoadCount = row->LoadCount;
-            image_used[image - list->Modules] = TRUE;
-            continue;
-        }
-        if (row->Object) {
-            PDRIVER_OBJECT driver = row->Object[0] == L'*' ? nullptr : driver_named(row->Object);
-            if (!driver)
-                continue;
-            row_drivers[row_driver_count++] = driver;
-        }
-        CHAR path[256];
-        strcpy(path, row->Path);
-#if defined(__x86_64__)
-        /* the microcode library is the one of the maker of the processor. */
-        CHAR *maker = strstr(path, "AuthenticAMD");
-        if (maker && KiProcessorSmbiosManufacturer()[0] == 'I')
-            memcpy(maker, "GenuineIntel", 12);
-#endif
-        SYSTEM_MODULE *m = add_system_module(list, path, nullptr);
-        m->Size = row->Size;
-        m->Flags = row->Flags;
-        m->CheckSum = row->CheckSum;
-        m->LoadCount = row->LoadCount;
-        m->Base = module_base(m->Path + m->NameOffset, m->Size);
-    }
-    for (ULONG i = 0; i < images; i++) {
-        if (!image_used[i] && list->Count < list->Capacity)
-            list->Modules[list->Count++] = list->Modules[i];
-    }
-    for (ULONG i = 0; i < DRIVERS; i++) {
-        PDRIVER_OBJECT driver = IoBuiltinDriver(i);
-        if (!driver || driver->DriverSection || !driver->DriverName.Buffer)
-            continue;
-        BOOLEAN listed = FALSE;
-        for (ULONG k = 0; k < row_driver_count && !listed; k++)
-            listed = row_drivers[k] == driver;
-        if (listed)
-            continue;
-        PCWSTR name = driver->DriverName.Buffer + driver->DriverName.Length / sizeof(WCHAR);
-        while (name > driver->DriverName.Buffer && name[-1] != L'\\')
-            name--;
-        CHAR path[256] = "\\SystemRoot\\System32\\drivers\\";
-        ULONG at = (ULONG)strlen(path), leaf = at;
-        for (; *name && at < sizeof(path) - 5; name++)
-            path[at++] = *name < 0x80 ? (CHAR)*name : '?';
-        memcpy(path + at, ".sys", 5);
-        if (find_system_module(list, images, list->Count, path + leaf))
-            continue;
-        SYSTEM_MODULE *m = add_system_module(list, path, nullptr);
-        if (!m)
-            break;
-        m->Size = 0x10000;
-        m->Flags = 0x49104080;
-        m->Base = module_base(m->Path + m->NameOffset, m->Size);
-    }
-    list->Images = images;
     return STATUS_SUCCESS;
 }
 
@@ -1143,8 +983,9 @@ static NTSTATUS collect_system_modules(MODULE_LIST *list)
  * alone, then each module whose whole 0x128 bytes fit, of which only the bytes from the base to the nul of the path
  * are written. class 4d has no count: each module that fits before a last zero word is written, its word of offset,
  * then from the mapped base to the nul of the path, then its last 16 bytes, and the zero word ends the list. both
- * tell the full size. the bases, the timestamp and the base the image was built for are zero without the debug
- * privilege, the mapped base and the section always.
+ * tell the full size. the bases and the timestamp are zero without the debug privilege, the mapped base and the
+ * section always. measured on windows 11 26100 with the privilege: the base the image was built for is zero too, in
+ * every row.
  */
 static NTSTATUS query_modules(BOOLEAN extended, PVOID info, ULONG length, PULONG returned)
 {
@@ -1152,8 +993,8 @@ static NTSTATUS query_modules(BOOLEAN extended, PVOID info, ULONG length, PULONG
     NTSTATUS status = collect_system_modules(&list);
     if (!NT_SUCCESS(status))
         return status;
-    SYSTEM_MODULE *modules = list.Modules + list.Images;
-    ULONG count = list.Count - list.Images;
+    SYSTEM_MODULE *modules = list.Modules;
+    ULONG count = list.Count;
     BOOLEAN hidden = KeGetPreviousMode() == UserMode && !SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE);
     ULONG entry_size = extended ? 0x140 : 0x128, header = extended ? 0 : 8, tail = extended ? 2 : 0;
     ULONG size = header + count * entry_size + tail;
@@ -1191,7 +1032,7 @@ static NTSTATUS query_modules(BOOLEAN extended, PVOID info, ULONG length, PULONG
             struct {
                 ULONG ImageChecksum, TimeDateStamp;
                 PVOID DefaultBase;
-            } stamp = {m->CheckSum, hidden ? 0 : m->TimeDateStamp, hidden ? nullptr : m->Base};
+            } stamp = {m->CheckSum, hidden ? 0 : m->TimeDateStamp, nullptr};
             status = KiCopyToUser(at, &next, sizeof(next));
             if (NT_SUCCESS(status))
                 status = KiCopyToUser(at + 0x10, &e, 0x20 + m->PathLength + 1);
@@ -1219,7 +1060,10 @@ static NTSTATUS query_process_id(PVOID info, ULONG length, PULONG returned)
         HANDLE ProcessId;
         UNICODE_STRING ImageName;
     } in;
-    /* measured on windows 11 26300: the length is told when it is not the one, and left alone once it is. */
+    /*
+     * measured on windows 11 26100: the length is told when it is not the one, and again once the process is found,
+     * whether its name fits or not. a process that does not exist leaves it alone.
+     */
     if (length != sizeof(in)) {
         ULONG size = sizeof(in);
         if (returned)
@@ -1248,6 +1092,10 @@ static NTSTATUS query_process_id(PVOID info, ULONG length, PULONG returned)
             status = KiCopyToUser((PUCHAR)info + sizeof(HANDLE), &out, sizeof(out));
     }
     ObDereferenceObject(process);
+    if (returned && (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH)) {
+        ULONG size = sizeof(in);
+        KiCopyToUser(returned, &size, sizeof(size));
+    }
     return status;
 }
 
@@ -1744,7 +1592,7 @@ static BOOLEAN query_small_block(ULONG klass, PVOID info, ULONG length, PULONG r
     }
     case 83:    /* SystemProcessorIdleCycleTimeInformation, a count of cycles for each processor. */
     case 108: { /* SystemProcessorCycleTimeInformation */
-        ULONG64 hz = HalBootInfo->cpu_mhz ? (ULONG64)HalBootInfo->cpu_mhz * 1000000 : 3000000000ull;
+        ULONG64 hz = KiProcessorMhz() ? (ULONG64)KiProcessorMhz() * 1000000 : 3000000000ull;
         for (ULONG i = 0; i < count && i < RTL_NUMBER_OF(b.Quads); i++) {
             PKPRCB prcb = KiProcessorBlock[i];
             ULONG64 time = !prcb ? 0 : klass == 83 ? processor_idle_time(prcb) : KiQueryInterruptTime();
@@ -2910,6 +2758,7 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
     }
 }
 
+#ifndef __aarch64__
 /*
  * a user caller's query, answered the way windows 11 26300 answers the class at that length: the buffer is probed on
  * the boundary the class asks, then the returned length; a length the class does not take is refused with the status
@@ -2983,9 +2832,16 @@ static NTSTATUS query_as_windows(ULONG klass, PVOID info, ULONG length, PULONG r
     return status;
 }
 
+#endif
+
 NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
+#ifdef __aarch64__
+    /* the lengths and statuses of the reference were measured on x64 only. */
+    return query_system_information(klass, info, length, returned);
+#else
     return query_as_windows((ULONG)klass, info, length, returned);
+#endif
 }
 
 /*
@@ -3052,6 +2908,7 @@ NTSTATUS NTAPI NtQuerySystemInformationEx(SYSTEM_INFORMATION_CLASS klass, PVOID 
     case 23:
     case 42:
     case 61:
+    case 73: /* SystemLogicalProcessorInformation of a group, what GetLogicalProcessorInformation of 26100 asks. */
     case 83:
     case 100:
     case 108:
@@ -3470,11 +3327,6 @@ NTSTATUS NTAPI NtTraceEvent(HANDLE handle, ULONG flags, ULONG length, PVOID data
     return STATUS_SUCCESS;
 }
 
-NTSTATUS NTAPI NtTraceControl(ULONG code, PVOID in, ULONG in_len, PVOID out, ULONG out_len, PULONG returned)
-{
-    return STATUS_NOT_SUPPORTED;
-}
-
 /*
  * the product policy values a program reads. windows keeps them in a signed blob, here they are the ones of windows 11
  * pro 26300: the edition GetProductInfo answers and the languages the edition may show, which the mui cache is made of.
@@ -3542,6 +3394,20 @@ NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data
     if (length < size)
         return STATUS_BUFFER_TOO_SMALL;
     return KiCopyToUser(data, value, size);
+}
+
+/*
+ * the secure settings of the security policies, which a device with virtualization based security keeps. measured on
+ * windows 11 26300 with secpol.c of the research repository: no setting is there whatever its names, the size is read
+ * and must not be 0, and the value and the type are left as they were.
+ */
+NTSTATUS NTAPI NtQuerySecurityPolicy(PCUNICODE_STRING policy, PCUNICODE_STRING key, PCUNICODE_STRING value, PULONG type,
+                                     PVOID data, PULONG size)
+{
+    ULONG room;
+    if (!size || !NT_SUCCESS(KiCopyFromUser(&room, size, sizeof(room))))
+        return STATUS_ACCESS_VIOLATION;
+    return room ? STATUS_NOT_FOUND : STATUS_INVALID_PARAMETER;
 }
 
 NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data)

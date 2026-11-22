@@ -205,6 +205,9 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
     if (ec == 0x25 || ec == 0x21) {
         BOOLEAN write = ec == 0x25 && (frame->Esr & (1u << 6)) && !(frame->Esr & (1u << 8));
         ULONG_PTR far = frame->Far;
+        /* a translation fault on a page of an image the list of modules names, which is read from its file. */
+        if (far > MIME_USER_ADDRESS_LIMIT && (frame->Esr & 0x3C) == 0x04 && MiSystemImageFault(far))
+            return;
         if (far <= MIME_USER_ADDRESS_LIMIT && !(frame->Spsr & (1u << 7))) {
             /* demand faults on user memory touched by the kernel, from interruptible code only. */
             KiEnableInterrupts();

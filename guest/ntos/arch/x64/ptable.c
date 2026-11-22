@@ -307,10 +307,11 @@ BOOLEAN NTAPI MmIsAddressValid(PVOID va)
     for (int level = 0; level < 4; level++) {
         ULONG64 e = table[table_index(v, level)];
         if (!(e & MM_PTE_VALID))
-            return FALSE;
+            break;
         if (!MI_PTE_IS_TABLE(e, level))
             return TRUE;
         table = (ULONG64 *)HalPhysmap(e & MM_PTE_ADDR_MASK);
     }
-    return FALSE;
+    /* an image the list of modules names is resident for whoever asks, see mm/sysimage.c. */
+    return v >= MIME_KVA_SYSTEM && MiSystemImageFault(v);
 }

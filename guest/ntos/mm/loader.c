@@ -99,7 +99,8 @@ static PKLDR_DATA_TABLE_ENTRY module_by_name(const char *name)
         return g_kernel_module;
     for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
         PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-        if (ascii_equal_unicode(name, &m->BaseDllName))
+        /* an image of a file of microsoft's is memory to read, nothing of it runs here. */
+        if (ascii_equal_unicode(name, &m->BaseDllName) && !MiIsSystemImageRecord(m))
             return m;
     }
     return nullptr;
@@ -181,12 +182,23 @@ static PKLDR_DATA_TABLE_ENTRY add_module(PVOID base, SIZE_T size, PVOID entry, P
     m->CheckSum = nt->OptionalHeader.CheckSum;
     m->TimeDateStamp = nt->FileHeader.TimeDateStamp;
     m->SizeOfImageNotRounded = nt->OptionalHeader.SizeOfImage;
-    m->Flags = LDRP_ENTRY_PROCESSED;
+    /* measured on windows 11 26300: the flags of a driver a service loaded. */
+    m->Flags = 0x49104000;
     m->LoadCount = 1;
     ExAcquireFastMutex(&g_modules_lock);
-    InsertTailList(&PsLoadedModuleList, &m->InLoadOrderLinks);
+    InsertHeadList(MiPlaceLoadedModule(m), &m->InLoadOrderLinks);
     ExReleaseFastMutex(&g_modules_lock);
     return m;
+}
+
+void MiLockLoadedModules(void)
+{
+    ExAcquireFastMutex(&g_modules_lock);
+}
+
+void MiUnlockLoadedModules(void)
+{
+    ExReleaseFastMutex(&g_modules_lock);
 }
 
 /* the kernel is the first module, as on windows, under the name windows gives it. */
@@ -194,6 +206,7 @@ void MiInitializeLoadedModules(void)
 {
     ExInitializeFastMutex(&g_modules_lock);
     ExInitializeResourceLite(&PsLoadedModuleResource);
+    MiInitializeSystemImages();
     PVOID base = (PVOID)HalBootInfo->kernel_virt;
     PIMAGE_NT_HEADERS64 nt = image_headers(base);
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\SystemRoot\\system32\\ntoskrnl.exe");
@@ -213,7 +226,7 @@ ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
     ExAcquireFastMutex(&g_modules_lock);
     for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
         PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-        callback(context, index++, m->DllBase, m->SizeOfImage, &m->FullDllName);
+        callback(context, index++, m);
     }
     ExReleaseFastMutex(&g_modules_lock);
     return index;
@@ -221,7 +234,8 @@ ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
 
 BOOLEAN MiIsCodeAddress(ULONG_PTR address)
 {
-    return MiLookupModule(address) != nullptr;
+    PKLDR_DATA_TABLE_ENTRY m = MiLookupModule(address);
+    return m && !MiIsSystemImageRecord(m);
 }
 
 /* image name and offset in the image, which the linker maps give the function for. */
@@ -354,6 +368,10 @@ static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size
         *volume = ~0u;
     ULONG64 file_size;
     status = IoQueryFileSize(file, &file_size);
+    /* a kernel image of microsoft's is never run: for the loader there is no such driver, as before the file was. */
+    const MimeRomEntry *rom = IoGetRomFile(file);
+    if (NT_SUCCESS(status) && rom && rom->genuine)
+        status = STATUS_OBJECT_NAME_NOT_FOUND;
     if (NT_SUCCESS(status) && (file_size == 0 || file_size > 64 * 1024 * 1024))
         status = STATUS_INVALID_IMAGE_FORMAT;
     if (NT_SUCCESS(status)) {
@@ -409,7 +427,7 @@ static PKLDR_DATA_TABLE_ENTRY import_module(const char *dll, ULONG depth, NTSTAT
     RtlInitUnicodeString(&name, path);
     *status = load_image(&name, depth + 1, &m);
     if (*status == STATUS_IMAGE_ALREADY_LOADED)
-        *status = STATUS_SUCCESS;
+        *status = m ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
     if (!NT_SUCCESS(*status)) {
         KiLogPrintf("driver import from %s: %08x", dll, *status);
         return nullptr;
@@ -437,7 +455,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
         PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
         if (RtlEqualUnicodeString(&m->BaseDllName, &leaf_name, TRUE)) {
-            *out = m;
+            *out = MiIsSystemImageRecord(m) ? nullptr : m;
             return STATUS_IMAGE_ALREADY_LOADED;
         }
     }
@@ -512,8 +530,11 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     ULONG64 rom_id;
     BOOLEAN foreign = NT_SUCCESS(status) && !(file_object && MimeFsLockIdentity(file_object, &rom_volume, &rom_id) &&
                                               rom_volume == ~0u);
-    if (foreign)
+    if (foreign) {
         KiNoteForeignImage(base, info.SizeOfImage);
+        /* a driver of another maker walks the list from its first instruction. */
+        MiSyncSystemImages();
+    }
 #endif
     IMAGE_DATA_DIRECTORY imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : nullptr;
@@ -591,14 +612,23 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out)
     return load_image(path, 0, out);
 }
 
+/* an export driver of System32\drivers by its file name, loaded as for a driver that imports from it. */
+NTSTATUS MmLoadExportDriver(const char *name)
+{
+    NTSTATUS status;
+    import_module(name, 0, &status);
+    return status;
+}
+
 /* the image's pages go, the record leaves the list and stays for readers that may still hold it. */
 void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY m)
 {
-    if (!m || m == g_kernel_module)
+    if (!m || m == g_kernel_module || MiIsSystemImageRecord(m))
         return;
     ExAcquireFastMutex(&g_modules_lock);
     RemoveEntryList(&m->InLoadOrderLinks);
     InitializeListHead(&m->InLoadOrderLinks);
+    MiForgetLoadedModule(m);
     ExReleaseFastMutex(&g_modules_lock);
     unpin_file(m);
     KiLogPrintf("unloaded %wZ from %p", &m->FullDllName, m->DllBase);
