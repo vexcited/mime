@@ -142,12 +142,40 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *at
 }
 
 /* takes ownership of a descriptor made by ObComputeSecurity. */
+/*
+ * a token carries its integrity level as a label, a process and a thread the level of the token of the process,
+ * measured on windows 11 with label.c of the research repository: no write up for a token, no write up and no read
+ * up for the two others. chromium reads the label of its own token without asking whether there is one.
+ */
+static SD_BLOB *with_object_label(PVOID object, SD_BLOB *sd)
+{
+    const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
+    PVOID token;
+    ULONG policy = SYSTEM_MANDATORY_LABEL_NO_WRITE_UP | SYSTEM_MANDATORY_LABEL_NO_READ_UP;
+    if (type == SeTokenObjectType) {
+        token = object;
+        policy = SYSTEM_MANDATORY_LABEL_NO_WRITE_UP;
+    } else if (type == PsProcessTypeObject) {
+        token = ((PEPROCESS)object)->Token;
+    } else if (type == PsThreadTypeObject) {
+        PEPROCESS process = (PEPROCESS)((PETHREAD)object)->Tcb.Process;
+        token = process ? process->Token : nullptr;
+    } else {
+        return sd;
+    }
+    SD_BLOB *labelled;
+    if (!NT_SUCCESS(SeSdAddObjectLabel(sd, token ? SeTokenIntegrityRid(token) : SeThreadIntegrityRid(), policy, &labelled)))
+        return sd;
+    SeSdDereference(sd);
+    return labelled;
+}
+
 void ObAttachSecurity(PVOID object, SD_BLOB *sd)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
     h->Flags &= ~OB_SD_PENDING;
     if (sd)
-        h->Reserved = (ULONG_PTR)sd;
+        h->Reserved = (ULONG_PTR)with_object_label(object, sd);
 }
 
 /* the directories programs create named objects in. */

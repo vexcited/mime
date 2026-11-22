@@ -91,6 +91,12 @@ ULONG SepIntegrityRid(const TOKEN *t)
     return t->IntegrityIndex < 0 ? 0 : sid_rid(t->Groups[t->IntegrityIndex].Sid);
 }
 
+/* the level of any token, for the label of what it is the token of. */
+ULONG SeTokenIntegrityRid(PVOID token)
+{
+    return SepIntegrityRid(token);
+}
+
 /* ------------------------------------------------------------------ privileges */
 
 static ULONG64 privilege_bit(ULONG luid)
@@ -833,11 +839,15 @@ PTOKEN SepCreateElevatedUserToken(void)
 }
 
 /* a process's session is its token's. */
-/* the logon session of the process's token, what RtlEncryptMemory's same logon option keys by. */
+/*
+ * the logon session RtlEncryptMemory's same logon option keys by: the one of the token the calling thread acts with,
+ * so a server that impersonates its client reads what the client sealed.
+ */
 ULONG64 SepTokenAuthenticationId(PEPROCESS process)
 {
+    PETHREAD thread = PsCurrentThread();
     ExAcquireFastMutex(&SeLock);
-    PTOKEN t = process->Token;
+    PTOKEN t = process == PsCurrentProcess() && thread->ImpersonationToken ? thread->ImpersonationToken : process->Token;
     ULONG64 id = t ? t->AuthenticationId : 0;
     ExReleaseFastMutex(&SeLock);
     return id;

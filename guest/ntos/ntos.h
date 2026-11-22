@@ -1327,6 +1327,8 @@ BOOLEAN SeThreadHasPrivilege(ULONG luid);
 BOOLEAN SeThreadBypassesTraverse(void);
 /* the integrity level of the thread's token and of its process, as a rid. */
 ULONG SeThreadIntegrityRid(void);
+ULONG SeTokenIntegrityRid(PVOID token);
+NTSTATUS SeSdAddObjectLabel(SD_BLOB *sd, ULONG rid, ULONG policy, SD_BLOB **out);
 
 /* descriptors of mimefs files, io/mimefs_sec.c. */
 void MimeUserSid(UCHAR sid[28]);

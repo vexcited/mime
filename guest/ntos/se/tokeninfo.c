@@ -1614,6 +1614,51 @@ NTSTATUS NTAPI NtSetInformationToken(HANDLE handle, ULONG klass, PVOID info, ULO
 
 /* ------------------------------------------------------------------ privileges and groups */
 
+/*
+ * tells whether a token holds the privileges of a set enabled, all of them with PRIVILEGE_SET_ALL_NECESSARY and any of
+ * them without. measured on windows 11: a primary token is taken as well as an impersonation one, and every privilege
+ * of the set the token has enabled comes back with SE_PRIVILEGE_USED_FOR_ACCESS.
+ */
+NTSTATUS NTAPI NtPrivilegeCheck(HANDLE handle, PVOID set, PBOOLEAN result)
+{
+    ULONG head[2];
+    NTSTATUS status = read_caller(head, set, sizeof(head));
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG count = head[0];
+    if (count > SEP_MAX_GROUPS)
+        return STATUS_INVALID_PARAMETER;
+    PTOKEN t;
+    status = SepReferenceTokenByHandle(handle, TOKEN_QUERY, &t, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (t->Type == TokenImpersonation && t->ImpersonationLevel < SecurityIdentification) {
+        ObDereferenceObject(t);
+        return STATUS_BAD_IMPERSONATION_LEVEL;
+    }
+    ExAcquireFastMutex(&SeLock);
+    ULONG64 enabled = t->Enabled & t->Present;
+    ExReleaseFastMutex(&SeLock);
+    ObDereferenceObject(t);
+    ULONG held = 0;
+    for (ULONG i = 0; i < count && NT_SUCCESS(status); i++) {
+        ULONG entry[3];
+        PUCHAR at = (PUCHAR)set + 8 + 12 * (SIZE_T)i;
+        status = read_caller(entry, at, sizeof(entry));
+        if (!NT_SUCCESS(status))
+            break;
+        if (entry[1] || entry[0] < SEP_PRIVILEGE_FIRST || entry[0] > SEP_PRIVILEGE_LAST || !((enabled >> entry[0]) & 1))
+            continue;
+        held++;
+        entry[2] |= SE_PRIVILEGE_USED_FOR_ACCESS;
+        status = write_caller(at + 8, &entry[2], sizeof(ULONG));
+    }
+    if (!NT_SUCCESS(status))
+        return status;
+    BOOLEAN answer = (head[1] & PRIVILEGE_SET_ALL_NECESSARY) ? held == count : held != 0;
+    return write_caller(result, &answer, sizeof(answer));
+}
+
 NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disable_all, PVOID state, ULONG length, PVOID previous,
                                        PULONG returned)
 {

@@ -292,8 +292,8 @@ static const UCHAR *find_label(const SECURITY_DESCRIPTOR_RELATIVE *sd)
     return nullptr;
 }
 
-/* the sd with an integrity label ace added to its sacl, as a low integrity creator leaves on what it makes. */
-static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
+/* the sd with an integrity label ace added to its sacl. */
+static NTSTATUS add_label_ace(SD_BLOB *sd, ULONG rid, UCHAR flags, ULONG policy, USHORT control, SD_BLOB **out)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
     const ACL *old = (r->Control & SE_SACL_PRESENT) && r->Sacl ? (const ACL *)(sd->Data + r->Sacl) : nullptr;
@@ -310,7 +310,7 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
         return STATUS_INSUFFICIENT_RESOURCES;
     memset(made->Data, 0, made->Length);
     made->Data[0] = 1;
-    *(USHORT *)(made->Data + 2) = r->Control | SE_SACL_PRESENT;
+    *(USHORT *)(made->Data + 2) = r->Control | SE_SACL_PRESENT | control;
     ULONG at = 20;
     UCHAR *acl = made->Data + at;
     acl[0] = old && old->AclRevision > ACL_REVISION ? old->AclRevision : ACL_REVISION;
@@ -322,7 +322,7 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
     ace[0] = SYSTEM_MANDATORY_LABEL_ACE_TYPE;
     ace[1] = flags;
     *(USHORT *)(ace + 2) = (USHORT)ace_size;
-    *(ULONG *)(ace + 4) = 1; /* no write up. */
+    *(ULONG *)(ace + 4) = policy;
     ace[8] = 1;
     ace[9] = 1;
     ace[15] = 16;
@@ -346,6 +346,23 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
     }
     *out = made;
     return STATUS_SUCCESS;
+}
+
+/* the label a low integrity creator leaves: no write up. */
+static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
+{
+    return add_label_ace(sd, rid, flags, 1, 0, out);
+}
+
+/*
+ * the label a process, a thread or a token is made with, when its descriptor has none: the level of its token and a
+ * policy, in a sacl marked as inherited. STATUS_OBJECT_NAME_COLLISION when the descriptor has a label already.
+ */
+NTSTATUS SeSdAddObjectLabel(SD_BLOB *sd, ULONG rid, ULONG policy, SD_BLOB **out)
+{
+    if (find_label((const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data))
+        return STATUS_OBJECT_NAME_COLLISION;
+    return add_label_ace(sd, rid, 0, policy, SE_SACL_AUTO_INHERITED, out);
 }
 
 static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
@@ -822,6 +839,11 @@ NTSTATUS SeSdSet(ULONG info, const SD_BLOB *modification, const SD_BLOB *old, SD
         MimeRtlFree(work);
         return status;
     }
+    /* a sacl that is set stays marked inherited only when its setter asks so, measured with label.c. */
+    USHORT asked = ((const SECURITY_DESCRIPTOR_RELATIVE *)modification->Data)->Control;
+    if ((parts & 0x1F8) && (asked & (SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED)) !=
+                               (SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED))
+        ((SECURITY_DESCRIPTOR_RELATIVE *)work)->Control &= ~SE_SACL_AUTO_INHERITED;
     return blob_of_rtl(work, out);
 }
 
