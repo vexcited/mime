@@ -130,6 +130,7 @@ typedef struct _KJUMP_BUFFER {
     ULONG64 X19_X30[12];
     ULONG64 Sp;
     ULONG64 D8_D15[8];
+    struct _KJUMP_BUFFER *Outer; /* the recovery of a copy this one runs within, such as a fault's own. */
 } KJUMP_BUFFER;
 
 

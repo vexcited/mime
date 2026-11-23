@@ -1,13 +1,19 @@
 LIBRARY wintrust.dll
 EXPORTS
-    CryptCATAdminAcquireContext2@20
     CryptCATAdminAcquireContext@12
-    CryptCATAdminCalcHashFromFileHandle2@20
+    CryptCATAdminAcquireContext2@20
     CryptCATAdminCalcHashFromFileHandle@16
+    CryptCATAdminCalcHashFromFileHandle2@20
     CryptCATAdminEnumCatalogFromHash@20
     CryptCATAdminReleaseCatalogContext@12
     CryptCATAdminReleaseContext@8
     CryptCATCatalogInfoFromContext@12
+    CryptSIPCreateIndirectData@12
+    CryptSIPGetCaps@8
+    CryptSIPGetSignedDataMsg@20
+    CryptSIPPutSignedDataMsg@20
+    CryptSIPRemoveSignedDataMsg@8
+    CryptSIPVerifyIndirectData@8
     WTHelperCertCheckValidSignature@4
     WTHelperCertIsSelfSigned@8
     WTHelperGetProvCertFromChain@8

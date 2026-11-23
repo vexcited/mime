@@ -23,7 +23,6 @@ static HRESULT profiles_query(PROFILES *p, REFIID riid, void **object)
     else if (IsEqualIID(riid, &IID_ITfSource))
         found = &p->Source;
     if (!found) {
-        CTF_TRACE("msctf: profiles query %08lx refused\n", riid->Data1);
         *object = nullptr;
         return E_NOINTERFACE;
     }

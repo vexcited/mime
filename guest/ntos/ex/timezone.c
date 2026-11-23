@@ -255,9 +255,11 @@ void ExInitializeTimeZone(void)
 
 /*
  * SystemCurrentTimeZoneInformation: windows' RTL_TIME_ZONE_INFORMATION, the bias, the two names and the two rules of
- * TimeZoneInformation as the kernel loaded them.
+ * TimeZoneInformation as the kernel loaded them. the dynamic form, SystemDynamicTimeZoneInformation, follows them
+ * with the name of the zone's key and whether its daylight time is off. measured on windows 11 26300: either block
+ * is told whole to any room that holds it.
  */
-NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned)
+NTSTATUS ExQueryTimeZoneInformation(BOOLEAN dynamic, PVOID info, ULONG length, PULONG returned)
 {
     struct {
         LONG Bias;
@@ -267,6 +269,8 @@ NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned)
         WCHAR DaylightName[32];
         TZ_DATE DaylightStart;
         LONG DaylightBias;
+        WCHAR TimeZoneKeyName[128];
+        BOOLEAN DynamicDaylightTimeDisabled;
     } out;
     memset(&out, 0, sizeof(out));
     TZ_RULES rules;
@@ -281,10 +285,15 @@ NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned)
     CmQueryValue(KEY_TIME_ZONE, L"StandardName", &type, out.StandardName, &size);
     size = sizeof(out.DaylightName) - sizeof(WCHAR);
     CmQueryValue(KEY_TIME_ZONE, L"DaylightName", &type, out.DaylightName, &size);
-    ULONG need = sizeof(out);
+    size = sizeof(out.TimeZoneKeyName) - sizeof(WCHAR);
+    CmQueryValue(KEY_TIME_ZONE, L"TimeZoneKeyName", &type, out.TimeZoneKeyName, &size);
+    LONG disabled = 0;
+    if (read_dword(L"DynamicDaylightTimeDisabled", &disabled))
+        out.DynamicDaylightTimeDisabled = disabled != 0;
+    ULONG need = dynamic ? sizeof(out) : __builtin_offsetof(typeof(out), TimeZoneKeyName);
     if (returned)
         KiCopyToUser(returned, &need, sizeof(need));
-    if (length != need)
+    if (length < need)
         return STATUS_INFO_LENGTH_MISMATCH;
     return KiCopyToUser(info, &out, need);
 }

@@ -38,12 +38,13 @@ typedef struct MimeUiFrame {
     double origin_x, origin_y;              /* where the host part starts, in host window pixels. */
     bool subsurface;
     uint32_t serial; /* counts the frames of the layer. */
+    void *landing;   /* for mime_ui_vk_landing, null when the frame has nothing to settle as it lands. */
     bool shown;
 } MimeUiFrame;
 
 /*
  * Wayland uses a subsurface for each window of the guest that presents, over the part of its client area that shows
- * and excluded from SDL rendering, macOS a Metal layer over the client area; X11 uses the whole window and draws its
+ * and clear in the pixels of its window, macOS a Metal layer over the client area; X11 uses the whole window and draws its
  * frame. attach waits for the main thread. rectangles are window-relative guest pixels of the window's own, order is
  * the window's place in the paint order of its tree. without layers a window has one presenter and source is 0.
  */
@@ -53,6 +54,12 @@ void mime_ui_vk_detach(uint32_t id, uint32_t source);
 bool mime_ui_vk_frame(uint32_t id, uint32_t source, const MimeUiPlace *place, MimeRect image, MimeUiFrame *frame);
 /* the guest told where a window that presents lies now, between its frames. */
 void mime_ui_vk_place(uint32_t id, uint32_t source, const MimeUiPlace *place);
+/*
+ * the frame of a layer is about to be handed to the display: what it shows of itself is set for the host window as
+ * it is at that moment. true when the layer is held for it, until mime_ui_vk_landed, which is as long as the hand over.
+ */
+bool mime_ui_vk_landing(const MimeUiFrame *frame, uint32_t source);
+void mime_ui_vk_landed(const MimeUiFrame *frame);
 /* the frame of a layer was handed to the display. */
 void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown);
 /* copies changes from a guest surface of the given dimensions; returns false if unchanged. */

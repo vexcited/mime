@@ -33,7 +33,7 @@ HRESULT DxgiAcquireShared(const DxgiGpu *gpu, const void *create_info, const voi
 {
     const DxgiVulkan *vk = DxgiGetVulkan();
     /* the basic render driver's devices share the vulkan device of the gpu they run on. */
-    if (gpu == &vk->warp)
+    if (!DxgiHostGpu(gpu))
         gpu = &vk->gpus[0];
     UINT index = (UINT)(gpu - vk->gpus);
     if (index >= vk->count)

@@ -1,6 +1,5 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/objidl.h>
-#include <mime/feature.h>
 
 #define CLR_E_SHIM_RUNTIMELOAD ((INT)0x80131701)
 
@@ -228,7 +227,14 @@ static BOOL runtime_arrived(void)
     DWORD count = GetFullPathNameW(root, MAX_PATH, path, nullptr);
     if (!count || count >= MAX_PATH || (path[count - 1] != L'\\' && !append(path, L"\\")))
         return FALSE;
-    return append(path, L"v4.0.30319\\mscoreei.dll") && MimeFeatureFault(path);
+    if (!append(path, L"v4.0.30319\\mscoreei.dll"))
+        return FALSE;
+    /* opening the file to read it is the use the kernel asks for the feature on, see guest/ntos/ex/feature.c. */
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return FALSE;
+    CloseHandle(file);
+    return TRUE;
 }
 
 static void initialize_provider(void)

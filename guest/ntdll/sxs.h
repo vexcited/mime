@@ -6,7 +6,14 @@
 #ifndef MIME_NTDLL_SXS_H
 #define MIME_NTDLL_SXS_H
 
+/* kernelbase compiles the manifest parser and the generator of contexts too, and reaches ntdll by its exports. */
+#ifdef MIME_BUILD_KERNELBASE
+#include <mime/ntrtl.h>
+#include <stdarg.h>
+#define NTDLL_EXPORT
+#else
 #include "ntdll_private.h"
+#endif
 #include <mime/ntactctx.h>
 
 /* ------------------------------------------------------------------ activation context data */

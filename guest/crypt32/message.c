@@ -813,6 +813,44 @@ BOOL WINAPI CryptVerifyDetachedMessageSignature(CRYPT_VERIFY_MESSAGE_PARA *para,
     return ok;
 }
 
+/* the signed message with its content inside: the signer is checked as for a detached one, then the content is given.
+ * a buffer too small gets the size and ERROR_MORE_DATA. */
+BOOL WINAPI CryptVerifyMessageSignature(CRYPT_VERIFY_MESSAGE_PARA *para, DWORD signer_index, const BYTE *blob,
+                                        DWORD blob_size, BYTE *decoded, DWORD *decoded_size, PCCERT_CONTEXT *signer)
+{
+    DWORD room = decoded && decoded_size ? *decoded_size : 0;
+    if (decoded_size)
+        *decoded_size = 0;
+    if (!CryptVerifyDetachedMessageSignature(para, signer_index, blob, blob_size, 0, nullptr, nullptr, signer))
+        return FALSE;
+    if (!decoded_size)
+        return TRUE;
+    HCRYPTMSG message = CryptMsgOpenToDecode(para->dwMsgAndCertEncodingType, 0, 0, para->hCryptProv, nullptr, nullptr);
+    BOOL ok = message && CryptMsgUpdate(message, blob, blob_size, TRUE);
+    DWORD size = 0;
+    ok = ok && CryptMsgGetParam(message, CMSG_CONTENT_PARAM, 0, nullptr, &size);
+    if (ok && decoded) {
+        if (size > room) {
+            SetLastError(ERROR_MORE_DATA);
+            ok = FALSE;
+        } else {
+            ok = CryptMsgGetParam(message, CMSG_CONTENT_PARAM, 0, decoded, &size);
+        }
+    }
+    DWORD error = GetLastError();
+    if (message)
+        CryptMsgClose(message);
+    *decoded_size = size;
+    if (!ok) {
+        if (signer && *signer) {
+            CertFreeCertificateContext(*signer);
+            *signer = nullptr;
+        }
+        SetLastError(error);
+    }
+    return ok;
+}
+
 /* a blob is copied, a file is mapped, which *mapped tells: signed files such as cabinets can be large. */
 static DWORD read_object(DWORD type, const void *object, BYTE **bytes, DWORD *size, BOOL *mapped)
 {

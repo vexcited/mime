@@ -63,7 +63,17 @@
 "Default Namespace"="root\\cimv2"
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost]
-"netsvcs"=multi:"Winmgmt","KeyIso"
+"netsvcs"=multi:"Winmgmt","BITS"
+
+; the com security svchost gives the services of netsvcs, as on windows 11 26300.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\netsvcs]
+"AuthenticationCapabilities"=dword:00003020
+"CoInitializeSecurityAllowComCapability"=dword:00000001
+"CoInitializeSecurityAllowCrossContainer"=dword:00000001
+"CoInitializeSecurityAllowInteractiveUsers"=dword:00000001
+"CoInitializeSecurityAllowLowBox"=dword:00000001
+"CoInitializeSecurityParam"=dword:00000001
+"COM_UnmarshalingPolicy"=dword:00000001
 
 [HKLM\SYSTEM\CurrentControlSet\Services\Winmgmt]
 "DependOnService"=multi:"RPCSS"
@@ -73,6 +83,7 @@
 "FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,60,ea,00,00,01,00,00,00,c0,d4,01,00,00,00,00,00,00,00,00,00
 "ImagePath"=expand:"%systemroot%\\system32\\svchost.exe -k netsvcs -p"
 "ObjectName"="LocalSystem"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
 "Type"=dword:00000020
 

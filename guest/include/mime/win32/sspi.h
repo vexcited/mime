@@ -515,6 +515,10 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY AcceptSecurityContext(PCredHandle credenti
 SECURITYAPI SECURITY_STATUS SEC_ENTRY DeleteSecurityContext(PCtxtHandle context);
 SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesW(PCtxtHandle context, ULONG attribute, void *buffer);
 SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesA(PCtxtHandle context, ULONG attribute, void *buffer);
+SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesExW(PCtxtHandle context, ULONG attribute, void *buffer,
+                                                                ULONG size);
+SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesExA(PCtxtHandle context, ULONG attribute, void *buffer,
+                                                                ULONG size);
 SECURITYAPI SECURITY_STATUS SEC_ENTRY EncryptMessage(PCtxtHandle context, ULONG qop, PSecBufferDesc message,
                                                      ULONG sequence);
 SECURITYAPI SECURITY_STATUS SEC_ENTRY DecryptMessage(PCtxtHandle context, PSecBufferDesc message, ULONG sequence,

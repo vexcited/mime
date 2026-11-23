@@ -13,8 +13,11 @@ int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_features(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_setup(const MimePaths *paths, int argc, char **argv);
 
-/* makes sure the host holds every Windows system file of the manifest, downloading the missing ones. 0 when it does. */
-int mime_genuine_ensure(const MimePaths *paths);
+/*
+ * makes sure the host holds every Windows system file of the manifest, downloading the missing ones. 0 when it does.
+ * verify checks the bytes of the ones it holds too, which mime setup does.
+ */
+int mime_genuine_ensure(const MimePaths *paths, bool verify);
 /* how many of them the host holds, for mime status. */
 void mime_genuine_print_status(const MimePaths *paths);
 

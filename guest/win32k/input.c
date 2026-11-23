@@ -31,6 +31,7 @@ void InputSetForeground(WND *w)
 {
     WND *old = InputForeground;
     InputForeground = w;
+    UserSharedForeground(w ? WndHandle(w) : nullptr);
     InputKeysChanged();
     if (old != w)
         InputForegroundChanged();
@@ -62,6 +63,78 @@ HWND NTAPI NtUserSetCapture(HWND hwnd)
         InputSetCapture(t, w, 0);
     UserLeave();
     return old;
+}
+
+/* the windows of a thread, or of the one in the foreground for no thread: active, focus, capture and caret. */
+BOOL NTAPI NtUserGetGUIThreadInfo(DWORD thread_id, GUITHREADINFO *user_info)
+{
+    GUITHREADINFO info;
+    if (!NT_SUCCESS(MimeCopyFromUser(&info.cbSize, &user_info->cbSize, sizeof(info.cbSize))) ||
+        info.cbSize != sizeof(info)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    memset(&info, 0, sizeof(info));
+    info.cbSize = sizeof(info);
+    UserEnter();
+    W32THREAD *t = nullptr;
+    if (thread_id) {
+        for (W32THREAD *c = W32NextThread(nullptr); c && !t; c = W32NextThread(c))
+            if ((DWORD)(ULONG_PTR)c->Tid == thread_id)
+                t = c;
+    } else if (InputForeground) {
+        t = InputForeground->Thread;
+    }
+    if (t) {
+        W32THREAD *owner = W32InputOwner(t);
+        info.hwndActive = owner->Active;
+        info.hwndFocus = owner->Focus;
+        info.hwndCapture = owner->Capture;
+        info.hwndCaret = t->Caret.Hwnd;
+        if (t->Caret.Hwnd) {
+            info.rcCaret = (RECT){t->Caret.X, t->Caret.Y, t->Caret.X + t->Caret.Width, t->Caret.Y + t->Caret.Height};
+            info.flags |= GUI_CARETBLINKING;
+        }
+    }
+    UserLeave();
+    if (!t) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return NT_SUCCESS(MimeCopyToUser(user_info, &info, sizeof(info)));
+}
+
+/*
+ * SetCursorPos and SetPhysicalCursorPos of user32 26300, the point in the units of the caller: kept inside the clip
+ * of the cursor and the screen, and followed by a mouse move that the hardware did not make, as zzzSetCursorPos
+ * does. measured with cur.c of the research repository.
+ */
+void InputSetCursorPos(POINT physical)
+{
+    InputCursorPos = physical;
+    InputCursorMoved();
+    queue_mouse_refresh();
+}
+
+BOOL NTAPI NtUserSetCursorPos(int x, int y)
+{
+    POINT pt = {x, y};
+    UserEnter();
+    DpiPointConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
+    InputSetCursorPos(pt);
+    UserLeave();
+    return TRUE;
+}
+
+/* ReleaseCapture of user32 26300, which SetCapture of no window was before. */
+BOOL NTAPI NtUserReleaseCapture(void)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t)
+        InputSetCapture(t, nullptr, 0);
+    UserLeave();
+    return t != nullptr;
 }
 
 /*
@@ -504,6 +577,27 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
 }
 
 /*
+ * the host drags a border of a window itself and keeps the pointer for as long as it does, so the size the window
+ * takes is all that tells of the pointer. windows moves the cursor and delivers the mouse to hooks and to raw input
+ * all through its own drag loop: the motion is made from the step, the cursor following where the guest's edge does.
+ */
+void InputHostDragStep(WND *w, LONG dx, LONG dy, LONG cursor_dx, LONG cursor_dy)
+{
+    if (!dx && !dy)
+        return;
+    MimeInputEvent ev = {};
+    ev.type = MIME_INPUT_MOUSE_MOVE;
+    ev.window_id = (uint32_t)(ULONG_PTR)WndHandle(w);
+    ev.x = InputCursorPos.x + cursor_dx;
+    ev.y = InputCursorPos.y + cursor_dy;
+    ev.dx = dx;
+    ev.dy = dy;
+    ev.flags = 8;
+    ev.time_ms = W32TickCount();
+    dispatch_event(&ev, FALSE, 0);
+}
+
+/*
  * a released capture is followed by a mouse move that the hardware did not make, as on windows: the window under
  * the cursor sets its cursor again. hooks and raw input do not see it.
  */
@@ -524,8 +618,11 @@ static void queue_mouse_refresh(void)
         return;
     if (!IsListEmpty(&t->Input)) {
         QUEUED_MESSAGE *last = CONTAINING_RECORD(t->Input.Blink, QUEUED_MESSAGE, Links);
-        if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id)
+        if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id) {
+            last->Input.x = ev.x;
+            last->Input.y = ev.y;
             return;
+        }
     }
     QueuePostInput(t, &ev, mouse_key_state(&ev), IMO_HARDWARE, 0);
 }
@@ -1187,6 +1284,21 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
     return emit(out, WndHandle(target), msg, vk, lparam, ev, filter, min, max);
 }
 
+/*
+ * a later size of the host window that is still waiting in the thread's queue. the sizes of a drag come faster than a
+ * program lays itself out, and windows only ever gives a window the size of where the pointer is now.
+ */
+static BOOLEAN newer_size_queued(W32THREAD *t, const QUEUED_MESSAGE *from)
+{
+    for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink) {
+        QUEUED_MESSAGE *q = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
+        if (q != from && q->Kind == QM_INPUT && q->Input.type == MIME_INPUT_WINDOW_SIZE &&
+            q->Input.window_id == from->Input.window_id && !(q->Input.flags & 1))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 /* a host focus event for a window of the thread that is still waiting in its queue. */
 static BOOLEAN focus_gain_queued(W32THREAD *t)
 {
@@ -1268,7 +1380,10 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         WndHostDisplay(w, (ULONG)ev->x);
         break;
     case MIME_INPUT_WINDOW_SIZE:
-        WndHostSize(w, ev->width, ev->height);
+        if (ev->flags & 1)
+            MoveSizeHostEnd(w);
+        else if (!newer_size_queued(t, qm))
+            WndHostSize(w, ev->width, ev->height);
         break;
     case MIME_INPUT_WINDOW_FOCUS:
         if (ev->x) {
@@ -1316,5 +1431,56 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         t->MouseWindow = nullptr;
         break;
     }
+    return FALSE;
+}
+
+/*
+ * RegisterPointerDeviceNotifications and GetPointerDevices, as win32kfull 26300 does them. the pointer devices of
+ * windows are digitizers: pens, touch screens and touchpads, never a mouse. mime has none, so a window is registered
+ * for messages that do not come and the list of devices is empty, as on a machine with a mouse and a keyboard.
+ */
+#define ERROR_SYSTEM_DEVICE_NOT_FOUND 15299
+#define SECURITY_MANDATORY_MEDIUM_RID 0x2000
+
+BOOL NTAPI NtUserRegisterPointerDeviceNotifications(HWND hwnd, BOOL range)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = FALSE;
+    ULONG error = 0;
+    if (!w)
+        error = ERROR_INVALID_WINDOW_HANDLE;
+    else if (!w->Thread || w->Thread->Process != W32GetProcess())
+        r = ERROR_ACCESS_DENIED; /* windows answers the error itself, sets none and registers nothing. */
+    else if (range && SeThreadIntegrityRid() < SECURITY_MANDATORY_MEDIUM_RID)
+        error = ERROR_ACCESS_DENIED;
+    else if (!w->PointerNotify) {
+        /* a second registration fails with no error and changes nothing. */
+        w->PointerNotify = range ? 2 : 1;
+        r = TRUE;
+    }
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return r;
+}
+
+BOOL NTAPI NtUserGetPointerDevices(UINT *user_count, PVOID user_devices)
+{
+    const UINT found = 0;
+    UINT count = found;
+    ULONG error = !user_count ? ERROR_INVALID_PARAMETER : 0;
+    if (!error && !user_devices) {
+        if (!NT_SUCCESS(MimeCopyToUser(user_count, &count, sizeof(count))))
+            error = ERROR_NOACCESS;
+        else
+            return TRUE;
+    } else if (!error) {
+        if (!NT_SUCCESS(MimeCopyFromUser(&count, user_count, sizeof(count))))
+            error = ERROR_NOACCESS;
+        else
+            error = ERROR_SYSTEM_DEVICE_NOT_FOUND;
+    }
+    W32SetLastError(error);
     return FALSE;
 }

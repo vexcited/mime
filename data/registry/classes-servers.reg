@@ -87,6 +87,35 @@
 @=expand:"%SystemRoot%\\system32\\dsound.dll"
 "ThreadingModel"="Both"
 
+; evr.dll
+[HKCR\CLSID\{E474E05A-AB65-4F6A-827C-218B1BAAF31F}]
+@="MF Video Mixer"
+
+[HKCR\CLSID\{E474E05A-AB65-4F6A-827C-218B1BAAF31F}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\evr.dll"
+"ThreadingModel"="Both"
+
+[HKCR\CLSID\{98455561-5136-4D28-AB08-4CEE40EA2781}]
+@="MF Video Presenter"
+
+[HKCR\CLSID\{98455561-5136-4D28-AB08-4CEE40EA2781}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\evr.dll"
+"ThreadingModel"="Both"
+
+[HKCR\CLSID\{F7AFD75B-BF8C-4A11-BDB9-04AD66182F84}]
+@="MF Video Presenter 2"
+
+[HKCR\CLSID\{F7AFD75B-BF8C-4A11-BDB9-04AD66182F84}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\evr.dll"
+"ThreadingModel"="Both"
+
+[HKCR\CLSID\{A0A7A57B-59B2-4919-A694-ADD0A526C373}]
+@="Tearless Window Presenter"
+
+[HKCR\CLSID\{A0A7A57B-59B2-4919-A694-ADD0A526C373}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\evr.dll"
+"ThreadingModel"="Both"
+
 ; explorerframe.dll
 [HKCR\CLSID\{D92BD3B9-99A0-4334-A497-11BCB093E9D2}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\explorerframe.dll"
@@ -98,6 +127,12 @@
 "ThreadingModel"="Apartment"
 
 ; ieframe.dll
+; Internet Shortcut, the object ShellExecute makes for a web address.
+[HKCR\CLSID\{FBF23B40-E3F0-101B-8488-00AA003E56F8}]
+@="Internet Shortcut"
+[HKCR\CLSID\{FBF23B40-E3F0-101B-8488-00AA003E56F8}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\ieframe.dll"
+"ThreadingModel"="Apartment"
 ; WebBrowser, the control that programs embed to show a page, as Shell.Explorer.2 and Shell.Explorer.
 [HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}]
 @="Microsoft Web Browser"
@@ -274,79 +309,6 @@
 ; FreeThreadedDOMDocument60
 [HKCR\CLSID\{88D96A06-F192-11D4-A65F-0040963251E5}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\msxml6.dll"
-"ThreadingModel"="Both"
-
-; propsys.dll
-; PropertySystem
-[HKCR\CLSID\{B8967F85-58AE-4F46-9FB2-5D7904798F4B}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\propsys.dll"
-"ThreadingModel"="Both"
-
-; InMemoryPropertyStore
-[HKCR\CLSID\{9A02E012-6303-4E1E-B9A1-630F802592C5}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\propsys.dll"
-"ThreadingModel"="Both"
-
-; InMemoryPropertyStoreMarshalByValue
-[HKCR\CLSID\{D4CA0E2D-6DA7-4B75-A97C-5F306F0EAEDC}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\propsys.dll"
-"ThreadingModel"="Both"
-
-; MultiplexPropertyStore
-[HKCR\CLSID\{8D14113B-5715-4714-8A20-69FC343626DE}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\propsys.dll"
-"ThreadingModel"="Both"
-
-; WindowPropertyStore
-[HKCR\CLSID\{56AD4C5D-B908-4F85-8FF1-7940C29B3BCF}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\propsys.dll"
-"ThreadingModel"="Both"
-
-; shell32.dll
-; ShellFolderView
-[HKCR\CLSID\{62112AA1-EBE4-11CF-A5FB-0020AFE7292D}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\shell32.dll"
-"ThreadingModel"="Apartment"
-
-; DragDropHelper
-[HKCR\CLSID\{4657278A-411B-11D2-839A-00C04FD918D0}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\shell32.dll"
-"ThreadingModel"="Apartment"
-
-; Shell
-[HKCR\CLSID\{13709620-C279-11CE-A49E-444553540000}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\shell32.dll"
-"ThreadingModel"="Apartment"
-
-; windows.storage.dll
-; ApplicationDestinations
-[HKCR\CLSID\{86C14003-4D6B-4EF3-A7B4-0506663B2E68}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
-"ThreadingModel"="Both"
-
-; ApplicationDocumentLists
-[HKCR\CLSID\{86BEC222-30F2-47E0-9F25-60D11CD75C28}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
-"ThreadingModel"="Both"
-
-; DestinationList
-[HKCR\CLSID\{77F10CF0-3DB5-4966-B520-B7C54FD35ED6}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
-"ThreadingModel"="Both"
-
-; EnumerableObjectCollection
-[HKCR\CLSID\{2D3468C1-36A7-43B6-AC24-D3F02FD9607A}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
-"ThreadingModel"="Both"
-
-; FileOperation
-[HKCR\CLSID\{3AD05575-8857-4850-9277-11B85BDB8E09}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
-"ThreadingModel"="Apartment"
-
-; ShellLink
-[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\InprocServer32]
-@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
 "ThreadingModel"="Both"
 
 ; windowscodecs.dll
@@ -809,6 +771,41 @@
 [HKCR\CLSID\{148BD520-A2AB-11CE-B11F-00AA00530503}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\mstask.dll"
 "ThreadingModel"="Both"
+
+; taskschd.dll, the task scheduler 2.0 of windows, which genuine taskschd.dll serves through the schedule of the manager.
+; TaskScheduler
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}]
+@="TaskScheduler class"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\InprocServer32]
+@=expand:"%SystemRoot%\\System32\\taskschd.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\ProgID]
+@="Schedule.Service.1"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\Programmable]
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\TypeLib]
+@="{E34CB9F1-C7F7-424C-BE29-027DCC09363A}"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\Version]
+@="1.0"
+[HKCR\CLSID\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\VersionIndependentProgID]
+@="Schedule.Service"
+[HKCR\Schedule.Service]
+@="TaskScheduler class"
+[HKCR\Schedule.Service\CLSID]
+@="{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"
+[HKCR\Schedule.Service\CurVer]
+@="Schedule.Service.1"
+[HKCR\Schedule.Service.1]
+@="TaskScheduler class"
+[HKCR\Schedule.Service.1\CLSID]
+@="{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0]
+@="TaskScheduler 1.1 Type Library"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0\0\win32]
+@="C:\\Windows\\SysWOW64\\taskschd.dll"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0\0\win64]
+@="C:\\Windows\\System32\\taskschd.dll"
+[HKCR\TypeLib\{E34CB9F1-C7F7-424C-BE29-027DCC09363A}\1.0\FLAGS]
+@="0"
 
 ; msado15.dll
 ; ADODB.Connection

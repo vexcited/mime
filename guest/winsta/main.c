@@ -211,6 +211,84 @@ WINSTA BOOLEAN WINAPI WinStationVerify(HANDLE server, ULONG id)
     return valid_server(server) && describe(id, &name, &state);
 }
 
+WINSTA BOOLEAN WINAPI WinStationQueryInformationW(HANDLE server, ULONG id, ULONG klass, PVOID info, ULONG length,
+                                                  PULONG returned)
+{
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+/*
+ * measured on windows 11 26100 with ws.c of scratch/g2/bth, in both widths: only capability 1 can be asked,
+ * the redirection of the session's devices to a remote client, which a local session answers with 0 and a last error
+ * of 0. any other gives ERROR_INVALID_PARAMETER and a zero.
+ */
+WINSTA BOOLEAN WINAPI WinStationGetCurrentSessionCapabilities(ULONG capability, PULONG value)
+{
+    *value = 0;
+    if (capability != 1) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SetLastError(ERROR_SUCCESS);
+    return TRUE;
+}
+
+/* an event a program wants set when its session connects, disconnects or changes its user. */
+typedef struct NOTIFICATION {
+    struct NOTIFICATION *Next;
+    HANDLE Event;
+    ULONG Mask;
+} NOTIFICATION;
+
+static SRWLOCK g_notifications_lock = SRWLOCK_INIT;
+static NOTIFICATION *g_notifications;
+
+/*
+ * the registration is kept and named by a cookie, any mask is taken, and a call without an event fails and leaves the
+ * last error alone. the session of a mime machine stays connected to its console with one user, so nothing sets the
+ * events.
+ */
+WINSTA BOOLEAN WINAPI WinStationRegisterCurrentSessionNotificationEvent(HANDLE event, ULONG mask, PULONG_PTR cookie)
+{
+    if (!event)
+        return FALSE;
+    NOTIFICATION *n = HeapAlloc(GetProcessHeap(), 0, sizeof(*n));
+    if (!n) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    n->Event = event;
+    n->Mask = mask;
+    AcquireSRWLockExclusive(&g_notifications_lock);
+    n->Next = g_notifications;
+    g_notifications = n;
+    ReleaseSRWLockExclusive(&g_notifications_lock);
+    *cookie = (ULONG_PTR)n;
+    return TRUE;
+}
+
+/* windows fails fast on a cookie it did not give, here that is an error. */
+WINSTA BOOLEAN WINAPI WinStationUnRegisterNotificationEvent(ULONG_PTR cookie)
+{
+    NOTIFICATION *found = nullptr;
+    AcquireSRWLockExclusive(&g_notifications_lock);
+    for (NOTIFICATION **p = &g_notifications; *p; p = &(*p)->Next) {
+        if ((ULONG_PTR)*p == cookie) {
+            found = *p;
+            *p = found->Next;
+            break;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_notifications_lock);
+    if (!found) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    HeapFree(GetProcessHeap(), 0, found);
+    return TRUE;
+}
+
 /* everything else the library exports needs a terminal server. */
 BOOLEAN WINAPI WinStationUnsupported(void)
 {

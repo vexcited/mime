@@ -1,8 +1,11 @@
 /* host and Windows clipboard format conversion. */
 #include "convert.h"
 
-#include <SDL3/SDL.h>
+#include <png/deflate.h>
+#include <png/png.h>
+
 #include <ctype.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -186,11 +189,18 @@ static uint32_t scale_channel(uint32_t value, uint32_t mask)
     return mask == 255 ? shifted : (shifted * 255 + mask / 2) / mask;
 }
 
-static bool dib_to_argb(const uint8_t *dib, size_t size, Argb *out)
+/* rows_at is where the first row is when a file puts it further than right after the header and the colors. */
+static bool dib_to_argb(const uint8_t *dib, size_t size, size_t rows_at, Argb *out)
 {
     DibLayout l;
     if (!dib_layout(dib, size, &l))
         return false;
+    if (rows_at > l.pixels) {
+        size_t rows = (size_t)(l.height < 0 ? -l.height : l.height);
+        if (rows_at > size || size - rows_at < l.stride * rows)
+            return false;
+        l.pixels = rows_at;
+    }
     int height = l.height < 0 ? -l.height : l.height;
     uint32_t *pixels = malloc((size_t)l.width * (size_t)height * sizeof(uint32_t));
     if (!pixels)
@@ -263,38 +273,102 @@ static bool dib_to_argb(const uint8_t *dib, size_t size, Argb *out)
     return true;
 }
 
-static uint8_t *take_stream(SDL_IOStream *io, size_t *out_size)
+static void *lib_alloc(void *ctx, size_t size)
 {
-    Sint64 size = SDL_TellIO(io);
-    void *data = SDL_GetPointerProperty(SDL_GetIOProperties(io), SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, nullptr);
-    uint8_t *copy = size > 0 && data ? malloc((size_t)size) : nullptr;
-    if (copy) {
-        memcpy(copy, data, (size_t)size);
-        *out_size = (size_t)size;
-    }
-    return copy;
+    return malloc(size);
 }
 
+static void lib_free(void *ctx, void *p)
+{
+    free(p);
+}
+
+static const MimeAllocator g_alloc = {lib_alloc, lib_free, nullptr};
+
+static uint32_t g_crc_table[256];
+static pthread_once_t g_crc_once = PTHREAD_ONCE_INIT;
+
+static void png_crc_table(void)
+{
+    for (uint32_t n = 0; n < 256; n++) {
+        uint32_t c = n;
+        for (int k = 0; k < 8; k++)
+            c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+        g_crc_table[n] = c;
+    }
+}
+
+static uint32_t png_crc(uint32_t crc, const uint8_t *data, size_t size)
+{
+    pthread_once(&g_crc_once, png_crc_table);
+    crc = ~crc;
+    for (size_t i = 0; i < size; i++)
+        crc = g_crc_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    return ~crc;
+}
+
+static void wr32be(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+
+static uint8_t *png_chunk(uint8_t *out, const char *type, const uint8_t *data, size_t size)
+{
+    wr32be(out, (uint32_t)size);
+    memcpy(out + 4, type, 4);
+    if (size)
+        memcpy(out + 8, data, size);
+    wr32be(out + 8 + size, png_crc(0, out + 4, size + 4));
+    return out + 12 + size;
+}
+
+/* pixels of 0xAARRGGBB with straight alpha as a PNG file of eight bits a channel. */
 static uint8_t *argb_to_png(uint32_t *pixels, int width, int height, size_t *out_size)
 {
-    SDL_Surface *s = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_ARGB8888, pixels, width * 4);
-    if (!s)
+    size_t row = 1 + (size_t)width * 4, raw_size = row * (size_t)height;
+    uint8_t *raw = malloc(raw_size);
+    if (!raw)
         return nullptr;
-    SDL_IOStream *io = SDL_IOFromDynamicMem();
-    uint8_t *png = nullptr;
-    if (io) {
-        if (SDL_SavePNG_IO(s, io, false))
-            png = take_stream(io, out_size);
-        SDL_CloseIO(io);
+    for (int y = 0; y < height; y++) {
+        uint8_t *out = raw + (size_t)y * row;
+        const uint32_t *in = pixels + (size_t)y * (size_t)width;
+        *out++ = 0;
+        for (int x = 0; x < width; x++, out += 4) {
+            out[0] = (uint8_t)(in[x] >> 16);
+            out[1] = (uint8_t)(in[x] >> 8);
+            out[2] = (uint8_t)in[x];
+            out[3] = (uint8_t)(in[x] >> 24);
+        }
     }
-    SDL_DestroySurface(s);
+    void *packed = nullptr;
+    size_t packed_size = 0;
+    int rc = mime_deflate_zlib(raw, raw_size, 4, &g_alloc, &packed, &packed_size);
+    free(raw);
+    if (rc != MIME_DEFLATE_OK || packed_size > UINT32_MAX)
+        return nullptr;
+    uint8_t *png = malloc(8 + 25 + 12 + packed_size + 12);
+    if (png) {
+        static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        uint8_t header[13] = {[8] = 8, [9] = 6};
+        wr32be(header, (uint32_t)width);
+        wr32be(header + 4, (uint32_t)height);
+        memcpy(png, signature, 8);
+        uint8_t *end = png_chunk(png + 8, "IHDR", header, sizeof(header));
+        end = png_chunk(end, "IDAT", packed, packed_size);
+        end = png_chunk(end, "IEND", nullptr, 0);
+        *out_size = (size_t)(end - png);
+    }
+    free(packed);
     return png;
 }
 
 uint8_t *mime_conv_dib_to_png(const void *dib, size_t size, size_t *out_size)
 {
     Argb a;
-    if (!dib_to_argb(dib, size, &a))
+    if (!dib_to_argb(dib, size, 0, &a))
         return nullptr;
     uint8_t *png = argb_to_png(a.pixels, a.width, a.height, out_size);
     free(a.pixels);
@@ -322,33 +396,27 @@ uint8_t *mime_conv_dib_to_bmp(const void *dib, size_t size, size_t *out_size)
 /* the pixels of a PNG or BMP file as 0xAARRGGBB, top row first. */
 static bool decode_image(const void *file, size_t size, Argb *out)
 {
-    SDL_IOStream *io = SDL_IOFromConstMem(file, size);
-    if (!io)
-        return false;
-    SDL_Surface *loaded = SDL_LoadSurface_IO(io, true);
-    if (!loaded)
-        return false;
-    SDL_Surface *s = SDL_ConvertSurface(loaded, SDL_PIXELFORMAT_ARGB8888);
-    SDL_DestroySurface(loaded);
-    if (!s)
-        return false;
-    bool ok = false;
-    if (s->w > 0 && s->h > 0 && s->w <= MAX_IMAGE_SIDE && s->h <= MAX_IMAGE_SIDE &&
-        (uint64_t)s->w * (uint64_t)s->h <= MAX_IMAGE_PIXELS) {
-        uint32_t *pixels = malloc((size_t)s->w * (size_t)s->h * 4);
-        if (pixels) {
-            for (int y = 0; y < s->h; y++)
-                memcpy(pixels + (size_t)y * (size_t)s->w, (const uint8_t *)s->pixels + (size_t)y * (size_t)s->pitch,
-                       (size_t)s->w * 4);
-            out->pixels = pixels;
-            out->width = s->w;
-            out->height = s->h;
-            out->alpha = true;
-            ok = true;
-        }
+    const uint8_t *bytes = file;
+    /* a BMP file is a header of 14 bytes before the bytes of CF_DIB, which says where the rows are in the file. */
+    if (size > 14 && bytes[0] == 'B' && bytes[1] == 'M') {
+        uint32_t rows = rd32(bytes + 10);
+        if (rows && (rows < 14 || rows > size))
+            return false;
+        return dib_to_argb(bytes + 14, size - 14, rows ? rows - 14 : 0, out);
     }
-    SDL_DestroySurface(s);
-    return ok;
+    MimePngInfo info;
+    if (!mime_png_info(file, size, &info) || !info.width || !info.height || info.width > MAX_IMAGE_SIDE ||
+        info.height > MAX_IMAGE_SIDE || (uint64_t)info.width * info.height > MAX_IMAGE_PIXELS)
+        return false;
+    /* the decoder writes blue, green, red and alpha bytes, which are these pixels on this host. */
+    uint8_t *pixels = nullptr;
+    if (mime_png_decode_alloc(file, size, &g_alloc, 0, &pixels, &info) != MIME_PNG_OK)
+        return false;
+    out->pixels = (uint32_t *)(void *)pixels;
+    out->width = (int)info.width;
+    out->height = (int)info.height;
+    out->alpha = true;
+    return true;
 }
 
 uint8_t *mime_conv_image_to_png(const void *file, size_t size, size_t *out_size)

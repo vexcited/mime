@@ -443,6 +443,7 @@ static NTSTATUS notify_change(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, 
         ObDereferenceObject(file);
         return STATUS_ACCESS_DENIED;
     }
+    IopTakeWow64Iosb(file, &routine, &iosb);
     ULONG volume;
     ULONG64 host_handle = 0;
     status = MimeFsDirectoryVolume(file, &volume, &host_handle);

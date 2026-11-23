@@ -1,6 +1,7 @@
 /* processes: object type, system process, client ids and termination. */
 #include "../ntos.h"
 #include "../se/se.h"
+#include "classref.h"
 
 POBJECT_TYPE PsProcessTypeObject;
 POBJECT_TYPE PsThreadTypeObject;
@@ -224,6 +225,8 @@ NTSTATUS PspCreateProcessObject(PEPROCESS parent, PEPROCESS *out)
     process->Pcb.PageDirectory = process->AddressSpace.Root;
     process->Pcb.DirectoryTableBase = MiDirectoryTableBase(&process->AddressSpace);
     process->InheritedFromUniqueProcessId = parent ? parent->UniqueProcessId : 0;
+    static volatile LONG64 made;
+    process->SequenceNumber = (ULONG64)__atomic_add_fetch(&made, 1, __ATOMIC_RELAXED);
     KeQuerySystemTime((PLARGE_INTEGER)&process->CreateTime);
     ULONG64 s = KiAcquireDispatcherLock();
     InsertTailList(&PsActiveProcessHead, &process->ActiveProcessLinks);
@@ -240,6 +243,9 @@ void PspProcessExit(PEPROCESS process)
     process->ExitStatusReady = TRUE;
     PspJobProcessExit(process);
     ExReleaseTimerResolution(process);
+    PETHREAD box = __atomic_exchange_n(&process->HardErrorThread, nullptr, __ATOMIC_ACQ_REL);
+    if (box)
+        ObDereferenceObject(box);
     PsWin32ProcessCallout(process, FALSE);
     PspNotifyProcess(process, FALSE);
     ObKillProcessHandles(process);
@@ -271,6 +277,8 @@ NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status)
     }
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t->HasTerminated)
+            continue;
         if (!t->Tcb.Terminating) {
             t->Tcb.Terminating = TRUE;
             t->ExitStatus = status;
@@ -297,6 +305,8 @@ static void PspTerminateOtherThreads(PEPROCESS process, NTSTATUS status)
     }
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t->HasTerminated)
+            continue;
         if (t == self)
             continue;
         if (!t->Tcb.Terminating) {
@@ -423,8 +433,9 @@ static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, 
         if (table->Entries[i].Object)
             values[count++] = (i + 1) * 4;
     ObUnlockHandleTable(table, state);
-    *size = count * sizeof(ULONG);
-    NTSTATUS status = length < *size ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, values, *size);
+    /* measured on windows 11 26300: the handles that fit are given, and a room for none is refused. */
+    *size = count * sizeof(ULONG) < (length & ~3u) ? count * sizeof(ULONG) : (length & ~3u);
+    NTSTATUS status = length < sizeof(ULONG) ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, values, *size);
     ExFreePool(values);
     return status;
 }
@@ -432,12 +443,13 @@ static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, 
 /* the sum of the times of its threads. */
 static void process_times(PEPROCESS process, ULONG64 *times)
 {
-    ULONG64 kernel = 0, user = 0;
     ULONG64 s = KiAcquireDispatcherLock();
+    ULONG64 kernel = process->GoneKernelTime, user = process->GoneUserTime;
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
-        kernel += t->Tcb.KernelTime;
-        user += t->Tcb.UserTime;
+        /* windows charges whole clock ticks to each thread. */
+        kernel += t->Tcb.KernelTime - t->Tcb.KernelTime % KI_CLOCK_TICK_HNS;
+        user += t->Tcb.UserTime - t->Tcb.UserTime % KI_CLOCK_TICK_HNS;
     }
     KiReleaseDispatcherLock(s);
     times[0] = process->CreateTime;
@@ -527,7 +539,7 @@ static NTSTATUS read_parameter_string(PEPROCESS process, ULONG offset, PWCHAR ou
 static BOOLEAN query_more(PEPROCESS process, ULONG klass, PVOID info, ULONG length, PULONG returned, NTSTATUS *result)
 {
     enum { TEXT_BYTES = 0x8000 };
-    if (klass != 50 && klass != 60 && klass != 88 && klass != 92)
+    if (klass != 50 && klass != 60 && klass != 88 && klass != 92 && klass != 94)
         return FALSE;
     PWCHAR text = nullptr;
     if (klass == 50 || klass == 60) {
@@ -594,12 +606,14 @@ static BOOLEAN query_more(PEPROCESS process, ULONG klass, PVOID info, ULONG leng
         status = KiCopyToUser(info, u, size);
         break;
     }
-    case 92: { /* the security domain, one for each process. */
+    case 92:   /* measured on windows 11 26300: a count that grows with every process made. */
+    case 94: { /* the security domain, one for each process. */
         if (length != sizeof(ULONG64)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
             break;
         }
-        ULONG64 domain = 0x100000000ull | (ULONG64)(ULONG_PTR)process->UniqueProcessId;
+        ULONG64 domain = (ULONG)klass == 92 ? process->SequenceNumber
+                                            : 0x100000000ull | (ULONG64)(ULONG_PTR)process->UniqueProcessId;
         size = sizeof(domain);
         status = KiCopyToUser(info, &domain, size);
         break;
@@ -613,6 +627,13 @@ static BOOLEAN query_more(PEPROCESS process, ULONG klass, PVOID info, ULONG leng
     return TRUE;
 }
 
+static NTSTATUS query_process(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length, PULONG returned);
+
+/*
+ * the buffer and the returned length are probed first, then the length is held against what windows takes for the
+ * class, see classref.h, and only then is the process looked at. the two classes this system keeps for itself
+ * are left to it.
+ */
 NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length,
                                          PULONG returned)
 {
@@ -642,6 +663,38 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         status = KiProbeReturnLength(returned);
     if (!NT_SUCCESS(status))
         return status;
+    PS_CLASS_ANSWER reference;
+    /* the shutdown parameters are asked with eight bytes by kernel32; windows has a class of four bytes at that number. */
+    BOOLEAN known = KeGetPreviousMode() == UserMode && (ULONG)klass != MX_PROCESS_PRIORITY_CLASS_EX &&
+                    !((ULONG)klass == MX_PROCESS_SHUTDOWN_PARAMETERS && length == 2 * sizeof(ULONG)) &&
+                    (ULONG)klass != ProcessHandleTable && /* as many handles as the room holds: no length of its own */
+                    /* the reference was taken in steps of eight: it missed the 36 bytes windows takes, and its 48 bytes
+                       had flags of zero. query_process checks both lengths and the flags as windows does. */
+                    (ULONG)klass != ProcessDeviceMap &&
+                    PspClassAnswer(PspProcessClassRuns, RTL_NUMBER_OF(PspProcessClassRuns), (ULONG)klass, length, &reference);
+    if (!known)
+        return query_process(handle, klass, info, length, returned);
+    if (reference.Decided) {
+        if (returned && reference.Returned != PS_CLASS_NO_LENGTH)
+            KiCopyToUser(returned, &reference.Returned, sizeof(ULONG));
+        return reference.Status;
+    }
+    /* a class of one length returns that length or leaves the caller's alone, as windows does. */
+    ULONG before = 0;
+    BOOLEAN fixed = returned && !reference.Variable;
+    if (fixed)
+        KiCopyFromUser(&before, returned, sizeof(before));
+    status = query_process(handle, klass, info, length, returned);
+    if (status == STATUS_INVALID_INFO_CLASS)
+        return PspClassDefault(&reference, info, length, returned);
+    if (fixed && NT_SUCCESS(status))
+        KiCopyToUser(returned, reference.Returned != PS_CLASS_NO_LENGTH ? &reference.Returned : &before, sizeof(ULONG));
+    return status;
+}
+
+static NTSTATUS query_process(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length, PULONG returned)
+{
+    NTSTATUS status;
     /* like windows, these two check the length before the handle. */
     if ((ULONG)klass == ProcessDeviceMap) {
         /* PROCESS_DEVICEMAP_INFORMATION, or the _EX form whose flags may only ask for the luid device map. */
@@ -689,9 +742,13 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = 48;
         break;
     case ProcessDeviceMap: {
-        ULONG drives;
-        UCHAR types[32];
-        query_device_map(&drives, types);
+        ULONG drives = 0, flags = 0;
+        UCHAR types[32] = {};
+        if (length == 48)
+            KiCopyFromUser(&flags, (PUCHAR)info + 40, sizeof(flags));
+        /* flag 1 asks for the drives of the logon session alone, and mime has none: windows then answers no drive. */
+        if (!(flags & 1))
+            query_device_map(&drives, types);
         status = KiCopyToUser(info, &drives, sizeof(drives));
         if (NT_SUCCESS(status))
             status = KiCopyToUser((PUCHAR)info + 4, types, sizeof(types));
@@ -702,13 +759,20 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     }
     case ProcessImageInformation:
         if (!process->ImageSection) {
-            status = STATUS_PROCESS_IS_TERMINATING;
+            /* a live process without a user image, like System or the memory compression process, answers the way
+               windows 11 26300 does, measured with scratch/dlls/probe/pimg.c: invalid parameter, not terminating. */
+            status = process->Terminating || process->ExitStatusReady ? STATUS_PROCESS_IS_TERMINATING
+                                                                      : STATUS_INVALID_PARAMETER;
             break;
         }
         MmGetSectionImageInformation(process->ImageSection, (SECTION_IMAGE_INFORMATION *)out.bytes);
         size = sizeof(SECTION_IMAGE_INFORMATION);
         break;
     case MX_PROCESS_SHUTDOWN_PARAMETERS:
+        if (length == sizeof(ULONG)) { /* the class windows has at this number: a zero dword. */
+            size = sizeof(ULONG);
+            break;
+        }
         out.u32[0] = process->ShutdownLevel;
         out.u32[1] = process->ShutdownFlags & MX_SHUTDOWN_NORETRY;
         size = sizeof(MX_SHUTDOWN_PARAMETERS);
@@ -727,10 +791,20 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(out.times);
         break;
     case ProcessQuotaLimits: {
-        /* default working set limits, which bind nothing here. */
+        /*
+         * default working set limits, which bind nothing here. measured on windows 11: no limit on the page file, the
+         * time and the working set reads as all ones, and the pool limits are those of the session's quota block.
+         * GlobalMemoryStatusEx caps the commit limit by the page file limit, so a zero there reads as no page file.
+         */
         ULONG64 *quota = (ULONG64 *)out.bytes;
+        quota[0] = 0x3b05faa;
+        quota[1] = 0x13ac0c4;
         quota[2] = 200 * PAGE_SIZE;
         quota[3] = 1345 * PAGE_SIZE;
+        quota[4] = ~0ull;
+        quota[5] = ~0ull;
+        if (length >= 0x58)
+            quota[6] = ~0ull;
         *(PULONG)(out.bytes + 0x50) = 0xA;
         size = length >= 0x58 ? 0x58 : 0x30;
         break;
@@ -780,8 +854,8 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG);
         break;
     case ProcessExecuteFlags:
-        /* permanent DEP, with the dispatch and sehop defaults of a 64-bit process. */
-        out.u32[0] = 0x39;
+        /* permanent DEP. a 64-bit process of windows 11 answers 0xd: disabled, no thunk emulation, permanent. */
+        out.u32[0] = PspIsWow64Process(process) ? 0x39 : 0xD;
         size = sizeof(ULONG);
         break;
     case ProcessProtectionInformation:
@@ -789,6 +863,58 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         break;
     case ProcessSessionInformation:
         out.u32[0] = process->SessionId;
+        size = sizeof(ULONG);
+        break;
+    case ProcessAffinityMask: /* the mask alone, or with the group it is in: ten bytes of the sixteen are written. */
+        out.times[0] = KiProcessAffinity(&process->Pcb);
+        size = length == 0x10 ? 0x10 : sizeof(ULONG64);
+        if (length == 0x10) {
+            ObDereferenceObject(process);
+            if (returned)
+                KiCopyToUser(returned, &size, sizeof(size));
+            return KiCopyToUser(info, &out, 10);
+        }
+        break;
+    case 28: /* ProcessLUIDDeviceMapsEnabled: each logon has its own drive letters. */
+        out.u32[0] = 1;
+        size = sizeof(ULONG);
+        break;
+    case 33: /* ProcessIoPriority: normal. */
+        out.u32[0] = 2;
+        size = sizeof(ULONG);
+        break;
+    case 39: /* ProcessPagePriority: normal. */
+        out.u32[0] = 5;
+        size = sizeof(ULONG);
+        break;
+    case 71: /* whether NtClose may raise for an invalid handle. windows leaves the returned length alone. */
+        out.u32[0] = process->HandleTable.RaiseOnInvalidClose;
+        ObDereferenceObject(process);
+        if (length != sizeof(ULONG))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        return KiCopyToUser(info, &out, sizeof(ULONG));
+    case 89: /* 0xc0 on windows 11 26300 for a process started at normal priority. */
+        out.times[0] = 0xC0;
+        size = sizeof(ULONG64);
+        break;
+    case 54: /* ProcessHandleCheckingMode and ProcessCheckStackExtentsMode: off. */
+    case 59:
+        size = sizeof(ULONG);
+        break;
+    case 55: /* ProcessKeepAliveCount: nothing keeps it. */
+        size = sizeof(ULONG64);
+        break;
+    case 87: /* one byte whatever the room, 2 on windows 11 26300 for a process of the logged on user. */
+    case 96: /* and 0x3e here. */
+        ObDereferenceObject(process);
+        if (!length)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        out.bytes[0] = (ULONG)klass == 87 ? 2 : 0x3E;
+        return KiCopyToUser(info, &out, 1);
+    case 106: /* 0x10 on windows 11 26300 for a process started at normal priority. */
+    case 110: /* the io and page priorities in effect: normal. */
+    case 111:
+        out.u32[0] = (ULONG)klass == 106 ? 0x10 : (ULONG)klass == 110 ? 2 : 5;
         size = sizeof(ULONG);
         break;
     case ProcessCookie:
@@ -801,7 +927,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         return status;
     case ProcessHandleTable:
         status = query_handle_table(process, info, length, &size);
-        if (returned)
+        if (returned && NT_SUCCESS(status))
             KiCopyToUser(returned, &size, sizeof(size));
         ObDereferenceObject(process);
         return status;
@@ -894,14 +1020,173 @@ static NTSTATUS set_instrumentation_callback(HANDLE handle, PVOID info, ULONG le
     return status;
 }
 
+/*
+ * ProcessTlsInformation, measured on windows 11 26300 with scratch/dlls/probe/tlsinfo.c of the research repository.
+ * the loader gives one entry for each of its threads when a dll with thread local storage arrives after they
+ * started. operation 0 puts the block of each entry in a slot of the vector the teb of a thread points to, operation 1
+ * replaces the vector itself and brings over its first slots, as many as the header tells. the threads are taken
+ * in the order they were made, as many as there are entries; one that has no vector yet, because it never ran, is
+ * passed over and uses no entry. an entry that was used tells 2 in its flags and what was there before, and the id
+ * of the thread when the vector was replaced.
+ */
+static NTSTATUS set_tls_information(HANDLE handle, PVOID info, ULONG length)
+{
+    struct {
+        ULONG Flags, Operation, Count, Index;
+    } head;
+    typedef struct {
+        ULONG Flags, Pad;
+        ULONG64 Data, ThreadId;
+    } TLS_ENTRY;
+    if (length < sizeof(head))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    NTSTATUS status = KiCopyFromUser(&head, info, sizeof(head));
+    if (!NT_SUCCESS(status))
+        return status;
+    if (head.Operation > 1 || (head.Flags & ~1u) || !head.Count ||
+        length != sizeof(head) + (ULONG64)head.Count * sizeof(TLS_ENTRY))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    PEPROCESS process;
+    status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    /* flag 1, as ntoskrnl 26300 has it: the vectors of the 32-bit tebs of a wow64 process, of 32-bit pointers. */
+    BOOLEAN wow64 = (head.Flags & 1) != 0;
+    if (wow64 && !PspIsWow64Process(process)) {
+        ObDereferenceObject(process);
+        return STATUS_INVALID_PARAMETER;
+    }
+    ULONG pointer = wow64 ? sizeof(ULONG) : sizeof(PVOID);
+    TLS_ENTRY *entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, head.Count * sizeof(TLS_ENTRY), KI_TAG('P', 's', 'T', 'l'));
+    typedef struct {
+        PTEB Teb;
+        HANDLE Id;
+    } TLS_THREAD;
+    ULONG capacity = (ULONG)process->ThreadCount + 16, count = 0;
+    TLS_THREAD *threads = ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity * sizeof(TLS_THREAD), KI_TAG('P', 's', 'T', 'l'));
+    if (!entries || !threads)
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    /* the tebs are written through the address space of the caller. */
+    else if (process != PsCurrentProcess())
+        status = STATUS_NOT_SUPPORTED;
+    else
+        status = KiCopyFromUser(entries, (PUCHAR)info + sizeof(head), head.Count * sizeof(TLS_ENTRY));
+    for (ULONG i = 0; NT_SUCCESS(status) && i < head.Count; i++)
+        if (entries[i].Flags)
+            status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status)) {
+        ULONG64 state = KiAcquireDispatcherLock();
+        for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead && count < capacity; e = e->Flink) {
+            PETHREAD thread = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+            if (thread->Tcb.Teb && !thread->Tcb.Terminating)
+                threads[count++] = (TLS_THREAD){thread->Tcb.Teb, thread->Cid.UniqueThread};
+        }
+        KiReleaseDispatcherLock(state);
+        ULONG used = 0;
+        for (ULONG i = 0; i < count && used < head.Count; i++) {
+            PVOID field = wow64 ? (PVOID)((PUCHAR)threads[i].Teb + MIME_TEB_SIZE + 0x2C)
+                                : (PVOID)&threads[i].Teb->ThreadLocalStoragePointer;
+            ULONG64 vector = 0;
+            if (!NT_SUCCESS(KiCopyFromUser(&vector, field, pointer)) || !vector)
+                continue;
+            TLS_ENTRY *entry = &entries[used];
+            ULONG64 next = entry->Data;
+            if (head.Operation == 0) {
+                ULONG64 old = 0;
+                PVOID slot = (PUCHAR)vector + (SIZE_T)head.Index * pointer;
+                if (!NT_SUCCESS(KiCopyFromUser(&old, slot, pointer)) || !NT_SUCCESS(KiCopyToUser(slot, &next, pointer)))
+                    continue;
+                entry->Data = old;
+            } else {
+                BOOLEAN moved = TRUE;
+                for (ULONG k = 0; moved && k < head.Index; k++) {
+                    ULONG64 slot = 0;
+                    moved = NT_SUCCESS(KiCopyFromUser(&slot, (PUCHAR)vector + (SIZE_T)k * pointer, pointer)) &&
+                            NT_SUCCESS(KiCopyToUser((PUCHAR)next + (SIZE_T)k * pointer, &slot, pointer));
+                }
+                if (!moved || !NT_SUCCESS(KiCopyToUser(field, &next, pointer)))
+                    continue;
+                entry->Data = vector;
+                entry->ThreadId = (ULONG64)threads[i].Id;
+            }
+            entry->Flags = 2;
+            used++;
+        }
+        status = KiCopyToUser((PUCHAR)info + sizeof(head), entries, head.Count * sizeof(TLS_ENTRY));
+    }
+    if (entries)
+        ExFreePool(entries);
+    if (threads)
+        ExFreePool(threads);
+    ObDereferenceObject(process);
+    return status;
+}
+
 NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length)
 {
+    if ((ULONG)klass == 35) /* ProcessTlsInformation */
+        return set_tls_information(handle, info, length);
+    if ((ULONG)klass == 53) { /* ProcessDynamicFunctionTableInformation */
+        struct {
+            PVOID Table;
+            BOOLEAN Remove;
+        } table = {};
+        if (length != sizeof(table))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!NT_SUCCESS(KiCopyFromUser(&table, info, sizeof(table))))
+            return STATUS_ACCESS_VIOLATION;
+        /* the tables unwind dynamic code: user mode unwinds its own, so they are only checked here. */
+        if (!table.Table && !table.Remove)
+            return STATUS_INVALID_PARAMETER;
+        return STATUS_SUCCESS;
+    }
     if (klass == ProcessAccessToken)
         return SepSetProcessAccessToken(handle, info, length);
     if ((ULONG)klass == 40) /* ProcessInstrumentationCallback */
         return set_instrumentation_callback(handle, info, length);
     if (klass == ProcessMitigationPolicy)
         return PspSetMitigationPolicy(handle, info, length);
+    if ((ULONG)klass == 48) { /* ProcessTokenVirtualizationEnabled, as ntoskrnl 26300 sets it on the primary token. */
+        ULONG enable;
+        if (length != sizeof(enable))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!NT_SUCCESS(KiCopyFromUser(&enable, info, sizeof(enable))))
+            return STATUS_ACCESS_VIOLATION;
+        PEPROCESS process;
+        NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+        if (!NT_SUCCESS(status))
+            return status;
+        PTOKEN token = SepReferencePrimaryToken(process);
+        if (token) {
+            SeSetVirtualizationToken(token, enable != 0);
+            ObDereferenceObject(token);
+        }
+        ObDereferenceObject(process);
+        return STATUS_SUCCESS;
+    }
+    if ((ULONG)klass == 71) {
+        /*
+         * ProcessRaiseUMExceptionOnInvalidHandleClose. kernelbase clears it from CloseHandle until the call
+         * succeeds, unless the process is debugged. as ntoskrnl 26300 does: four bytes, the set information
+         * right, 0 clears the flag of the handle table, 1 sets it, and any other value is taken and ignored.
+         */
+        ULONG raise;
+        NTSTATUS probed = KiProbeQueryBuffer((PVOID)info, length, sizeof(ULONG), TRUE);
+        if (!NT_SUCCESS(probed))
+            return probed;
+        if (length != sizeof(raise))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (!NT_SUCCESS(KiCopyFromUser(&raise, info, sizeof(raise))))
+            return STATUS_ACCESS_VIOLATION;
+        PEPROCESS process;
+        NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+        if (!NT_SUCCESS(status))
+            return status;
+        if (raise <= 1)
+            process->HandleTable.RaiseOnInvalidClose = raise != 0;
+        ObDereferenceObject(process);
+        return STATUS_SUCCESS;
+    }
     ULONG expected = 0;
     switch ((ULONG)klass) {
     case ProcessBasePriority:
@@ -916,11 +1201,14 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     case ProcessAffinityMask:
         expected = sizeof(ULONG64);
         break;
+    case ProcessEnableAlignmentFaultFixup:
+        expected = sizeof(BOOLEAN);
+        break;
     case MX_PROCESS_SHUTDOWN_PARAMETERS:
         expected = sizeof(MX_SHUTDOWN_PARAMETERS);
         break;
     default:
-        break;
+        return STATUS_INVALID_INFO_CLASS;
     }
     ULONG64 value = 0;
     if (expected) {
@@ -972,6 +1260,13 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     case ProcessDefaultHardErrorMode:
         /* the bits a job forces on its processes cannot be cleared. */
         process->DefaultHardErrorMode = (ULONG)value | PspJobForcedErrorMode(process);
+        break;
+    case ProcessEnableAlignmentFaultFixup:
+        /* the fixup of the process is the SEM_NOALIGNMENTFAULTEXCEPT bit of its error mode. */
+        if ((UCHAR)value)
+            process->DefaultHardErrorMode |= 4;
+        else
+            process->DefaultHardErrorMode &= ~4u;
         break;
     case ProcessWorkingSetWatch:
         /* page faults are not recorded, so there is nothing to start. */
@@ -1025,6 +1320,8 @@ static ACCESS_MASK map_thread_access(ACCESS_MASK access)
 }
 
 /* of the attributes, only handle inheritance matters. */
+extern PEPROCESS PsSubsystemProcess;
+
 static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, CLIENT_ID *id, ULONG *handle_attributes)
 {
     /*
@@ -1068,6 +1365,8 @@ NTSTATUS NTAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
     ACCESS_MASK granted = access;
     if (!SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
         status = ObCheckOpenAccess(process, access, UserMode, &granted);
+    else if (process == PsSubsystemProcess && (access & ~(PROCESS_QUERY_LIMITED_INFORMATION | 0x2000 | SYNCHRONIZE)))
+        status = STATUS_ACCESS_DENIED; /* a protected process: the debug privilege opens it for the limited rights only. */
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(process);
         return status;
@@ -1098,6 +1397,8 @@ NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     ACCESS_MASK granted = access;
     if (!SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
         status = ObCheckOpenAccess(thread, access, UserMode, &granted);
+    else if ((PEPROCESS)thread->Tcb.Process == PsSubsystemProcess && (access & ~(0x800 | 0x400 | SYNCHRONIZE)))
+        status = STATUS_ACCESS_DENIED;
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(thread);
         return status;
@@ -1107,6 +1408,232 @@ NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     return status;
+}
+
+/*
+ * NtGetNextProcess and NtGetNextThread, as ntoskrnl 26300 does them. the handle of the caller is cleared first. a
+ * process or thread the caller may not open is passed over, any other failure of the open ends the walk, and the end
+ * of the list is STATUS_NO_MORE_ENTRIES. attributes a caller may not give are dropped, and those a process or a thread
+ * refuses fail the open. processes and threads come in the order they were made, those that ended too, as long as
+ * something holds them.
+ */
+#define NEXT_USER_ATTRIBUTES 0x1DF2
+#define NEXT_KERNEL_ATTRIBUTES 0x11FF2
+#define NEXT_INVALID_ATTRIBUTES 0xB0 /* OBJ_PERMANENT, OBJ_EXCLUSIVE and OBJ_OPENIF. */
+#define GENERIC_BITS (GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL)
+
+static NTSTATUS clear_out_handle(PHANDLE out, KPROCESSOR_MODE mode)
+{
+    HANDLE none = nullptr;
+    if (mode == UserMode)
+        return KiCopyToUser(out, &none, sizeof(none));
+    *out = nullptr;
+    return STATUS_SUCCESS;
+}
+
+/* opens the process or thread for the caller as NtOpenProcess and NtOpenThread do. the caller's reference stays. */
+static NTSTATUS open_next(PVOID object, ACCESS_MASK access, ULONG attributes, BOOLEAN thread, PHANDLE out)
+{
+    if (attributes & NEXT_INVALID_ATTRIBUTES)
+        return STATUS_INVALID_PARAMETER;
+    /* windows maps the generic rights of a thread with the mapping of processes. */
+    if (thread && (access & GENERIC_BITS) && !(access & MAXIMUM_ALLOWED))
+        access = ((access & ~GENERIC_BITS) | map_process_access(access & GENERIC_BITS)) & THREAD_ALL_ACCESS;
+    PEPROCESS owner = thread ? (PEPROCESS)((PETHREAD)object)->Tcb.Process : (PEPROCESS)object;
+    ACCESS_MASK granted = access;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (KeGetPreviousMode() == UserMode && !SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        status = ObCheckOpenAccess(object, access, UserMode, &granted);
+    else if (owner == PsSubsystemProcess &&
+             (access & ~(thread ? (0x800 | 0x400 | SYNCHRONIZE) : (PROCESS_QUERY_LIMITED_INFORMATION | 0x2000 | SYNCHRONIZE))))
+        status = STATUS_ACCESS_DENIED;
+    if (!NT_SUCCESS(status))
+        return status;
+    ObReferenceObject(object);
+    HANDLE h;
+    status = ObInsertObject(object, thread ? map_thread_access(granted) : map_process_access(granted), attributes, &h);
+    if (NT_SUCCESS(status))
+        status = ObStoreHandle(out, h);
+    return status;
+}
+
+/* the process after the one given, or before it, with a reference. the first or the last for none. */
+static PEPROCESS next_process(PEPROCESS previous, BOOLEAN reverse)
+{
+    PEPROCESS found = nullptr;
+    ULONG64 s = KiAcquireDispatcherLock();
+    PLIST_ENTRY e = previous ? (reverse ? previous->ActiveProcessLinks.Blink : previous->ActiveProcessLinks.Flink)
+                             : (reverse ? PsActiveProcessHead.Blink : PsActiveProcessHead.Flink);
+    for (; e != &PsActiveProcessHead && !found; e = reverse ? e->Blink : e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (ObReferenceObjectSafe(p))
+            found = p;
+    }
+    KiReleaseDispatcherLock(s);
+    return found;
+}
+
+NTSTATUS NTAPI NtGetNextProcess(HANDLE process_handle, ACCESS_MASK access, ULONG attributes, ULONG flags, PHANDLE out)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    attributes &= mode == UserMode ? NEXT_USER_ATTRIBUTES : NEXT_KERNEL_ATTRIBUTES;
+    NTSTATUS status = clear_out_handle(out, mode);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (flags & ~1u)
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS previous = nullptr;
+    if (process_handle) {
+        status = ObReferenceHandle(process_handle, PsProcessTypeObject, mode, (PVOID *)&previous, nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    for (;;) {
+        PEPROCESS next = next_process(previous, (flags & 1) != 0);
+        if (previous)
+            ObDereferenceObject(previous);
+        previous = next;
+        if (!next)
+            return STATUS_NO_MORE_ENTRIES;
+        status = open_next(next, access, attributes, FALSE, out);
+        if (status != STATUS_ACCESS_DENIED) {
+            ObDereferenceObject(next);
+            return status;
+        }
+    }
+}
+
+/* the thread of the process made after the one given, with a reference, or the first for none. */
+static PETHREAD next_thread(PEPROCESS process, PETHREAD previous)
+{
+    ULONG64 after = previous ? previous->ListSequence : 0;
+    PETHREAD found = nullptr;
+    ULONG64 s = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead && !found; e = e->Flink) {
+        PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t->ListSequence > after && ObReferenceObjectSafe(t))
+            found = t;
+    }
+    KiReleaseDispatcherLock(s);
+    return found;
+}
+
+NTSTATUS NTAPI NtGetNextThread(HANDLE process_handle, HANDLE thread_handle, ACCESS_MASK access, ULONG attributes,
+                               ULONG flags, PHANDLE out)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    attributes &= mode == UserMode ? NEXT_USER_ATTRIBUTES : NEXT_KERNEL_ATTRIBUTES;
+    NTSTATUS status = clear_out_handle(out, mode);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (flags)
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS process;
+    status = ObReferenceHandleAccess(process_handle, PROCESS_QUERY_INFORMATION, PsProcessTypeObject, mode,
+                                     (PVOID *)&process, "NtGetNextThread");
+    if (!NT_SUCCESS(status))
+        return status;
+    PETHREAD previous = nullptr;
+    if (thread_handle) {
+        status = ObReferenceHandle(thread_handle, PsThreadTypeObject, mode, (PVOID *)&previous, nullptr);
+        if (NT_SUCCESS(status) && (PEPROCESS)previous->Tcb.Process != process) {
+            ObDereferenceObject(previous);
+            status = STATUS_INVALID_PARAMETER;
+        }
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(process);
+            return status;
+        }
+    }
+    for (;;) {
+        PETHREAD next = next_thread(process, previous);
+        if (previous)
+            ObDereferenceObject(previous);
+        previous = next;
+        if (!next) {
+            status = STATUS_NO_MORE_ENTRIES;
+            break;
+        }
+        status = open_next(next, access, attributes, TRUE, out);
+        if (status != STATUS_ACCESS_DENIED) {
+            ObDereferenceObject(next);
+            break;
+        }
+    }
+    ObDereferenceObject(process);
+    return status;
+}
+
+/*
+ * the windows subsystem process of the interactive session. windows 11 runs a csrss.exe there, which owns the window
+ * of the desktop: the process list shows it, and a program finds its ids through the window but opens neither the
+ * process nor its threads, whose descriptors let the system alone in, c0000022 at any access. here win32k is the
+ * whole subsystem, so the entry is made by the kernel and its one thread waits for ever, as the desktop thread does
+ * most of the time.
+ */
+PEPROCESS PsSubsystemProcess;
+static PETHREAD g_subsystem_thread;
+
+static void NTAPI subsystem_thread(PVOID context)
+{
+    static KEVENT never;
+    KeInitializeEvent(&never, NotificationEvent, FALSE);
+    for (;;)
+        KeWaitForSingleObject(&never, WrUserRequest, KernelMode, FALSE, nullptr);
+}
+
+void PspCreateSubsystemProcess(void)
+{
+    /* owner and group the system, and one ace that gives it everything. */
+    static const UCHAR system_only[] = {
+        0x01, 0x00, 0x04, 0x80, 0x14, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00,
+        0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00,
+        0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x14, 0x00, 0xff, 0xff, 0x1f, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00,
+    };
+    static const WCHAR image[] = L"C:\\Windows\\System32\\csrss.exe";
+    PEPROCESS process;
+    if (!NT_SUCCESS(PspCreateProcessObject(nullptr, &process)))
+        return;
+    /* the session manager that started it is gone: the parent is an id no process has. */
+    HANDLE parent = nullptr;
+    if (NT_SUCCESS(PspAllocateId(process, &parent)))
+        process->InheritedFromUniqueProcessId = parent;
+    process->SystemProcess = TRUE;
+    process->SessionId = 1;
+    process->Pcb.BasePriority = 13;
+    process->PriorityClass = PROCESS_PRIORITY_CLASS_HIGH;
+    process->DefaultHardErrorMode = 1;
+    process->Token = PsInitialSystemProcess->Token;
+    if (process->Token)
+        ObReferenceObject(process->Token);
+    memcpy(process->ImagePathBuffer, image, sizeof(image));
+    RtlInitUnicodeString(&process->ImagePath, process->ImagePathBuffer);
+    memcpy(process->ImageFileName, "csrss.exe", 10);
+    SD_BLOB *sd;
+    if (NT_SUCCESS(SeSdFromBytes(system_only, sizeof(system_only), &sd)))
+        ObAttachSecurity(process, sd);
+    PETHREAD thread;
+    if (NT_SUCCESS(PspCreateThread(process, TRUE, subsystem_thread, nullptr, &thread))) {
+        if (NT_SUCCESS(SeSdFromBytes(system_only, sizeof(system_only), &sd)))
+            ObAttachSecurity(thread, sd);
+        KiStartThread(&thread->Tcb);
+        g_subsystem_thread = thread;
+    }
+    if (parent)
+        PspFreeId(parent);
+    PsSubsystemProcess = process;
+    /* measured with prebox.exe: a program of the user does not open the system process either, c0000022 at the limited query right. */
+    if (NT_SUCCESS(SeSdFromBytes(system_only, sizeof(system_only), &sd)))
+        ObAttachSecurity(PsInitialSystemProcess, sd);
+}
+
+/* the process and the thread that own the window of the desktop. */
+void NTAPI PsQuerySubsystemIds(PHANDLE process, PHANDLE thread)
+{
+    *process = PsSubsystemProcess ? PsSubsystemProcess->UniqueProcessId : nullptr;
+    *thread = g_subsystem_thread ? g_subsystem_thread->Cid.UniqueThread : nullptr;
 }
 
 static PVOID process_wait_object(PVOID object)
@@ -1123,6 +1650,10 @@ void PspThreadDelete(PVOID object);
 
 void PsInitialize(void)
 {
+    extern FAST_MUTEX PspSharedSlotLock;
+    ExInitializeFastMutex(&PspSharedSlotLock);
+    PspInitializePebBlocks();
+    PspSxsInitialize();
     InitializeListHead(&PsActiveProcessHead);
     g_cid_capacity = 65536 / 4;
     g_cid_table = ExAllocatePool2(POOL_FLAG_NON_PAGED, g_cid_capacity * sizeof(PVOID), KI_TAG('P', 's', 'C', 'i'));
@@ -1157,6 +1688,8 @@ void PsInitialize(void)
     system->UniqueProcessId = (HANDLE)4;
     g_cid_table[1] = system;
     memcpy(system->ImageFileName, "System", 7);
+    /* the mode every process starts from: hard errors raise their box. the win32 side shows the bit inverted. */
+    system->DefaultHardErrorMode = 1;
     g_system_root = MiCreateSystemRoot();
     system->Pcb.DirectoryTableBase = g_system_root;
     /* the user half of the system root is the system process's own, where drivers map views as on windows. */
@@ -1168,6 +1701,9 @@ void PsInitialize(void)
     PsInitialSystemProcess = system;
     PsIdleProcess = system;
     KiSwitchAddressSpace(&system->Pcb);
+    /* its first handle is itself, as on windows. */
+    HANDLE self;
+    ObCreateHandle(system, system, PROCESS_ALL_ACCESS, OBJ_KERNEL_HANDLE, &self);
 
     PsInitializeIdleThread();
 }

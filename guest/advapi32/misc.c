@@ -369,6 +369,29 @@ ADVAPI LSTATUS WINAPI RegDisablePredefinedCache(void)
     return ERROR_SUCCESS;
 }
 
+/*
+ * a predefined key stands for another key from now on, or for itself again with none: an installer registers its
+ * classes under a key of its own this way. as advapi32 of windows 11 26300 does it: the first handle must be a
+ * predefined one and the second must not, and kernelbase, which keeps the table of the predefined keys, remaps it.
+ */
+static BOOL predefined_key(HKEY key)
+{
+    ULONG_PTR value = (ULONG_PTR)key;
+    return value == (ULONG_PTR)(LONG_PTR)(LONG)0x80000050 || value == (ULONG_PTR)(LONG_PTR)(LONG)0x80000060 ||
+           value - (ULONG_PTR)(LONG_PTR)(LONG)0x80000000 <= 7;
+}
+
+ADVAPI LSTATUS WINAPI RegOverridePredefKey(HKEY key, HKEY new_key)
+{
+    if (!predefined_key(key) || predefined_key(new_key))
+        return ERROR_INVALID_HANDLE;
+    typedef NTSTATUS(WINAPI *REMAP)(HANDLE, HANDLE);
+    REMAP remap = (REMAP)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "RemapPredefinedHandleInternal");
+    if (!remap)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    return RtlNtStatusToDosError(remap(key, new_key));
+}
+
 /* ---------------------------------------------------------------- hardware profiles */
 
 typedef struct HW_PROFILE_INFOW {
@@ -641,6 +664,12 @@ ADVAPI ULONG WINAPI LsaNtStatusToWinError(NTSTATUS status)
 
 /* ---------------------------------------------------------------- remote registry */
 
+LSTATUS AdvOpenPredefinedKey(HKEY key, HKEY *result)
+{
+    *result = nullptr;
+    return RegOpenKeyExW(key, nullptr, 0, MAXIMUM_ALLOWED, result);
+}
+
 /*
  * a key of this machine's registry, as its own handle for keys that have one. flags are only checked for a named
  * machine: bits above 7, or bits 1 and 4 together, give ERROR_INVALID_PARAMETER. no other machine is reachable since
@@ -662,7 +691,7 @@ ADVAPI LSTATUS WINAPI RegConnectRegistryExW(LPCWSTR machine, HKEY key, ULONG fla
     case 0x80000001: /* HKEY_CURRENT_USER */
     case 0x80000002: /* HKEY_LOCAL_MACHINE */
     case 0x80000003: /* HKEY_USERS */
-        return RegDuplicateHKey(key, result);
+        return AdvOpenPredefinedKey(key, result);
     case 0x80000004: /* HKEY_PERFORMANCE_DATA */
     case 0x80000005: /* HKEY_CURRENT_CONFIG */
     case 0x80000006: /* HKEY_DYN_DATA */

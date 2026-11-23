@@ -28,6 +28,11 @@ void SubclassProcessFree(void);
 
 /* registers the classes the ICC bits select. */
 void RegisterControlClasses(DWORD icc);
+/* the static control, registered when user32 asks for it by name: see static.c. */
+BOOL RegisterStaticClass(void);
+/* registers a class under the name of one of user32, with its layout and proc in front of the one returned. */
+WNDPROC CcRegisterOverUser(LPCWSTR name, WNDPROC proc);
+BOOL RegisterFieldClass(LPCWSTR name);
 
 void *CcAlloc(SIZE_T size);
 void *CcReAlloc(void *p, SIZE_T size);
@@ -83,6 +88,13 @@ HFONT CcIconTitleFont(void);
 BOOL CcFocusCuesHidden(HWND hwnd);
 /* draws the client edge of a window as the border of its theme class, the 2 pixel edge in one pixel of border color. */
 void CcDrawThemedEdge(HWND hwnd, HTHEME theme);
+/* the theme class at the window's dpi, shared by the windows of the process, nullptr while the program is not themed. */
+HTHEME CcClassTheme(HWND hwnd, LPCWSTR name);
+/* draws the client edge of a window as one part and state of a theme class. */
+void CcDrawThemedEdgePart(HWND hwnd, HTHEME theme, int part, int state);
+/* flags a control keeps for a window whose extra bytes are not its own. zero forgets the window. */
+UINT CcWindowFlags(HWND hwnd);
+void CcSetWindowFlags(HWND hwnd, UINT flags);
 /* scales 96 dpi pixels to the window's dpi. */
 int CcScale(HWND hwnd, int value);
 /* a magic number of a control, scaled by the dpi when the control scales them: see CcMagicScale in common.c. */
@@ -120,8 +132,34 @@ int CcMagicScale(HWND hwnd, BOOL forced, BOOL themed, int value);
 #define CC_TVP_TREEITEM 1
 #define CC_TVP_GLYPH 2
 #define CC_TP_BUTTON 1
+#define CC_BP_PUSHBUTTON 1
+#define CC_BP_RADIOBUTTON 2
 #define CC_BP_CHECKBOX 3
+#define CC_BP_GROUPBOX 4
+#define CC_PBS_NORMAL 1
+#define CC_PBS_HOT 2
+#define CC_PBS_PRESSED 3
+#define CC_PBS_DISABLED 4
+#define CC_PBS_DEFAULTED 5
+#define CC_EP_EDITBORDER_NOSCROLL 6
+#define CC_LBCP_BORDER_HSCROLL 1
+#define CC_LBCP_BORDER_HVSCROLL 2
+#define CC_LBCP_BORDER_NOSCROLL 3
+#define CC_LBCP_BORDER_VSCROLL 4
+#define CC_SBP_ARROWBTN 1
+#define CC_SBP_THUMBBTNHORZ 2
+#define CC_SBP_THUMBBTNVERT 3
+#define CC_SBP_LOWERTRACKHORZ 4
+#define CC_SBP_UPPERTRACKHORZ 5
+#define CC_SBP_LOWERTRACKVERT 6
+#define CC_SBP_UPPERTRACKVERT 7
+#define CC_SBP_SIZEBOX 10
+#define CC_CP_BORDER 4
+#define CC_CP_READONLY 5
+#define CC_CP_DROPDOWNBUTTONRIGHT 6
 
+LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK ScrollBarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK AnimateProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK ProgressProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK LinkProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

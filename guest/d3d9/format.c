@@ -78,11 +78,24 @@ static const D9Format FORMATS[] = {
     DS(MAKEFOURCC('D', 'F', '2', '4'), R24G8_TYPELESS, R24_UNORM_X8_TYPELESS, D24_UNORM_S8_UINT, SW(R, R, R, R), 4,
        D),
     DS(MAKEFOURCC('D', 'F', '1', '6'), R16_TYPELESS, R16_UNORM, D16_UNORM, SW(R, R, R, R), 2, D),
+    /*
+     * packed yuv, as plain surfaces in memory only: windows' basic render driver offers these two and no other yuv
+     * format, for no texture, no render target and no conversion, measured with evrdxva.exe of scratch/dlls/evr.
+     */
+    {(D3DFORMAT)MAKEFOURCC('Y', 'U', 'Y', '2'), DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN,
+     DXGI_FORMAT_UNKNOWN, 0, 2, 1, 2, 0},
+    {(D3DFORMAT)MAKEFOURCC('A', 'Y', 'U', 'V'), DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN,
+     DXGI_FORMAT_UNKNOWN, 0, 4, 1, 4, 0},
     {(D3DFORMAT)MAKEFOURCC('N', 'U', 'L', 'L'), DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN,
      DXGI_FORMAT_UNKNOWN, 0, 4, 1, 4, R | D9_FORMAT_NULL},
 };
 
 static const D9Format UNKNOWN_FORMAT = {D3DFMT_UNKNOWN};
+
+BOOL D9FormatPlain(const D9Format *f)
+{
+    return f->d3d != D3DFMT_UNKNOWN && f->resource == DXGI_FORMAT_UNKNOWN && !(f->flags & D9_FORMAT_NULL);
+}
 
 const D9Format *D9GetFormat(D3DFORMAT format)
 {

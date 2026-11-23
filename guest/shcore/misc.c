@@ -657,3 +657,12 @@ HRESULT WINAPI SHTaskPoolQueueTask(UINT apartment, UINT options, UINT priority, 
     CloseHandle(thread);
     return S_OK;
 }
+
+/*
+ * whether a policy of the shell's table is set. measured on windows 11: a policy that is not in the table answers 0,
+ * and so does every one whose value no administrator wrote, which is the state of this machine.
+ */
+DWORD WINAPI SHWindowsPolicy(REFGUID policy)
+{
+    return 0;
+}

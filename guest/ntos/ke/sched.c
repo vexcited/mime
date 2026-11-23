@@ -13,9 +13,6 @@ volatile ULONG KiKernelLock[32] __attribute__((aligned(64))) = {[KI_LOCK_OWNER] 
 /* lock holds longer than this many ticks are counted by what held them, see KiNoteLongHold. */
 ULONG64 KiLongHoldTicks = ~0ull;
 ULONG64 KiKernelLockPhys;
-ULONG KiOptions;
-/* kernel option nolockflush: the lock no longer settles user translations other processors changed. */
-UCHAR KiNoLockFlush;
 /* a row of eight per processor: acquisitions, those that waited, ticks waited, the longest wait. see entry.S. */
 ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 
@@ -190,7 +187,7 @@ void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
     KeGetPcr()->Irql = PASSIVE_LEVEL;
     KiEnableInterrupts();
 #ifdef __x86_64__
-    if (KiForeignUnlock && KiIsForeignCode((ULONG_PTR)routine))
+    if (KiIsForeignCode((ULONG_PTR)routine))
         KiForeignRun(routine, context);
     else
 #endif

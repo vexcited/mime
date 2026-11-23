@@ -289,6 +289,22 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesA(PCtxtHandle contex
     return query(context, attribute, buffer, true);
 }
 
+/*
+ * as sspicli 26300: QueryContextAttributes is this call with a size of zero. the size only serves a protected
+ * process, which tells lsa where its buffer is.
+ */
+SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesExW(PCtxtHandle context, ULONG attribute, void *buffer,
+                                                                ULONG size)
+{
+    return query(context, attribute, buffer, false);
+}
+
+SECURITYAPI SECURITY_STATUS SEC_ENTRY QueryContextAttributesExA(PCtxtHandle context, ULONG attribute, void *buffer,
+                                                                ULONG size)
+{
+    return query(context, attribute, buffer, true);
+}
+
 SECURITYAPI SECURITY_STATUS SEC_ENTRY SetContextAttributesW(PCtxtHandle context, ULONG attribute, void *buffer,
                                                             ULONG size)
 {

@@ -109,6 +109,19 @@
 [HKCR\AppID\{9BA05972-F6A8-11CF-A442-00A0C90A8F39}]
 "RunAs"="Interactive User"
 
+; the host of the user mode drivers, which every windows registers whether a driver runs in it or not.
+[HKCR\AppID\WUDFHost.exe]
+"AppID"="{ea7e288b-94c7-4045-bc54-0433a4c87976}"
+[HKCR\AppID\{ea7e288b-94c7-4045-bc54-0433a4c87976}]
+"MGOTFlags"=dword:00000001
+"RunAs"="nt authority\\localservice"
+
+; the notifications of the shell to the user, the first class id under AppID on windows 11.
+[HKCR\AppID\{0010890e-8789-413c-adbc-48f5b511b3af}]
+@="User Notification"
+"DllSurrogate"=""
+"RunAs"="Interactive User"
+
 ; the program ids of the document object models and sax readers of msxml3 and msxml6, and of the installer's automation object.
 [HKCR\MSXML.DOMDocument\CLSID]
 @="{2933BF90-7B36-11D2-B20E-00C04F983E60}"

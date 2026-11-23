@@ -1,24 +1,25 @@
 1 VERSIONINFO
-FILEVERSION 10, 0, 26100, 7309
-PRODUCTVERSION 10, 0, 26100, 7309
+FILEVERSION 5, 1, 2, 254
+PRODUCTVERSION 5, 1, 2, 254
 FILEFLAGSMASK 0x3F
 FILEFLAGS 0x0
 FILEOS 0x40004
 FILETYPE 2
-FILESUBTYPE 8
+FILESUBTYPE 0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904B0"
+        BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "Microsoft Corporation"
-            VALUE "FileDescription", "Adobe Type Manager Library"
-            VALUE "FileVersion", "10.0.26100.7309 (WinBuild.160101.0800)"
-            VALUE "InternalName", "ATMLIB.DLL"
-            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
+            VALUE "CompanyName", "Adobe Systems"
+            VALUE "FileDescription", "Windows NT OpenType/Type 1 API Library."
+            VALUE "FileVersion", "5.1 Build 254"
+            VALUE "InternalName", "ATMLIB"
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
+            VALUE "LegalTrademarks", "Adobe, Multiple Master, ATM, Adobe Type Manager, Postscript, and others are Trademarks of Adobe Systems."
             VALUE "OriginalFilename", "ATMLIB.DLL"
-            VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
-            VALUE "ProductVersion", "10.0.26100.7309"
+            VALUE "ProductName", "Adobe Type Manager"
+            VALUE "ProductVersion", "5.1 Build 254"
         END
     END
     BLOCK "VarFileInfo"

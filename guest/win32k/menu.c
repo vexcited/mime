@@ -319,7 +319,7 @@ void MenuRefreshWindowState(WND *w)
         BOOLEAN grey = FALSE;
         switch (it->Id) {
         case SC_MINIMIZE:
-            grey = !(w->Style & WS_MINIMIZEBOX) || (w->Style & WS_MINIMIZE);
+            grey = !(w->Style & WS_MINIMIZEBOX) || (w->Style & WS_MINIMIZE) || !WndCanMinimize(w);
             break;
         case SC_MAXIMIZE:
             grey = !(w->Style & WS_MAXIMIZEBOX) || (w->Style & WS_MAXIMIZE);
@@ -404,14 +404,11 @@ BOOL NTAPI NtUserThunkedMenuItemInfo(HMENU menu, UINT item, BOOL by_position, BO
 {
     MENUITEMINFOW mii;
     memset(&mii, 0, sizeof(mii));
-    if (!user_info || !NT_SUCCESS(MimeCopyFromUser(&mii, user_info, offsetof(MENUITEMINFOW, hbmpItem)))) {
+    /* user32 hands over the whole structure with cbSize left at 0 when it built it, InsertMenuW does. */
+    if (!user_info || !NT_SUCCESS(MimeCopyFromUser(&mii, user_info, sizeof(mii)))) {
         W32SetLastError(ERROR_NOACCESS);
         return FALSE;
     }
-    if (mii.cbSize >= sizeof(MENUITEMINFOW))
-        MimeCopyFromUser(&mii, user_info, sizeof(mii));
-    else
-        mii.fMask &= ~(MIIM_BITMAP | MIIM_STRING | MIIM_FTYPE);
     PWSTR text = nullptr;
     SIZE_T chars = 0;
     if (user_text && !NT_SUCCESS(W32CaptureString(user_text, &text, &chars))) {

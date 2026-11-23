@@ -1,6 +1,6 @@
 /*
  * CryptSignMessage: a PKCS #7 signed message, attached or detached, signed with the private key of a certificate that
- * a legacy provider holds. the signer always has authenticated attributes, the content type and the message digest
+ * a legacy provider or a key storage provider holds, an rsa key for the latter. the signer always has authenticated attributes, the content type and the message digest
  * after those the caller gives, and the signature is made over their set encoding.
  */
 #include "crypt32_private.h"
@@ -100,18 +100,13 @@ BOOL WINAPI CryptSignMessage(CRYPT_SIGN_MESSAGE_PARA *para, BOOL detached, DWORD
     HCRYPTPROV_OR_NCRYPT_KEY_HANDLE key = 0;
     DWORD key_spec = 0;
     BOOL release = FALSE;
-    DWORD acquire = (flags & CRYPT_MESSAGE_SILENT_KEYSET_FLAG) ? CRYPT_ACQUIRE_SILENT_FLAG : 0;
+    BOOL silent = (flags & CRYPT_MESSAGE_SILENT_KEYSET_FLAG) != 0;
+    DWORD acquire = CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG | (silent ? CRYPT_ACQUIRE_SILENT_FLAG : 0);
     if (!CryptAcquireCertificatePrivateKey(para->pSigningCert, acquire, nullptr, &key, &key_spec, &release)) {
         CrFree(content);
         return FALSE;
     }
-    if (key_spec == CERT_NCRYPT_KEY_SPEC) {
-        /* the keys of key storage providers are not signed with. */
-        if (release)
-            CrReleaseProvider((HCRYPTPROV)key);
-        CrFree(content);
-        return CrFail(ERROR_NOT_SUPPORTED);
-    }
+    BOOL ncrypt = key_spec == CERT_NCRYPT_KEY_SPEC;
 
     BYTE digest[CR_MAX_HASH];
     CrHash(alg, content, total, digest);
@@ -129,10 +124,18 @@ BOOL WINAPI CryptSignMessage(CRYPT_SIGN_MESSAGE_PARA *para, BOOL detached, DWORD
 
     BYTE signature[1024];
     DWORD signature_size = sizeof(signature);
-    BOOL ok = !set.error && !attributes.error &&
-              CrSignData((HCRYPTPROV)key, key_spec, alg, set.data, set.size, signature, &signature_size);
+    BOOL ok = !set.error && !attributes.error;
+    if (ok && ncrypt) {
+        BYTE signed_digest[CR_MAX_HASH];
+        CrHash(alg, set.data, set.size, signed_digest);
+        ok = CrSignDigestNcrypt(key, alg, signed_digest, digest_size, signature, &signature_size, silent);
+    } else if (ok) {
+        ok = CrSignData((HCRYPTPROV)key, key_spec, alg, set.data, set.size, signature, &signature_size);
+    }
     DWORD error = GetLastError();
-    if (release)
+    if (release && ncrypt)
+        CrReleaseNcryptKey(key);
+    else if (release)
         CrReleaseProvider((HCRYPTPROV)key);
     DerWriteFree(&set);
     CrFree(content);
@@ -140,7 +143,8 @@ BOOL WINAPI CryptSignMessage(CRYPT_SIGN_MESSAGE_PARA *para, BOOL detached, DWORD
         DerWriteFree(&attributes);
         return CrFail(error ? error : CRYPT_E_MSG_ERROR);
     }
-    for (DWORD i = 0; i < signature_size / 2; i++) {
+    /* a legacy provider gives its signature little endian. */
+    for (DWORD i = 0; !ncrypt && i < signature_size / 2; i++) {
         BYTE swap = signature[i];
         signature[i] = signature[signature_size - 1 - i];
         signature[signature_size - 1 - i] = swap;

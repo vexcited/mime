@@ -32,7 +32,6 @@ typedef struct _KI_FOREIGN_IMPORT {
 } KI_FOREIGN_IMPORT;
 
 extern char KiForeignCall[], KiForeignReturn[];
-BOOLEAN KiForeignDirect, KiForeignUnlock;
 LONG_PTR FASTCALL KiForeignDereference(PVOID object);
 
 /* exports that touch nothing the kernel lock guards: reads of a thread or a process, references, ids and strings. */
@@ -135,7 +134,7 @@ static BOOLEAN make_room(void)
 /* what a foreign driver calls for an export: its stub, or the export itself when it is data or there is no room. */
 PVOID KiForeignImport(PVOID target, const char *name)
 {
-    if (KiForeignDirect || !target || !is_code(target) || !make_room())
+    if (!target || !is_code(target) || !make_room())
         return target;
     for (ULONG k = 0; k < RTL_NUMBER_OF(g_direct); k++)
         if (!strcmp(name, g_direct[k]))

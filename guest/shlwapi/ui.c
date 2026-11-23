@@ -5,7 +5,12 @@
 WINUSERAPI BOOL WINAPI IsWindowUnicode(HWND window);
 WINUSERAPI BOOL WINAPI GetClassInfoW(HINSTANCE instance, LPCWSTR name, WNDCLASSW *wc);
 WINUSERAPI BOOL WINAPI UnregisterClassA(LPCSTR name, HINSTANCE instance);
+#ifdef __i386__
+WINUSERAPI LONG WINAPI SetWindowLongA(HWND window, int index, LONG value);
+#define SetWindowLongPtrA SetWindowLongA
+#else
 WINUSERAPI LONG_PTR WINAPI SetWindowLongPtrA(HWND window, int index, LONG_PTR value);
+#endif
 WINUSERAPI INT_PTR WINAPI DialogBoxParamA(HINSTANCE instance, LPCSTR name, HWND parent, DLGPROC proc, LPARAM param);
 
 /* ------------------------------------------------------------------ colors */

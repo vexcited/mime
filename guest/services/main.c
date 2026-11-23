@@ -666,7 +666,7 @@ static DWORD op_query_config(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     WCHAR *path = DbReadString(key, L"ImagePath", nullptr);
     WCHAR *group = DbReadString(key, L"Group", nullptr);
     WCHAR *account = DbReadString(key, L"ObjectName", nullptr);
-    WCHAR *display = DbReadString(key, L"DisplayName", nullptr);
+    WCHAR *display = DbReadDisplayName(key);
     WCHAR *services = DbReadString(key, L"DependOnService", nullptr);
     WCHAR *groups = DbReadString(key, L"DependOnGroup", nullptr);
     RegCloseKey(key);
@@ -727,8 +727,8 @@ static DWORD op_query_config2(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     DWORD error = ERROR_SUCCESS, value = 0;
     switch (level) {
     case SERVICE_CONFIG_DESCRIPTION: {
-        WCHAR *text = DbReadString(key, L"Description", nullptr);
-        /* an indirect string would be loaded from its file, one that cannot be is returned as is. */
+        /* an indirect string is loaded from its file, one that cannot be is returned as is. */
+        WCHAR *text = DbReadMuiString(key, L"Description");
         ScmPutString(w, text);
         SvcFree(text);
         break;
@@ -774,12 +774,24 @@ static DWORD op_query_config2(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
         ScmPutU32(w, value);
         break;
     case SERVICE_CONFIG_TRIGGER_INFO:
-        ScmPutU32(w, 0);
+        error = TriggerWriteInfo(key, w);
         break;
     case SERVICE_CONFIG_LAUNCH_PROTECTED:
         DbReadDword(key, L"LaunchProtected", &value);
         ScmPutU32(w, value);
         break;
+    case SERVICE_CONFIG_PREFERRED_NODE: {
+        /* a service without a node of its own, or a driver, has none to tell. */
+        USHORT node = 0;
+        DWORD type = 0, size = sizeof(node);
+        if ((s->Type & SERVICE_DRIVER) ||
+            RegQueryValueExW(key, L"PreferredNode", nullptr, &type, (BYTE *)&node, &size) != ERROR_SUCCESS ||
+            type != REG_BINARY || size != sizeof(node))
+            error = ERROR_INVALID_PARAMETER;
+        else
+            ScmPutU32(w, node);
+        break;
+    }
     default:
         error = ERROR_INVALID_LEVEL;
         break;
@@ -840,7 +852,7 @@ static DWORD op_enum(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     UINT32 count_offset = w->Size;
     ScmPutU32(w, 0);
     for (SERVICE *s = g_services; s; s = s->Next) {
-        if (!DbLoadRecord(s) || !(s->Type & type_mask))
+        if (!DbLoadRecord(s) || !(RunStatusType(s) & type_mask))
             continue;
         if (has_group) {
             const WCHAR *g = s->Group ? s->Group : L"";
@@ -1385,6 +1397,21 @@ static DWORD handle_request(CONN *c, DWORD op, SCM_READER *r, SCM_WRITER *w, KEE
     return error;
 }
 
+/* a request of an rpc caller, made of the same message the pipe's clients send: the reply's results follow its header. */
+DWORD MainRpcRequest(DWORD pid, DWORD op, SCM_WRITER *request, SCM_WRITER *reply)
+{
+    UINT32 size;
+    UCHAR *message = ScmWriterFinish(request, &size);
+    if (!message)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    SCM_READER r;
+    ScmReaderInit(&r, message, size);
+    CONN c = {SCM_RPC_CALLER, nullptr, pid};
+    KEEP keep = KEEP_NONE;
+    ScmWriterInit(reply, 0);
+    return handle_request(&c, op, &r, reply, &keep);
+}
+
 static DWORD WINAPI connection(LPVOID context)
 {
     CONN *c = context;
@@ -1519,6 +1546,10 @@ static void read_timeouts(void)
         if (DbReadDword(key, L"ServicesPipeTimeout", &value))
             g_control_timeout = value;
         g_handler_timeout = g_control_timeout;
+        /* ScReadSCMConfiguration: the threshold in KB, absent or 0 for no splitting. */
+        MEMORYSTATUSEX memory = {sizeof(memory)};
+        if (DbReadDword(key, L"SvcHostSplitThresholdInKB", &value) && value && GlobalMemoryStatusEx(&memory))
+            g_split_svchost = memory.ullTotalPhys >= (ULONGLONG)value << 10;
         RegCloseKey(key);
     }
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\SCMConfig", 0, KEY_READ, &key) == ERROR_SUCCESS) {
@@ -1559,7 +1590,15 @@ void entry(void)
         CloseHandle(thread);
     ShutdownInit();
 
-    /* clients wait on this event. it is created here or already was by the first client. */
+    SvcCreateSessionReadyEvent();
+    RpcStart();
+    LsaLookupStart();
+    LsaPolicyStart();
+    DpapiStart();
+    AppInfoStart();
+    ScheduleStart();
+    TriggerStart();
+    /* clients wait on this event, set once every endpoint answers. it is created here or already was by a client. */
     HANDLE ready = SvcCreateWorldEvent(SCM_START_EVENT);
     if (ready)
         SetEvent(ready);

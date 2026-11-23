@@ -68,8 +68,6 @@ void NTAPI KeBugCheckEx(ULONG code, ULONG_PTR p1, ULONG_PTR p2, ULONG_PTR p3, UL
         KiLogPrintf("  frame %d: %p", depth, (PVOID)((ULONG64 *)fp)[1]);
         fp = ((ULONG64 *)fp)[0];
     }
-    if (MmVerifyPool)
-        MiSpecialPoolBugCheckReport();
     mime_format(buf, sizeof(buf), "*** STOP: 0x%08X (0x%llX, 0x%llX, 0x%llX, 0x%llX)", code, (ULONG64)p1,
                 (ULONG64)p2, (ULONG64)p3, (ULONG64)p4);
     HalPanic(buf);
@@ -254,66 +252,6 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiLogPrintf("Windows NT kernel %u.%u build %u (%s), %llu MiB of memory", MIME_NT_MAJOR_VERSION,
                 MIME_NT_MINOR_VERSION, MIME_NT_BUILD_NUMBER, MIME_ARCH_NAME, boot->ram_size >> 20);
 
-    KiOptions = (strstr(boot->cmdline, "nofastfault") ? KI_OPT_NO_FAST_FAULT : 0) |
-                (strstr(boot->cmdline, "nosectionfault") ? KI_OPT_NO_SECTION_FAULT : 0) |
-                (strstr(boot->cmdline, "noidlespin") ? KI_OPT_NO_IDLE_SPIN : 0) |
-                (strstr(boot->cmdline, "eagertimer") ? KI_OPT_EAGER_TIMER : 0) |
-                (strstr(boot->cmdline, "noattrcache") ? KI_OPT_NO_ATTR_CACHE : 0) |
-                (strstr(boot->cmdline, "precisetimers") ? KI_OPT_PRECISE_TIMERS : 0) |
-                (strstr(boot->cmdline, "nofastservice") ? KI_OPT_NO_FAST_SERVICE : 0);
-
-    KiNoLockFlush = strstr(boot->cmdline, "nolockflush") != nullptr;
-    extern BOOLEAN KiTraceUserExceptions;
-    KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
-    /* verify-pool gives every pool block guard pages, verify-pool-fill also fills blocks that are not asked zeroed. */
-    MmVerifyPool = strstr(boot->cmdline, "verify-pool") != nullptr;
-    MmVerifyPoolFill = strstr(boot->cmdline, "verify-pool-fill") != nullptr;
-    /* the kernel options no-access-checks, which opens every object to every program, and trace-access. */
-    SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
-    SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
-    ObAuditHandleAccess = strstr(boot->cmdline, "audit-handle-access") != nullptr;
-#ifdef __x86_64__
-    KiForeignDirect = strstr(boot->cmdline, "foreign-direct") != nullptr;
-    KiForeignUnlock = !KiForeignDirect && strstr(boot->cmdline, "foreign-locked") == nullptr;
-#endif
-    MiTraceRoutines = strstr(boot->cmdline, "trace-routines") != nullptr;
-    extern BOOLEAN MiDiscoverRoutines;
-    MiDiscoverRoutines = strstr(boot->cmdline, "discover-routines") != nullptr;
-    extern BOOLEAN IoTraceFiles;
-    IoTraceFiles = strstr(boot->cmdline, "trace-files") != nullptr;
-    extern char KiTraceSyscallImage[16];
-    const char *trace = strstr(boot->cmdline, "trace-syscalls=");
-    extern char KiTraceStackService[40];
-    const char *stack = strstr(boot->cmdline, "trace-stack=");
-    if (stack) {
-        stack += 12;
-        for (ULONG i = 0; i < sizeof(KiTraceStackService) - 1 && stack[i] && stack[i] != ' '; i++)
-            KiTraceStackService[i] = stack[i];
-    }
-    extern char KiTraceFilter[256];
-    const char *filter = strstr(boot->cmdline, "trace-filter=");
-    if (filter) {
-        filter += 13;
-        for (ULONG i = 0; i < sizeof(KiTraceFilter) - 1 && filter[i] && filter[i] != ' '; i++)
-            KiTraceFilter[i] = filter[i];
-    }
-    extern ULONG KiTraceEvery;
-    const char *every = strstr(boot->cmdline, "trace-every=");
-    for (every = every ? every + 12 : ""; *every >= '0' && *every <= '9'; every++)
-        KiTraceEvery = KiTraceEvery * 10 + (ULONG)(*every - '0');
-    extern char KiTimelineImage[16];
-    const char *timeline = strstr(boot->cmdline, "svc-timeline=");
-    if (timeline) {
-        timeline += 13;
-        for (ULONG i = 0; i < sizeof(KiTimelineImage) - 1 && timeline[i] && timeline[i] != ' '; i++)
-            KiTimelineImage[i] = timeline[i];
-    }
-    if (trace) {
-        trace += 15;
-        for (ULONG i = 0; i < sizeof(KiTraceSyscallImage) - 1 && trace[i] && trace[i] != ' '; i++)
-            KiTraceSyscallImage[i] = trace[i];
-    }
-
     MmInitialize(boot);
     KiBootStamp("mm");
     ExInitializePool();
@@ -322,12 +260,12 @@ void KiInitializeKernel(MimeBootInfo *boot)
     ExInitialize();
     PsInitialize();
     SepInitialize();
+    extern void PspCreateSubsystemProcess(void);
+    PspCreateSubsystemProcess();
     KiInitializeSystemServices();
+    extern void KiRegisterLateServices(void);
+    KiRegisterLateServices();
     KiInitializeTimers();
-    if (KiTimelineImage[0]) {
-        extern void KiEnableTimeline(void);
-        KiEnableTimeline();
-    }
     KiBootStamp("executive");
 
     PETHREAD phase1;
@@ -359,6 +297,8 @@ static void KiPhase1Initialization(PVOID context)
     KiBootStamp("system dll");
     if (!NT_SUCCESS(status))
         KeBugCheckEx(0x0000006B, status, 0, 0, 0); /* PROCESS1_INITIALIZATION_FAILED. */
+    ExCreateKnownDlls();
+    KiBootStamp("known dlls");
 
     UNICODE_STRING win32k = RTL_CONSTANT_STRING(L"\\SystemRoot\\System32\\win32k.sys");
     PKLDR_DATA_TABLE_ENTRY module;
@@ -372,7 +312,15 @@ static void KiPhase1Initialization(PVOID context)
         KiLogPrintf("cannot load win32k.sys: %08x", status);
     }
 
+    /* the filter manager is a boot driver of every windows, loaded before any driver that imports from it. */
+    MmLoadExportDriver("FLTMGR.SYS");
+
+    extern void ExPopulateReference(void);
     KiBootStamp("win32k");
+    ExPopulateReference();
+    ExInitializeCsr();
+    IopPublishDeviceLinks();
+    KiBootStamp("population");
     KiBootReport();
     MiSessionInitialize();
 }

@@ -85,17 +85,6 @@ static Library *library_start(VkDevice device, const char *source, uint64_t hash
     pthread_mutex_unlock(&g_lock);
     if (found || !l)
         return l;
-    /* MIME_VK_DUMP names a folder that gets every source made, by its hash, to read what a shader became. */
-    const char *dump = getenv("MIME_VK_DUMP");
-    if (dump && *dump) {
-        char path[1024];
-        snprintf(path, sizeof(path), "%s/%016llx.metal", dump, (unsigned long long)hash);
-        FILE *f = fopen(path, "w");
-        if (f) {
-            fputs(source, f);
-            fclose(f);
-        }
-    }
     MimePipelineCache *compiler = device->pipelines;
     NSString *text = [[NSString alloc] initWithUTF8String:source];
     dispatch_async(build_queue(), ^{
@@ -108,10 +97,8 @@ static Library *library_start(VkDevice device, const char *source, uint64_t hash
             l->library = mime_pipeline_cache_library(compiler, desc, (id *)&error);
             [options release];
             [desc release];
-            if (!l->library) {
+            if (!l->library)
                 VKM_ERROR("an MSL library does not compile: %.2000s", vkm_error_text(error));
-                mime_debug("vkmetal: the MSL was:\n%s", text.UTF8String);
-            }
         }
         dispatch_group_leave(l->built);
     });

@@ -8,6 +8,7 @@
 #define PUBLICKEYBLOB_ 6
 #define MS_KEY_STORAGE_PROVIDER_ L"Microsoft Software Key Storage Provider"
 #define NCRYPT_SILENT_FLAG_ 0x40
+#define BCRYPT_PAD_PKCS1_ 0x2
 
 typedef BOOL(WINAPI *ACQUIRE_CONTEXT)(HCRYPTPROV *, LPCWSTR, LPCWSTR, DWORD, DWORD);
 typedef BOOL(WINAPI *RELEASE_CONTEXT)(HCRYPTPROV, DWORD);
@@ -20,6 +21,7 @@ typedef LONG(WINAPI *OPEN_PROVIDER)(ULONG_PTR *, LPCWSTR, DWORD);
 typedef LONG(WINAPI *OPEN_KEY)(ULONG_PTR, ULONG_PTR *, LPCWSTR, DWORD, DWORD);
 typedef LONG(WINAPI *FREE_OBJECT)(ULONG_PTR);
 typedef LONG(WINAPI *NCRYPT_EXPORT)(ULONG_PTR, ULONG_PTR, LPCWSTR, void *, BYTE *, DWORD, DWORD *, DWORD);
+typedef LONG(WINAPI *NCRYPT_SIGN)(ULONG_PTR, void *, BYTE *, DWORD, BYTE *, DWORD, DWORD *, DWORD);
 typedef BOOL(WINAPI *CREATE_HASH)(HCRYPTPROV, ALG_ID, HCRYPTKEY, DWORD, HCRYPTHASH *);
 typedef BOOL(WINAPI *HASH_DATA)(HCRYPTHASH, const BYTE *, DWORD, DWORD);
 typedef BOOL(WINAPI *SIGN_HASH)(HCRYPTHASH, DWORD, LPCWSTR, DWORD, BYTE *, DWORD *);
@@ -37,6 +39,7 @@ static struct {
     OPEN_KEY open_key;
     FREE_OBJECT free_object;
     NCRYPT_EXPORT ncrypt_export;
+    NCRYPT_SIGN ncrypt_sign;
     CREATE_HASH create_hash;
     HASH_DATA hash_data;
     SIGN_HASH sign_hash;
@@ -67,6 +70,7 @@ static BOOL WINAPI load_api(INIT_ONCE *once, void *param, void **context)
         g_api.open_key = (OPEN_KEY)(void *)GetProcAddress(ncrypt, "NCryptOpenKey");
         g_api.free_object = (FREE_OBJECT)(void *)GetProcAddress(ncrypt, "NCryptFreeObject");
         g_api.ncrypt_export = (NCRYPT_EXPORT)(void *)GetProcAddress(ncrypt, "NCryptExportKey");
+        g_api.ncrypt_sign = (NCRYPT_SIGN)(void *)GetProcAddress(ncrypt, "NCryptSignHash");
     }
     return TRUE;
 }
@@ -331,6 +335,9 @@ BOOL WINAPI CryptAcquireCertificatePrivateKey(PCCERT_CONTEXT pCert, DWORD dwFlag
         return CrFail(ERROR_INVALID_PARAMETER);
     if (!pCert || !phCryptProvOrNCryptKey)
         return CrFail(E_INVALIDARG);
+    /* a failure leaves no key specification behind. */
+    if (pdwKeySpec)
+        *pdwKeySpec = 0;
     InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
     HWND window = (dwFlags & CRYPT_ACQUIRE_WINDOW_HANDLE_FLAG) && pvParameters ? *(HWND *)pvParameters : nullptr;
     DWORD flags = dwFlags & ~CRYPT_ACQUIRE_NO_HEALING;
@@ -453,6 +460,32 @@ BOOL CrSignData(HCRYPTPROV provider, DWORD key_spec, ALG_ID alg, const BYTE *dat
     g_api.destroy_hash(hash);
     SetLastError(error);
     return ok;
+}
+
+/* signs a digest with an rsa key of a key storage provider, pkcs #1 padding. the signature is big endian. */
+BOOL CrSignDigestNcrypt(NCRYPT_KEY_HANDLE key, ALG_ID alg, BYTE *digest, DWORD digest_size, BYTE *signature,
+                        DWORD *size, BOOL silent)
+{
+    struct {
+        LPCWSTR Algorithm;
+    } padding = {alg == CALG_SHA1      ? L"SHA1"
+                 : alg == CALG_SHA_256 ? L"SHA256"
+                 : alg == CALG_SHA_384 ? L"SHA384"
+                 : alg == CALG_SHA_512 ? L"SHA512"
+                                       : nullptr};
+    InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
+    if (!g_api.ncrypt_sign || !padding.Algorithm)
+        return CrFail(ERROR_NOT_SUPPORTED);
+    LONG status = g_api.ncrypt_sign(key, &padding, digest, digest_size, signature, *size, size,
+                                    BCRYPT_PAD_PKCS1_ | (silent ? NCRYPT_SILENT_FLAG_ : 0));
+    return status ? CrFail((DWORD)status) : TRUE;
+}
+
+void CrReleaseNcryptKey(NCRYPT_KEY_HANDLE key)
+{
+    InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
+    if (g_api.free_object)
+        g_api.free_object(key);
 }
 
 /* gives back what CryptAcquireCertificatePrivateKey handed out, when the caller owns it. */

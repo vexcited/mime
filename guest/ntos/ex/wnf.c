@@ -4,9 +4,11 @@
  * well known names exist from the start, a name made with NtCreateWnfStateName lives until deleted, and a
  * temporary one until its creator exits. permanent and persistent names last while the system runs, not on disk.
  *
- * a subscribed process has the event it gave NtSetWnfProcessNotificationEvent set whenever a name's data changes,
- * and compares change stamps to find which names changed, so a notification arriving while it is busy is not
- * lost. NtGetCompleteWnfStateSubscription, which windows uses to learn the changes from the kernel, is not offered.
+ * a subscribed process has the event it gave NtSetWnfProcessNotificationEvent set whenever a name it subscribed to
+ * has something to tell, and asks NtGetCompleteWnfStateSubscription for its notifications one at a time. the states
+ * of a subscription and the order of its steps are those of ExpWnfNotifyNameSubscribers,
+ * ExpWnfDeliverThreadNotifications and ExpWnfCompleteThreadSubscriptions of ntoskrnl 26300. only the data event is
+ * told: the events about the subscribers of a name and about its end are not.
  */
 #include "../ntos.h"
 
@@ -36,10 +38,33 @@ typedef struct WNF_ENTRY {
     WNF_INSTANCE *Instances;
 } WNF_ENTRY;
 
+#define WNF_EVENT_DATA 0x1
+#define WNF_EVENT_ALL 0x1f
+/* the least room the kernel wants for a notification: the descriptor and a state of the largest size. */
+#define WNF_DELIVERY_SIZE 0x1030
+
+/* idle, waiting in the queue of its process, told and not yet completed, completed with a failure. */
+enum { WNF_SUB_IDLE, WNF_SUB_PENDING, WNF_SUB_DELIVERED, WNF_SUB_HELD };
+
 typedef struct WNF_SUBSCRIPTION {
     ULONG64 Name;
     ULONG64 Id;
+    ULONG Mask;
+    ULONG State;
+    ULONG Pending;
+    ULONG Delivered;
+    ULONG64 Queued; /* its place in the queue */
 } WNF_SUBSCRIPTION;
+
+typedef struct WNF_DELIVERY {
+    ULONG64 SubscriptionId;
+    WNF_STATE_NAME StateName;
+    WNF_CHANGE_STAMP ChangeStamp;
+    ULONG StateDataSize;
+    ULONG EventMask;
+    WNF_TYPE_ID TypeId;
+    ULONG StateDataOffset;
+} WNF_DELIVERY;
 
 typedef struct WNF_PROCESS {
     struct WNF_PROCESS *Next;
@@ -54,6 +79,7 @@ static WNF_PROCESS *g_processes;
 static ULONG g_entry_count;
 static ULONG64 g_sequence = 1;
 static ULONG64 g_subscription_id = 1;
+static ULONG64 g_queued = 1;
 static KGUARDED_MUTEX g_lock;
 
 static void lock(void)
@@ -202,14 +228,35 @@ static WNF_PROCESS *process_of(HANDLE pid, BOOLEAN make)
     return p;
 }
 
-static void notify(ULONG64 value)
+/* queues the events a subscription asked for, and wakes its process when the subscription was not waiting already. */
+static void queue_events(WNF_PROCESS *p, WNF_SUBSCRIPTION *s, ULONG events)
+{
+    events &= s->Mask;
+    if (!events)
+        return;
+    BOOLEAN wake = FALSE;
+    if (s->State == WNF_SUB_IDLE) {
+        s->Queued = g_queued++;
+        s->State = WNF_SUB_PENDING;
+        wake = TRUE;
+    } else if (s->State == WNF_SUB_HELD) {
+        s->State = WNF_SUB_PENDING;
+        wake = TRUE;
+    }
+    s->Pending = s->Mask & (s->Pending | events);
+    if (wake && p->Event)
+        KeSetEvent(p->Event, IO_NO_INCREMENT, FALSE);
+}
+
+/* the instance of a process scoped name is told to its process alone. */
+static void notify(const WNF_ENTRY *e, ULONG64 key)
 {
     for (WNF_PROCESS *p = g_processes; p; p = p->Next) {
-        if (!p->Event)
+        if (e->Scope == WnfDataScopeProcess && (ULONG64)(ULONG_PTR)p->Process != key)
             continue;
         for (ULONG i = 0; i < p->Count; i++)
-            if (p->Subscriptions[i].Name == value) {
-                KeSetEvent(p->Event, IO_NO_INCREMENT, FALSE);
+            if (p->Subscriptions[i].Name == e->Name) {
+                queue_events(p, &p->Subscriptions[i], WNF_EVENT_DATA);
                 break;
             }
     }
@@ -259,10 +306,41 @@ static void NTAPI process_notify(HANDLE parent, HANDLE pid, BOOLEAN create)
     unlock();
 }
 
+/*
+ * the states an installed machine holds from its first run on, read on windows 11 26300: the first run experience is
+ * over and its user has logged on, each a dword of one. OOBEComplete of kernel32 answers from them.
+ */
+static void publish_installed_state(void)
+{
+    static const ULONG64 names[] = {
+        0x0D83063EA3BC2475ull, /* WNF_SHEL_OOBE_USER_LOGON_COMPLETE */
+        0x41960B29A3BC0C75ull, /* WNF_DEP_OOBE_COMPLETE */
+    };
+    /* at boot, before any thread could ask: no lock is taken. */
+    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++) {
+        WNF_ENTRY *e = entry_of(names[i], TRUE);
+        WNF_INSTANCE *instance = e ? ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*instance), KI_TAG('W', 'n', 'f', 'I')) : nullptr;
+        PUCHAR data = instance ? ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ULONG), KI_TAG('W', 'n', 'f', 'D')) : nullptr;
+        if (!data) {
+            if (instance)
+                ExFreePool(instance);
+            continue;
+        }
+        memset(instance, 0, sizeof(*instance));
+        *(PULONG)data = 1;
+        instance->Stamp = 1;
+        instance->Size = sizeof(ULONG);
+        instance->Data = data;
+        instance->Next = e->Instances;
+        e->Instances = instance;
+    }
+}
+
 void ExpInitializeWnf(void)
 {
     KeInitializeGuardedMutex(&g_lock);
     PsSetCreateProcessNotifyRoutine(process_notify, FALSE);
+    publish_installed_state();
 }
 
 /* ------------------------------------------------------------------ names */
@@ -337,7 +415,6 @@ NTSTATUS NTAPI NtDeleteWnfStateName(PCWNF_STATE_NAME state_name)
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
     *at = e->Next;
-    notify(value);
     for (WNF_PROCESS *p = g_processes; p; p = p->Next)
         for (ULONG i = 0; i < p->Count;)
             if (p->Subscriptions[i].Name == value)
@@ -438,7 +515,7 @@ NTSTATUS NTAPI NtUpdateWnfStateData(PCWNF_STATE_NAME state_name, const VOID *buf
                     if (type_id)
                         i->TypeId = type;
                     i->Stamp++;
-                    notify(value);
+                    notify(e, key);
                 }
             }
         }
@@ -568,6 +645,8 @@ NTSTATUS NTAPI NtSubscribeWnfStateChange(PCWNF_STATE_NAME state_name, WNF_CHANGE
     NTSTATUS status = capture_name(state_name, &value);
     if (!NT_SUCCESS(status))
         return status;
+    if (event_mask & ~WNF_EVENT_ALL)
+        return STATUS_INVALID_PARAMETER;
     ULONG64 id = 0;
     lock();
     WNF_ENTRY *e = entry_of(value, TRUE);
@@ -584,20 +663,30 @@ NTSTATUS NTAPI NtSubscribeWnfStateChange(PCWNF_STATE_NAME state_name, WNF_CHANGE
     for (i = 0; i < p->Count; i++)
         if (p->Subscriptions[i].Name == value)
             break;
+    WNF_SUBSCRIPTION *s = &p->Subscriptions[i];
     if (i == p->Count) {
         if (p->Count == WNF_MAX_SUBSCRIPTIONS) {
             unlock();
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        p->Subscriptions[i].Name = value;
-        p->Subscriptions[i].Id = g_subscription_id++;
+        memset(s, 0, sizeof(*s));
+        s->Name = value;
+        s->Id = g_subscription_id++;
+        s->Mask = event_mask;
         p->Count++;
+    } else {
+        /* a second subscription to a name changes the events of the first, and what waits follows. */
+        s->Mask = event_mask;
+        s->Pending &= event_mask;
+        s->Delivered &= event_mask;
+        if (s->State != WNF_SUB_IDLE && !s->Pending && !s->Delivered)
+            s->State = WNF_SUB_IDLE;
     }
-    id = p->Subscriptions[i].Id;
-    /* data newer than the caller's stamp is a change it has not heard of. */
+    id = s->Id;
+    /* data with another stamp than the caller's is a change it has not heard of. */
     WNF_INSTANCE *latest = instance_of(e, scope_key(e, nullptr, &status));
-    if (latest && latest->Stamp > change_stamp && p->Event)
-        KeSetEvent(p->Event, IO_NO_INCREMENT, FALSE);
+    if (latest && latest->Stamp != change_stamp)
+        queue_events(p, s, WNF_EVENT_DATA);
     unlock();
     if (subscription_id)
         return publish(subscription_id, &id, sizeof(id));
@@ -624,10 +713,122 @@ NTSTATUS NTAPI NtUnsubscribeWnfStateChange(PCWNF_STATE_NAME state_name)
     return status;
 }
 
-/* windows has a process ask the kernel for its changes; here the process compares stamps itself. */
+/* the notification a process answered: one with more to tell waits again, a failed one is held until the next event. */
+static void complete(WNF_PROCESS *p, ULONG64 id, ULONG result)
+{
+    for (ULONG i = 0; i < p->Count; i++) {
+        WNF_SUBSCRIPTION *s = &p->Subscriptions[i];
+        if (s->Id != id)
+            continue;
+        if (s->State != WNF_SUB_DELIVERED && s->State != WNF_SUB_HELD)
+            return;
+        if (s->Pending) {
+            s->State = WNF_SUB_PENDING;
+            if (result == (ULONG)STATUS_RETRY)
+                s->Pending |= WNF_EVENT_DATA & s->Mask;
+        } else if (result) {
+            s->State = WNF_SUB_HELD;
+        } else {
+            s->State = WNF_SUB_IDLE;
+        }
+        if (s->State != WNF_SUB_HELD)
+            s->Delivered = 0;
+        return;
+    }
+}
+
+/* the oldest waiting subscription with something to tell, written with the data of its name behind the descriptor. */
+static NTSTATUS deliver(WNF_PROCESS *p, WNF_DELIVERY *descriptor, ULONG capacity)
+{
+    for (;;) {
+        WNF_SUBSCRIPTION *s = nullptr;
+        for (ULONG i = 0; i < p->Count; i++)
+            if (p->Subscriptions[i].State == WNF_SUB_PENDING && (!s || p->Subscriptions[i].Queued < s->Queued))
+                s = &p->Subscriptions[i];
+        if (!s)
+            return STATUS_NO_MORE_ENTRIES;
+        ULONG events = s->Pending & s->Mask;
+        WNF_ENTRY *e = entry_of(s->Name, FALSE);
+        NTSTATUS status = STATUS_SUCCESS;
+        WNF_INSTANCE *instance = e ? instance_of(e, scope_key(e, nullptr, &status)) : nullptr;
+        /* a name nobody published has no data event. */
+        if (!instance || !instance->Stamp || instance->Size > capacity - sizeof(*descriptor))
+            events &= ~WNF_EVENT_DATA;
+        if (!events) {
+            s->State = WNF_SUB_IDLE;
+            s->Pending = s->Delivered = 0;
+            continue;
+        }
+        memset(descriptor, 0, sizeof(*descriptor));
+        descriptor->SubscriptionId = s->Id;
+        descriptor->StateName.Data[0] = (ULONG)s->Name;
+        descriptor->StateName.Data[1] = (ULONG)(s->Name >> 32);
+        if (events & WNF_EVENT_DATA) {
+            descriptor->TypeId = e->HasType ? e->TypeId : instance->TypeId;
+            descriptor->ChangeStamp = instance->Stamp;
+            descriptor->StateDataSize = instance->Size;
+            if (instance->Size)
+                memcpy(descriptor + 1, instance->Data, instance->Size);
+        }
+        descriptor->EventMask = events;
+        descriptor->StateDataOffset = sizeof(*descriptor);
+        s->Delivered = events;
+        s->Pending = 0;
+        s->State = WNF_SUB_DELIVERED;
+        return STATUS_SUCCESS;
+    }
+}
+
+/*
+ * completes the notification the caller got before, when it names one, and writes the next. a completion counts with
+ * events and a result of success or STATUS_RETRY, and anything else is an invalid parameter, as is a process that
+ * never subscribed. no room asks for no notification.
+ */
 NTSTATUS NTAPI NtGetCompleteWnfStateSubscription(PWNF_STATE_NAME old_state_name, PULONG64 old_subscription_id,
                                                  ULONG old_event_mask, ULONG old_status, PVOID new_delivery_descriptor,
                                                  ULONG descriptor_size)
 {
-    return STATUS_NOT_IMPLEMENTED;
+    ULONG64 id = 0;
+    BOOLEAN completes = old_state_name && old_subscription_id;
+    if (completes) {
+        if (!old_event_mask || (old_status && old_status != (ULONG)STATUS_RETRY))
+            return STATUS_INVALID_PARAMETER;
+        ULONG64 value;
+        NTSTATUS status = capture_name(old_state_name, &value);
+        if (!NT_SUCCESS(status))
+            return STATUS_INVALID_PARAMETER;
+        status = capture(&id, old_subscription_id, sizeof(id));
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    if (descriptor_size && descriptor_size < WNF_DELIVERY_SIZE) {
+        lock();
+        WNF_PROCESS *p = process_of(PsCurrentProcess()->UniqueProcessId, FALSE);
+        if (p && completes)
+            complete(p, id, old_status);
+        unlock();
+        return p ? STATUS_BUFFER_TOO_SMALL : STATUS_INVALID_PARAMETER;
+    }
+    WNF_DELIVERY *descriptor = nullptr;
+    if (descriptor_size) {
+        descriptor = ExAllocatePool2(POOL_FLAG_NON_PAGED, WNF_DELIVERY_SIZE, KI_TAG('W', 'n', 'f', 'D'));
+        if (!descriptor)
+            return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+    lock();
+    WNF_PROCESS *p = process_of(PsCurrentProcess()->UniqueProcessId, FALSE);
+    if (p) {
+        if (completes)
+            complete(p, id, old_status);
+        if (descriptor)
+            status = deliver(p, descriptor, WNF_DELIVERY_SIZE);
+        else if (completes)
+            status = STATUS_SUCCESS;
+    }
+    unlock();
+    if (descriptor && status == STATUS_SUCCESS)
+        status = publish(new_delivery_descriptor, descriptor, sizeof(*descriptor) + descriptor->StateDataSize);
+    ExFreePool(descriptor);
+    return status;
 }

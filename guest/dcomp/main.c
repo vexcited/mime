@@ -290,13 +290,28 @@ DCOMPAPI DWORD WINAPI DCompositionWaitForCompositorClock(UINT count, const HANDL
         DWORD result = count ? WaitForMultipleObjectsEx(count, handles, FALSE, timeout, FALSE) : (Sleep(timeout), WAIT_TIMEOUT);
         return result;
     }
+    /* the tick is waited for on a fine timer: a timeout in milliseconds is as coarse as the clock of the system. */
+    if (!count) {
+        MimeSleepUntil(next);
+        return WAIT_OBJECT_0;
+    }
+    HANDLE all[MAXIMUM_WAIT_OBJECTS];
+    HANDLE timer = count < MAXIMUM_WAIT_OBJECTS
+                       ? CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS)
+                       : nullptr;
+    LARGE_INTEGER due = {.QuadPart = -(LONGLONG)((next - now) * 10000000 / vblank.frequency) - 1};
     DWORD result;
-    if (count)
+    if (timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+        memcpy(all, handles, count * sizeof(HANDLE));
+        all[count] = timer;
+        result = WaitForMultipleObjectsEx(count + 1, all, FALSE, INFINITE, FALSE);
+    } else {
         result = WaitForMultipleObjectsEx(count, handles, FALSE, (DWORD)wait, FALSE);
-    else
-        result = (Sleep((DWORD)wait), WAIT_TIMEOUT);
-    if (result == WAIT_TIMEOUT)
-        return WAIT_OBJECT_0 + count;
+        if (result == WAIT_TIMEOUT)
+            result = WAIT_OBJECT_0 + count;
+    }
+    if (timer)
+        CloseHandle(timer);
     return result;
 }
 

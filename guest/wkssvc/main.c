@@ -82,6 +82,31 @@ static DWORD WINAPI control_handler(DWORD control, DWORD event_type, LPVOID even
 }
 
 /*
+ * WsRpcSecurityCallback of windows' wkssvc.dll: a remote caller may not use the procedures 8 to 11 and 39 to 44, and
+ * every call has to come over the named pipe.
+ */
+static RPC_STATUS RPC_ENTRY security_callback(RPC_IF_HANDLE interface, void *context)
+{
+    RPC_CALL_ATTRIBUTES_V2_W attributes = {2, RPC_QUERY_IS_CLIENT_LOCAL | RPC_QUERY_NO_AUTH_REQUIRED};
+    RPC_BINDING_HANDLE server = nullptr;
+    if (RpcServerInqCallAttributesW(context, &attributes) != RPC_S_OK ||
+        (attributes.IsClientLocal != 1 && ((USHORT)(attributes.OpNum - 8) <= 3 || (USHORT)(attributes.OpNum - 39) <= 5)) ||
+        RpcBindingServerFromClient(context, &server) != RPC_S_OK)
+        return ERROR_ACCESS_DENIED;
+    RPC_WSTR binding = nullptr, protseq = nullptr;
+    RPC_STATUS status = ERROR_ACCESS_DENIED;
+    if (RpcBindingToStringBindingW(server, &binding) == RPC_S_OK &&
+        RpcStringBindingParseW(binding, nullptr, &protseq, nullptr, nullptr, nullptr) == RPC_S_OK)
+        status = lstrcmpW((const WCHAR *)protseq, L"ncacn_np") ? ERROR_ACCESS_DENIED : RPC_S_OK;
+    RpcBindingFree(&server);
+    if (binding)
+        RpcStringFreeW(&binding);
+    if (protseq)
+        RpcStringFreeW(&protseq);
+    return status;
+}
+
+/*
  * the pipe's security is the service's, everyone reads the workstation, except that the two rights of everyone and
  * of the anonymous logon include the one to append: windows' clients reach the pipe through the redirector, which opens
  * it for them, and Mime's open it themselves with the rights of a write.
@@ -99,14 +124,15 @@ static DWORD start_rpc(void)
         status = RPC_S_OK;
     if (status != RPC_S_OK)
         return status;
-    status = RpcServerRegisterIfEx(wkssvc_s_ifspec, nullptr, nullptr, 0x91, 1234, nullptr);
+    /* a cache of the security callback's answers for each process needs the callback. */
+    status = RpcServerRegisterIfEx(wkssvc_s_ifspec, nullptr, nullptr, 0x91, 1234, security_callback);
     if (status == RPC_S_OK)
         g_rpc_registered = TRUE;
     return status;
 }
 
-/* the stop event fired: the interface goes, then the service is down. */
-static void WINAPI terminated(void *context, BOOLEAN timed_out)
+/* the interface goes, then the service is down with the error that stopped it. */
+static void stop(DWORD error)
 {
     if (g_rpc_registered) {
         RpcServerUnregisterIf(wkssvc_s_ifspec, nullptr, 1);
@@ -116,18 +142,17 @@ static void WINAPI terminated(void *context, BOOLEAN timed_out)
     update_status();
     g_status.dwControlsAccepted = 0;
     g_status.dwCurrentState = SERVICE_STOPPED;
-    g_status.dwWin32ExitCode = 0;
-    g_status.dwServiceSpecificExitCode = 0;
+    g_status.dwWin32ExitCode = error;
+    g_status.dwServiceSpecificExitCode = error;
     g_status.dwCheckPoint = 0;
     g_status.dwWaitHint = 0;
     update_status();
 }
 
-static void fail(DWORD error)
+/* the stop event fired. */
+static void WINAPI terminated(void *context, BOOLEAN timed_out)
 {
-    g_status.dwWin32ExitCode = error;
-    g_status.dwServiceSpecificExitCode = error;
-    terminated(nullptr, FALSE);
+    stop(0);
 }
 
 void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
@@ -143,14 +168,14 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
     update_status();
     g_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!g_stop_event) {
-        fail(GetLastError());
+        stop(GetLastError());
         return;
     }
     DWORD error = WsLoadConfiguration();
     if (!error)
         error = start_rpc();
     if (error) {
-        fail(error);
+        stop(error);
         return;
     }
     g_status.dwCurrentState = SERVICE_RUNNING;
@@ -165,5 +190,5 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
     else if (!error)
         error = ERROR_INVALID_DATA;
     if (error)
-        fail(error);
+        stop(error);
 }

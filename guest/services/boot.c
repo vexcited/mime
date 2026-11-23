@@ -296,6 +296,8 @@ static DWORD WINAPI autostart_thread(LPVOID unused)
     g_database_ready = TRUE;
     LeaveCriticalSection(&g_lock);
     SvcFree(normal);
+    AppInfoWaitRegistered(5000);
+    ScheduleWaitRegistered(5000);
     if (g_autostart_event)
         SetEvent(g_autostart_event);
     if (delayed && delayed_count) {

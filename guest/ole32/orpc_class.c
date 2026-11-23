@@ -272,6 +272,25 @@ static BOOL runs_as_interactive_user(REFCLSID clsid)
     return class_text(path, L"RunAs", runas, RTL_NUMBER_OF(runas)) && !_wcsicmp(runas, L"Interactive User");
 }
 
+/*
+ * the broker is a 64-bit process and takes the path as written. a 32-bit program's own CreateProcess would start the
+ * 32-bit program of that name, and only that one registers its classes in this table.
+ */
+static void redirect_system_directory(WCHAR *command)
+{
+    BOOL wow64 = FALSE;
+    if (!IsWow64Process(GetCurrentProcess(), &wow64) || !wow64)
+        return;
+    WCHAR system[MAX_PATH];
+    UINT n = GetSystemWindowsDirectoryW(system, MAX_PATH - 10);
+    if (!n || n > MAX_PATH - 10)
+        return;
+    wcscpy(system + n, L"\\system32\\");
+    WCHAR *path = command + (*command == '"');
+    if (!_wcsnicmp(path, system, n + 10))
+        memcpy(path + n + 1, L"SysWOW64", 8 * sizeof(WCHAR));
+}
+
 typedef DWORD(WINAPI *LAUNCH_UNELEVATED)(LPCWSTR application, LPCWSTR command_line, LPCWSTR directory, DWORD flags,
                                          const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *elevation);
 
@@ -284,6 +303,7 @@ static BOOL start_server(REFCLSID clsid, WCHAR *command, PROCESS_INFORMATION *in
 {
     STARTUPINFOW startup = {sizeof(startup)};
     if (runs_as_interactive_user(clsid)) {
+        redirect_system_directory(command);
         HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
         LAUNCH_UNELEVATED launch = advapi32 ? (LAUNCH_UNELEVATED)(void *)GetProcAddress(advapi32, "LaunchUnelevated") : nullptr;
         DWORD elevation;

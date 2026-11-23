@@ -120,10 +120,6 @@ void mime_vm_init_boot(MimeVm *vm)
     mime_path_join(roots, sizeof(roots), vm->paths->cache, "roots.pem");
     if (access(roots, R_OK) == 0)
         mime_paths_to_guest(vm->paths, roots, boot->auth_roots, sizeof(boot->auth_roots));
-    /* kernel options such as "trace-exceptions", for debugging the guest. */
-    const char *kargs = getenv("MIME_KERNEL_ARGS");
-    if (kargs)
-        mime_strlcpy(boot->cmdline, kargs, sizeof(boot->cmdline));
 
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);

@@ -480,6 +480,72 @@ BOOL WINAPI SetComputerNameW(LPCWSTR name)
 
 /* ------------------------------------------------------------------ processor topology */
 
+#ifndef __i386__
+
+NTSTATUS NTAPI NtQuerySystemInformationEx(SYSTEM_INFORMATION_CLASS klass, PVOID input, ULONG input_length, PVOID info,
+                                          ULONG length, PULONG returned);
+
+/* the kernel's answer as the topology functions tell it: a short buffer is ERROR_INSUFFICIENT_BUFFER with the size. */
+static BOOL topology_result(NTSTATUS status, ULONG returned, PDWORD length)
+{
+    if (length)
+        *length = returned;
+    if (NT_SUCCESS(status))
+        return TRUE;
+    if (status == STATUS_INFO_LENGTH_MISMATCH || status == STATUS_BUFFER_TOO_SMALL)
+        KbSetError(ERROR_INSUFFICIENT_BUFFER);
+    else
+        KbSetStatus(status);
+    return FALSE;
+}
+
+BOOL WINAPI GetLogicalProcessorInformation(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer, PDWORD length)
+{
+    if (!length) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ULONG returned = 0;
+    NTSTATUS status = NtQuerySystemInformation(SystemLogicalProcessorInformation, buffer, *length, &returned);
+    return topology_result(status, returned, length);
+}
+
+BOOL WINAPI GetLogicalProcessorInformationEx(LOGICAL_PROCESSOR_RELATIONSHIP relationship,
+                                             PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX buffer, PDWORD length)
+{
+    if (!length) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ULONG returned = 0, asked = (ULONG)relationship;
+    NTSTATUS status = NtQuerySystemInformationEx(107, &asked, sizeof(asked), buffer, *length, &returned);
+    return topology_result(status, returned, length);
+}
+
+WINBASEAPI BOOL WINAPI GetSystemCpuSetInformation(PVOID info, ULONG length, PULONG returned, HANDLE process, ULONG flags)
+{
+    if (!returned) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ULONG size = 0;
+    NTSTATUS status = NtQuerySystemInformationEx(175, &process, sizeof(process), info, length, &size);
+    return topology_result(status, size, returned);
+}
+
+/* no process is given default cpu sets. */
+WINBASEAPI BOOL WINAPI GetProcessDefaultCpuSets(HANDLE process, PULONG ids, ULONG count, PULONG required)
+{
+    if (!required) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *required = 0;
+    return TRUE;
+}
+
+#else
+
 #define L1_SIZE (64 * 1024)
 #define L2_SIZE (4 * 1024 * 1024)
 
@@ -633,6 +699,8 @@ BOOL WINAPI GetLogicalProcessorInformationEx(LOGICAL_PROCESSOR_RELATIONSHIP rela
     *length = used;
     return TRUE;
 }
+
+#endif
 
 WORD WINAPI GetActiveProcessorGroupCount(void)
 {

@@ -8,10 +8,38 @@ typedef struct {
     HRESULT(STDMETHODCALLTYPE *IsEqual)(IMFMediaType *This, IMFMediaType *type, DWORD *flags);
     HRESULT(STDMETHODCALLTYPE *GetRepresentation)(IMFMediaType *This, GUID representation, void **data);
     HRESULT(STDMETHODCALLTYPE *FreeRepresentation)(IMFMediaType *This, GUID representation, void *data);
+    const MFVIDEOFORMAT *(STDMETHODCALLTYPE *GetVideoFormat)(IMFMediaType *This);
+    HRESULT(STDMETHODCALLTYPE *GetVideoRepresentation)(IMFMediaType *This, GUID representation, void **data,
+                                                       LONG stride);
 } MediaTypeVtbl;
 
+/* like windows, one object serves plain and video media types, and keeps the format block it hands out. */
+typedef struct MediaType MediaType;
+
+/* the video interface of a plain type: another pointer into the same object, made once and kept. */
+typedef struct {
+    const MediaTypeVtbl *vtbl;
+    MediaType *owner;
+} VideoFace;
+
+typedef struct MediaType {
+    MfObject object;
+    MFVIDEOFORMAT *video;
+    VideoFace *face;
+} MediaType;
+#define VIDEO_FORMAT_ROOM 0x8B0
+
+static void type_destroy(MfObject *object)
+{
+    CoTaskMemFree(((MediaType *)object)->video);
+    MfFree(((MediaType *)object)->face);
+}
+
 static const GUID *const MEDIA_TYPE_IIDS[] = {&IID_IMFMediaType, nullptr};
-static const MfClass MEDIA_TYPE_CLASS = {MEDIA_TYPE_IIDS, nullptr};
+static const MfClass MEDIA_TYPE_CLASS = {MEDIA_TYPE_IIDS, type_destroy};
+/* only a type made as a video type answers for the video interface. */
+static const GUID *const VIDEO_TYPE_IIDS[] = {&IID_IMFMediaType, &IID_IMFVideoMediaType, nullptr};
+static const MfClass VIDEO_TYPE_CLASS = {VIDEO_TYPE_IIDS, type_destroy};
 
 static HRESULT STDMETHODCALLTYPE type_get_major_type(IMFMediaType *iface, GUID *major)
 {
@@ -105,23 +133,210 @@ static HRESULT STDMETHODCALLTYPE type_free_representation(IMFMediaType *iface, G
     return MF_E_UNSUPPORTED_REPRESENTATION;
 }
 
-static const MediaTypeVtbl MEDIA_TYPE_VTBL = {
-    MF_ATTRIBUTES_VTBL,  type_get_major_type,     type_is_compressed_format,
-    type_is_equal,       type_get_representation, type_free_representation,
+/* the block is built again on every call, in the room the type keeps, so the pointer stays good. */
+static const MFVIDEOFORMAT *STDMETHODCALLTYPE type_get_video_format(IMFMediaType *iface)
+{
+    MediaType *type = (MediaType *)iface;
+    const MFVIDEOFORMAT *out = nullptr;
+    iface->lpVtbl->LockStore(iface);
+    if (!type->video) {
+        type->video = CoTaskMemAlloc(VIDEO_FORMAT_ROOM);
+        if (type->video)
+            memset(type->video, 0, VIDEO_FORMAT_ROOM);
+    }
+    MFVIDEOFORMAT *made = nullptr;
+    UINT32 size = 0;
+    if (type->video && SUCCEEDED(MFCreateMFVideoFormatFromMFMediaType(iface, &made, &size))) {
+        if (size <= VIDEO_FORMAT_ROOM) {
+            memcpy(type->video, made, size);
+            out = type->video;
+        }
+        CoTaskMemFree(made);
+    }
+    iface->lpVtbl->UnlockStore(iface);
+    return out;
+}
+
+/* the representation with another stride: the stride of the type is put back afterwards. */
+static HRESULT STDMETHODCALLTYPE type_get_video_representation(IMFMediaType *iface, GUID representation, void **data,
+                                                               LONG stride)
+{
+    UINT32 before = 0;
+    if (stride) {
+        if (FAILED(iface->lpVtbl->GetUINT32(iface, &MF_MT_DEFAULT_STRIDE, &before)))
+            before = 0;
+        HRESULT hr = iface->lpVtbl->SetUINT32(iface, &MF_MT_DEFAULT_STRIDE, (UINT32)stride);
+        if (FAILED(hr))
+            return hr;
+    }
+    HRESULT hr = iface->lpVtbl->GetRepresentation(iface, representation, data);
+    if (stride) {
+        if (before)
+            iface->lpVtbl->SetUINT32(iface, &MF_MT_DEFAULT_STRIDE, before);
+        else
+            iface->lpVtbl->DeleteItem(iface, &MF_MT_DEFAULT_STRIDE);
+    }
+    return hr;
+}
+
+#define OWNER(This) ((IMFMediaType *)((VideoFace *)(This))->owner)
+#define FACE_FORWARD(name, params, args)                                                                               \
+    static HRESULT STDMETHODCALLTYPE face_##name params                                                               \
+    {                                                                                                                  \
+        return OWNER(This)->lpVtbl->name args;                                                                        \
+    }
+
+static HRESULT STDMETHODCALLTYPE face_QueryInterface(IMFAttributes *This, REFIID riid, void **out)
+{
+    return OWNER(This)->lpVtbl->QueryInterface(OWNER(This), riid, out);
+}
+
+static ULONG STDMETHODCALLTYPE face_AddRef(IMFAttributes *This)
+{
+    return OWNER(This)->lpVtbl->AddRef(OWNER(This));
+}
+
+static ULONG STDMETHODCALLTYPE face_Release(IMFAttributes *This)
+{
+    return OWNER(This)->lpVtbl->Release(OWNER(This));
+}
+
+FACE_FORWARD(GetItem, (IMFAttributes * This, REFGUID k, PROPVARIANT *v), (OWNER(This), k, v))
+FACE_FORWARD(GetItemType, (IMFAttributes * This, REFGUID k, MF_ATTRIBUTE_TYPE *v), (OWNER(This), k, v))
+FACE_FORWARD(CompareItem, (IMFAttributes * This, REFGUID k, const PROPVARIANT *v, BOOL *r), (OWNER(This), k, v, r))
+FACE_FORWARD(Compare, (IMFAttributes * This, IMFAttributes *a, MF_ATTRIBUTES_MATCH_TYPE m, BOOL *r),
+             (OWNER(This), a, m, r))
+FACE_FORWARD(GetUINT32, (IMFAttributes * This, REFGUID k, UINT32 *v), (OWNER(This), k, v))
+FACE_FORWARD(GetUINT64, (IMFAttributes * This, REFGUID k, UINT64 *v), (OWNER(This), k, v))
+FACE_FORWARD(GetDouble, (IMFAttributes * This, REFGUID k, double *v), (OWNER(This), k, v))
+FACE_FORWARD(GetGUID, (IMFAttributes * This, REFGUID k, GUID *v), (OWNER(This), k, v))
+FACE_FORWARD(GetStringLength, (IMFAttributes * This, REFGUID k, UINT32 *v), (OWNER(This), k, v))
+FACE_FORWARD(GetString, (IMFAttributes * This, REFGUID k, LPWSTR v, UINT32 n, UINT32 *l), (OWNER(This), k, v, n, l))
+FACE_FORWARD(GetAllocatedString, (IMFAttributes * This, REFGUID k, LPWSTR *v, UINT32 *l), (OWNER(This), k, v, l))
+FACE_FORWARD(GetBlobSize, (IMFAttributes * This, REFGUID k, UINT32 *v), (OWNER(This), k, v))
+FACE_FORWARD(GetBlob, (IMFAttributes * This, REFGUID k, UINT8 *b, UINT32 n, UINT32 *w), (OWNER(This), k, b, n, w))
+FACE_FORWARD(GetAllocatedBlob, (IMFAttributes * This, REFGUID k, UINT8 **b, UINT32 *n), (OWNER(This), k, b, n))
+FACE_FORWARD(GetUnknown, (IMFAttributes * This, REFGUID k, REFIID i, void **o), (OWNER(This), k, i, o))
+FACE_FORWARD(SetItem, (IMFAttributes * This, REFGUID k, const PROPVARIANT *v), (OWNER(This), k, v))
+FACE_FORWARD(DeleteItem, (IMFAttributes * This, REFGUID k), (OWNER(This), k))
+FACE_FORWARD(DeleteAllItems, (IMFAttributes * This), (OWNER(This)))
+FACE_FORWARD(SetUINT32, (IMFAttributes * This, REFGUID k, UINT32 v), (OWNER(This), k, v))
+FACE_FORWARD(SetUINT64, (IMFAttributes * This, REFGUID k, UINT64 v), (OWNER(This), k, v))
+FACE_FORWARD(SetDouble, (IMFAttributes * This, REFGUID k, double v), (OWNER(This), k, v))
+FACE_FORWARD(SetGUID, (IMFAttributes * This, REFGUID k, REFGUID v), (OWNER(This), k, v))
+FACE_FORWARD(SetString, (IMFAttributes * This, REFGUID k, LPCWSTR v), (OWNER(This), k, v))
+FACE_FORWARD(SetBlob, (IMFAttributes * This, REFGUID k, const UINT8 *b, UINT32 n), (OWNER(This), k, b, n))
+FACE_FORWARD(SetUnknown, (IMFAttributes * This, REFGUID k, IUnknown *u), (OWNER(This), k, u))
+FACE_FORWARD(LockStore, (IMFAttributes * This), (OWNER(This)))
+FACE_FORWARD(UnlockStore, (IMFAttributes * This), (OWNER(This)))
+FACE_FORWARD(GetCount, (IMFAttributes * This, UINT32 *n), (OWNER(This), n))
+FACE_FORWARD(GetItemByIndex, (IMFAttributes * This, UINT32 i, GUID *k, PROPVARIANT *v), (OWNER(This), i, k, v))
+FACE_FORWARD(CopyAllItems, (IMFAttributes * This, IMFAttributes *d), (OWNER(This), d))
+
+static HRESULT STDMETHODCALLTYPE face_GetMajorType(IMFMediaType *This, GUID *major)
+{
+    return type_get_major_type(OWNER(This), major);
+}
+
+static HRESULT STDMETHODCALLTYPE face_IsCompressedFormat(IMFMediaType *This, BOOL *compressed)
+{
+    return type_is_compressed_format(OWNER(This), compressed);
+}
+
+static HRESULT STDMETHODCALLTYPE face_IsEqual(IMFMediaType *This, IMFMediaType *other, DWORD *flags)
+{
+    return type_is_equal(OWNER(This), other, flags);
+}
+
+static HRESULT STDMETHODCALLTYPE face_GetRepresentation(IMFMediaType *This, GUID representation, void **data)
+{
+    return type_get_representation(OWNER(This), representation, data);
+}
+
+static HRESULT STDMETHODCALLTYPE face_FreeRepresentation(IMFMediaType *This, GUID representation, void *data)
+{
+    return type_free_representation(OWNER(This), representation, data);
+}
+
+static const MFVIDEOFORMAT *STDMETHODCALLTYPE face_GetVideoFormat(IMFMediaType *This)
+{
+    return type_get_video_format(OWNER(This));
+}
+
+static HRESULT STDMETHODCALLTYPE face_GetVideoRepresentation(IMFMediaType *This, GUID representation, void **data,
+                                                             LONG stride)
+{
+    return type_get_video_representation(OWNER(This), representation, data, stride);
+}
+
+static const MediaTypeVtbl FACE_VTBL = {
+    {
+        face_QueryInterface, face_AddRef, face_Release, face_GetItem, face_GetItemType, face_CompareItem, face_Compare,
+        face_GetUINT32, face_GetUINT64, face_GetDouble, face_GetGUID, face_GetStringLength, face_GetString,
+        face_GetAllocatedString, face_GetBlobSize, face_GetBlob, face_GetAllocatedBlob, face_GetUnknown, face_SetItem,
+        face_DeleteItem, face_DeleteAllItems, face_SetUINT32, face_SetUINT64, face_SetDouble, face_SetGUID,
+        face_SetString, face_SetBlob, face_SetUnknown, face_LockStore, face_UnlockStore, face_GetCount,
+        face_GetItemByIndex, face_CopyAllItems,
+    },
+    face_GetMajorType, face_IsCompressedFormat, face_IsEqual, face_GetRepresentation, face_FreeRepresentation,
+    face_GetVideoFormat, face_GetVideoRepresentation,
 };
+
+/*
+ * measured on windows 11 with vtqi.exe and vtqi2.exe of scratch/dlls/evr: a plain type whose major type is video
+ * answers IMFVideoMediaType too, with the same pointer every time but not its own, sharing its items and its count.
+ */
+static HRESULT STDMETHODCALLTYPE type_query_interface(IMFAttributes *iface, REFIID riid, void **out)
+{
+    MediaType *type = (MediaType *)iface;
+    GUID major;
+    if (out && type->object.cls == &MEDIA_TYPE_CLASS && IsEqualGUID(riid, &IID_IMFVideoMediaType) &&
+        SUCCEEDED(iface->lpVtbl->GetGUID(iface, &MF_MT_MAJOR_TYPE, &major)) &&
+        IsEqualGUID(&major, &MFMediaType_Video)) {
+        iface->lpVtbl->LockStore(iface);
+        if (!type->face && (type->face = MfAlloc(sizeof(*type->face)))) {
+            type->face->vtbl = &FACE_VTBL;
+            type->face->owner = type;
+        }
+        iface->lpVtbl->UnlockStore(iface);
+        if (!type->face) {
+            *out = nullptr;
+            return E_OUTOFMEMORY;
+        }
+        iface->lpVtbl->AddRef(iface);
+        *out = type->face;
+        return S_OK;
+    }
+    return MfObjectQueryInterface(iface, riid, out);
+}
+
+static const MediaTypeVtbl MEDIA_TYPE_VTBL = {
+    MF_ATTRIBUTES_VTBL_WITH_QUERY(type_query_interface),      type_get_major_type,   type_is_compressed_format,     type_is_equal,
+    type_get_representation, type_free_representation, type_get_video_format, type_get_video_representation,
+};
+
+static HRESULT create_type(const MfClass *cls, IMFMediaType **type)
+{
+    MediaType *object = MfAllocZero(sizeof(*object));
+    if (!object) {
+        *type = nullptr;
+        return E_OUTOFMEMORY;
+    }
+    MfObjectInit(&object->object, &MEDIA_TYPE_VTBL, cls, 0);
+    *type = (IMFMediaType *)object;
+    return S_OK;
+}
 
 HRESULT WINAPI MFCreateMediaType(IMFMediaType **type)
 {
     if (!type)
         return E_POINTER;
-    MfObject *object = MfAlloc(sizeof(*object));
-    if (!object) {
-        *type = nullptr;
-        return E_OUTOFMEMORY;
-    }
-    MfObjectInit(object, &MEDIA_TYPE_VTBL, &MEDIA_TYPE_CLASS, 0);
-    *type = (IMFMediaType *)object;
-    return S_OK;
+    return create_type(&MEDIA_TYPE_CLASS, type);
+}
+
+HRESULT MfCreateVideoMediaType(IMFMediaType **type)
+{
+    return create_type(&VIDEO_TYPE_CLASS, type);
 }
 
 #define WAVE_FORMAT_MPEG_HEAAC 0x1610

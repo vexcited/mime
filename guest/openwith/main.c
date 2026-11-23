@@ -18,6 +18,7 @@
 #include <mime/win32/shobjidl.h>
 #include <rtl.h>
 #include <stdarg.h>
+#include <mime/elevate.h>
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -768,8 +769,6 @@ static PROGRAM *find_owner(PROGRAM *programs, UINT count, const ENTRY *entry)
     return owner;
 }
 
-typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
-                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
 
 /* like the settings, an uninstaller that needs administrator rights gets them through the broker. */
 static BOOL start_command(WCHAR *command, PROCESS_INFORMATION *process)
@@ -779,11 +778,7 @@ static BOOL start_command(WCHAR *command, PROCESS_INFORMATION *process)
         return TRUE;
     if (GetLastError() != ERROR_ELEVATION_REQUIRED)
         return FALSE;
-    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
-    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)(void *)GetProcAddress(advapi32, "LaunchElevated") : nullptr;
-    if (!launch)
-        return FALSE;
-    DWORD error = launch(nullptr, command, nullptr, 0, &startup, process, nullptr);
+    DWORD error = MimeLaunchElevated(nullptr, command, nullptr, 0, &startup, process, nullptr);
     SetLastError(error);
     return !error;
 }

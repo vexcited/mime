@@ -30,3 +30,6 @@ EXPORTS
     ICOpen @37
     ICOpenFunction @38
     ICSendMessage @40
+    ICSeqCompressFrame @41
+    ICSeqCompressFrameEnd @42
+    ICSeqCompressFrameStart @43

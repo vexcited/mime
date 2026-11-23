@@ -115,20 +115,9 @@ WCHAR *wb_format(const WCHAR *format, ...)
     }
 }
 
-/* a query for an interface the object does not have, written to the debug output when MIME_WBEM_TRACE is set. */
+/* a query for an interface the object does not have. */
 HRESULT wb_no_interface(const char *who, REFIID riid, void **out)
 {
-    WCHAR text[160];
-    if (!GetEnvironmentVariableW(L"MIME_WBEM_TRACE", text, 2)) {
-        if (out)
-            *out = nullptr;
-        return E_NOINTERFACE;
-    }
-    _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"wbem: %S has no interface {%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}\n",
-               who, (unsigned long)riid->Data1, riid->Data2, riid->Data3, riid->Data4[0], riid->Data4[1], riid->Data4[2],
-               riid->Data4[3], riid->Data4[4], riid->Data4[5], riid->Data4[6], riid->Data4[7]);
-    text[RTL_NUMBER_OF(text) - 1] = 0;
-    OutputDebugStringW(text);
     if (out)
         *out = nullptr;
     return E_NOINTERFACE;

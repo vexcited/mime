@@ -228,13 +228,59 @@ static BOOLEAN item_has_text(UINT msg, DWORD style)
     return (style & (combo ? 0x200u : 0x40u)) || !(style & 0x30);
 }
 
+/* an ansi string of the sender, made wide, as NtUserfnINSTRING does for a caller of user32 that gives bAnsi. */
+static BOOLEAN read_astring(LPARAM user, PWSTR *out, ULONG *chars)
+{
+    *out = nullptr;
+    SIZE_T cap = 256, n = 0;
+    PUCHAR bytes = W32Alloc(cap);
+    if (!bytes)
+        return FALSE;
+    for (;;) {
+        if (n + 1 >= cap) {
+            if (cap * 2 > MSG_MAX_TEXT) {
+                W32Free(bytes);
+                return FALSE;
+            }
+            PUCHAR bigger = W32Alloc(cap * 2);
+            if (!bigger) {
+                W32Free(bytes);
+                return FALSE;
+            }
+            memcpy(bigger, bytes, n);
+            W32Free(bytes);
+            bytes = bigger;
+            cap *= 2;
+        }
+        if (!user_read(bytes + n, user + (LPARAM)n, 1)) {
+            W32Free(bytes);
+            return FALSE;
+        }
+        if (!bytes[n])
+            break;
+        n++;
+    }
+    PWSTR text = W32Alloc((n + 1) * sizeof(WCHAR));
+    if (!text) {
+        W32Free(bytes);
+        return FALSE;
+    }
+    ULONG written = 0;
+    RtlMultiByteToUnicodeN(text, (ULONG)n * sizeof(WCHAR), &written, (const CHAR *)bytes, (ULONG)n);
+    text[written / sizeof(WCHAR)] = 0;
+    W32Free(bytes);
+    *out = text;
+    *chars = written / sizeof(WCHAR);
+    return TRUE;
+}
+
 static BOOLEAN capture_string(MSG_CAPTURE *c, LPARAM user)
 {
     PWSTR text;
     ULONG chars;
     if (!user)
         return TRUE;
-    if (!read_wstring(user, &text, &chars))
+    if (!(c->Ansi ? read_astring(user, &text, &chars) : read_wstring(user, &text, &chars)))
         return FALSE;
     c->Buffer = text;
     c->Size = (chars + 1) * sizeof(WCHAR);
@@ -273,6 +319,8 @@ static BOOLEAN append_string(MSG_CAPTURE *c, ULONG_PTR *field, ULONG min_pointer
 BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM lparam, MSG_RULE rule, LONG hint)
 {
     memset(c, 0, sizeof(*c));
+    W32THREAD *self = PsGetCurrentThreadWin32Thread();
+    c->Ansi = self && self->SendAnsi;
     c->Msg = msg;
     c->Wparam = wparam;
     c->Lparam = lparam;
@@ -305,7 +353,7 @@ BOOLEAN MsgCapture(MSG_CAPTURE *c, WND *target, UINT msg, WPARAM wparam, LPARAM 
         }
         if (wparam && !lparam)
             return FALSE;
-        if (!probe_buffer(lparam, (ULONG)wparam * sizeof(WCHAR)))
+        if (!probe_buffer(lparam, (ULONG)wparam * (c->Ansi ? 1 : sizeof(WCHAR))))
             return FALSE;
         ULONG room = wparam < MSG_MAX_TEXT ? (ULONG)wparam : MSG_MAX_TEXT;
         c->Wparam = room;
@@ -558,6 +606,22 @@ void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed)
             return;
         ULONG limit = (ULONG)((ULONG_PTR)n < c->Chars ? (ULONG_PTR)n : c->Chars);
         ULONG got = text_chars(c->Buffer, limit);
+        if (c->Ansi) {
+            /* an ansi sender gets the text in its code page, its terminator within its room. */
+            if (got >= room)
+                got = room - 1;
+            CHAR text[512];
+            PCHAR bytes = got < sizeof(text) ? text : W32Alloc(got + 1);
+            if (!bytes)
+                return;
+            RtlUnicodeToMultiByteN(bytes, got, nullptr, c->Buffer, got * sizeof(WCHAR));
+            bytes[got] = 0;
+            user_write(c->UserLparam, bytes, got + 1);
+            if (bytes != text)
+                W32Free(bytes);
+            *result = got;
+            return;
+        }
         user_write(c->UserLparam, c->Buffer, (SIZE_T)got * sizeof(WCHAR));
         if (c->Capacity > got) {
             WCHAR end = 0;

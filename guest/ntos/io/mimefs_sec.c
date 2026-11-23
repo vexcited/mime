@@ -27,6 +27,10 @@ static SD_MAPPING file_mapping(void)
 }
 
 static SD_BLOB *g_root, *g_system_directory, *g_installer_cache, *g_profile, *g_locallow, *g_rom_file;
+/* \\Users, \\Users\\Public and \\ProgramData. */
+static SD_BLOB *g_users, *g_public, *g_program_data;
+/* what a profile is made with: its first directories, and the files of the hive of the user. */
+static SD_BLOB *g_profile_directory, *g_profile_file;
 /* the profiles of the system and of the two service accounts, which only the account and the administrators use. */
 static SD_BLOB *g_system_profile, *g_local_service_profile, *g_network_service_profile, *g_machine_keys;
 
@@ -60,6 +64,40 @@ static void build_seeds(void)
                      {ACE_INHERIT_ONLY, FILE_MODIFY, SeSidAuthenticatedUsers},
                      {0, 4, SeSidAuthenticatedUsers}};
     SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, root, 5, &g_root);
+
+    /*
+     * the three below are the lists of windows 11 26300, read with Get-Acl. the entry of \Users for the capability
+     * sid of its app container is left out.
+     */
+    SD_ACE users[] = {{ACE_INHERIT_ONLY, GENERIC_RX, SeSidEveryone},
+                      {0, FILE_READ_EXECUTE, SeSidEveryone},
+                      {ACE_OI_CI, FILE_ALL, SeSidSystem},
+                      {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
+                      {0, FILE_READ_EXECUTE, SeSidUsers},
+                      {ACE_INHERIT_ONLY, GENERIC_RX, SeSidUsers}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, users, 6, &g_users);
+
+    static const UCHAR batch[12] = {1, 1, 0, 0, 0, 0, 0, 5, 3, 0, 0, 0};
+    static const UCHAR interactive[12] = {1, 1, 0, 0, 0, 0, 0, 5, 4, 0, 0, 0};
+    static const UCHAR service[12] = {1, 1, 0, 0, 0, 0, 0, 5, 6, 0, 0, 0};
+    SD_ACE public[] = {{ACE_INHERIT_ONLY, FILE_ALL, SeSidCreatorOwner},
+                       {0, 0x1200AF, batch},
+                       {ACE_INHERIT_ONLY, 0x1301FF, batch},
+                       {ACE_INHERIT_ONLY, 0x1301FF, interactive},
+                       {0, 0x1200AF, interactive},
+                       {ACE_INHERIT_ONLY, 0x1301FF, service},
+                       {0, 0x1200AF, service},
+                       {ACE_OI_CI, FILE_ALL, SeSidSystem},
+                       {ACE_OI_CI, FILE_ALL, SeSidAdministrators}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, public, 9, &g_public);
+
+    /* users read, and add files and directories that their maker then owns. 0x116 is DCLCRPCR. */
+    SD_ACE program_data[] = {{ACE_INHERIT_ONLY, GENERIC_ALL_, SeSidCreatorOwner},
+                             {ACE_OI_CI, FILE_ALL, SeSidSystem},
+                             {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
+                             {ACE_OI_CI, FILE_READ_EXECUTE, SeSidUsers},
+                             {CONTAINER_INHERIT_ACE, 0x116, SeSidUsers}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, program_data, 5, &g_program_data);
 
     SD_ACE system[] = {{0, FILE_ALL, SeSidTrustedInstaller},
                        {CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE, GENERIC_ALL_, SeSidTrustedInstaller},
@@ -95,7 +133,17 @@ static void build_seeds(void)
     SD_ACE profile[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem},
                         {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
                         {ACE_OI_CI, FILE_ALL, user}};
-    SeSdBuild(user, none, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, profile, 3, &g_profile);
+    /*
+     * measured on windows 11 26100 with filesd.exe of scratch/dlls/probe in the research repository: the profile
+     * belongs to the system and its list is protected and not marked as inherited automatically. what the profile was
+     * made with, the hive of the user and its logs, AppData, Local, Temp and the desktop, belongs to the user and
+     * carries the same three entries as its own, not as inherited ones. the entry of the profile for the capability
+     * sid of an app container is left out.
+     */
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_PROTECTED, profile, 3, &g_profile);
+    SeSdBuild(user, none, 0, profile, 3, &g_profile_directory);
+    SD_ACE profile_file[] = {{0, FILE_ALL, SeSidSystem}, {0, FILE_ALL, SeSidAdministrators}, {0, FILE_ALL, user}};
+    SeSdBuild(user, none, 0, profile_file, 3, &g_profile_file);
     /* the profile's folder for low integrity programs, labelled low for everything in it. */
     if (g_profile && !NT_SUCCESS(SeSdAddInheritedLabel(g_profile, 0x1000, &g_locallow)))
         g_locallow = nullptr;
@@ -124,13 +172,17 @@ static void build_seeds(void)
     SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, network_profile, 3,
               &g_network_service_profile);
 
-    SD_ACE rom[] = {{INHERITED_ACE, FILE_ALL, SeSidTrustedInstaller},
-                    {INHERITED_ACE, FILE_READ_EXECUTE, SeSidSystem},
-                    {INHERITED_ACE, FILE_READ_EXECUTE, SeSidAdministrators},
-                    {INHERITED_ACE, FILE_READ_EXECUTE, SeSidUsers},
-                    {INHERITED_ACE, FILE_READ_EXECUTE, SeSidAllAppPackages},
-                    {INHERITED_ACE, FILE_READ_EXECUTE, SeSidRestrictedPackages}};
-    SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_AUTO_INHERITED, rom, 6, &g_rom_file);
+    /*
+     * the list of nearly every file of System32, SysWOW64 and Boot on windows 11 26300 and in its image: protected,
+     * its own entries in this order. bootfiles/boot.c of scratch/dlls in the research repository reads it.
+     */
+    SD_ACE rom[] = {{0, FILE_ALL, SeSidTrustedInstaller},
+                    {0, FILE_READ_EXECUTE, SeSidAdministrators},
+                    {0, FILE_READ_EXECUTE, SeSidSystem},
+                    {0, FILE_READ_EXECUTE, SeSidUsers},
+                    {0, FILE_READ_EXECUTE, SeSidAllAppPackages},
+                    {0, FILE_READ_EXECUTE, SeSidRestrictedPackages}};
+    SeSdBuild(SeSidTrustedInstaller, SeSidTrustedInstaller, SE_DACL_PROTECTED, rom, 6, &g_rom_file);
 }
 
 static FAST_MUTEX g_lock, g_effective_lock;
@@ -186,9 +238,36 @@ static BOOLEAN component_is(const PATH *p, ULONG index, PCWSTR text)
     return TRUE;
 }
 
+static BOOLEAN in_user_profile(const PATH *p)
+{
+    WCHAR name[24];
+    ULONG n = 0;
+    for (; n < RTL_NUMBER_OF(name) - 1 && HalBootInfo->user_name[n]; n++)
+        name[n] = (UCHAR)HalBootInfo->user_name[n];
+    name[n] = 0;
+    return p->Count >= 2 && component_is(p, 0, L"Users") && component_is(p, 1, name);
+}
+
+/* the files of the hive of the user, which the registry holds and whose descriptor is the one the profile was made with. */
+static BOOLEAN is_user_hive_file(const PATH *p, ULONG depth)
+{
+    return depth == 3 && in_user_profile(p) &&
+           (component_is(p, 2, L"NTUSER.DAT") || component_is(p, 2, L"ntuser.dat.LOG1") || component_is(p, 2, L"ntuser.dat.LOG2"));
+}
+
 /* the fresh installation directory the path's first `depth` components name, or NULL. */
 static SD_BLOB *seed_at(const PATH *p, ULONG depth)
 {
+    if (is_user_hive_file(p, depth))
+        return g_profile_file;
+    if (depth >= 3 && depth <= 5 && in_user_profile(p)) {
+        if (depth == 3 && (component_is(p, 2, L"AppData") || component_is(p, 2, L"Desktop")))
+            return g_profile_directory;
+        if (depth == 4 && component_is(p, 2, L"AppData") && component_is(p, 3, L"Local"))
+            return g_profile_directory;
+        if (depth == 5 && component_is(p, 2, L"AppData") && component_is(p, 3, L"Local") && component_is(p, 4, L"Temp"))
+            return g_profile_directory;
+    }
     if (depth == 0)
         return g_root;
     if (depth == 1 && (component_is(p, 0, L"Windows") || component_is(p, 0, L"Program Files") ||
@@ -208,6 +287,12 @@ static SD_BLOB *seed_at(const PATH *p, ULONG depth)
     if (depth == 4 && component_is(p, 0, L"Windows") && component_is(p, 1, L"System32") && component_is(p, 2, L"config") &&
         component_is(p, 3, L"systemprofile"))
         return g_system_profile;
+    if (depth == 1 && component_is(p, 0, L"Users"))
+        return g_users;
+    if (depth == 1 && component_is(p, 0, L"ProgramData"))
+        return g_program_data;
+    if (depth == 2 && component_is(p, 0, L"Users") && component_is(p, 1, L"Public"))
+        return g_public;
     if (depth == 2 && component_is(p, 0, L"Users")) {
         WCHAR name[24];
         ULONG n = 0;
@@ -351,6 +436,11 @@ static NTSTATUS effective(ULONG volume, ULONG64 host, PCUNICODE_STRING path, ULO
     NTSTATUS status = stored_for(known, host, up, &stored, &distance);
     if (!NT_SUCCESS(status))
         return status;
+    /* the registry made the files of the hive as the system: what that stored is not what the profile shows. */
+    if (stored && !distance && !directory && is_user_hive_file(&p, count)) {
+        SeSdDereference(stored);
+        stored = nullptr;
+    }
     ULONG64 key = 0, stamp = 0, epoch = 0;
     if (!stored) {
         /* nothing stored above: the answer depends on the name alone and is cached. */
@@ -450,10 +540,6 @@ static NTSTATUS check_traverse(ULONG volume, ULONG64 host, PCUNICODE_STRING path
             return status == STATUS_OBJECT_PATH_NOT_FOUND ? STATUS_SUCCESS : status;
         ACCESS_MASK unused;
         status = SeCheckAccess(dir, file_mapping(), FILE_TRAVERSE_, 0, flags, &unused);
-        if (!NT_SUCCESS(status) && SeTraceAccess) {
-            KiLogPrintf("  the directory %u levels above has no traverse", up);
-            SeTraceDescriptor(dir);
-        }
         SeSdDereference(dir);
         if (!NT_SUCCESS(status))
             return status;
@@ -517,10 +603,6 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         SeSdDereference(sd);
         return status;
     }
-    if (!NT_SUCCESS(status) && SeTraceAccess) {
-        KiLogPrintf("  the file");
-        SeTraceDescriptor(sd);
-    }
     /* the rights the parent lends: what is left to ask for, or with MAXIMUM_ALLOWED what is added. */
     ACCESS_MASK mapped = want & ~(ACCESS_MASK)MAXIMUM_ALLOWED_;
     RtlMapGenericMask(&mapped, (const GENERIC_MAPPING *)mapping);
@@ -539,10 +621,6 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         return up == STATUS_MORE_PROCESSING_REQUIRED ? up : status;
     }
     ACCESS_MASK lent = 0, unused;
-    if (SeTraceAccess) {
-        KiLogPrintf("  the directory above");
-        SeTraceDescriptor(parent);
-    }
     if (SeCheckAccess(parent, mapping, FILE_DELETE_CHILD_, 0, flags, &unused) == STATUS_SUCCESS)
         lent |= DELETE_;
     if (SeCheckAccess(parent, mapping, FILE_LIST_DIRECTORY_, 0, flags, &unused) == STATUS_SUCCESS)

@@ -26,9 +26,6 @@ static NTSTATUS store_iosb(PIO_STATUS_BLOCK user, const IO_STATUS_BLOCK *iosb)
     return STATUS_SUCCESS;
 }
 
-/* the kernel option trace-files logs the name and the status of every open by a program that fails. */
-BOOLEAN IoTraceFiles;
-
 NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                             PLARGE_INTEGER allocation, ULONG file_attributes, ULONG share, ULONG disposition,
                             ULONG options, PVOID ea, ULONG ea_length, ULONG create_file_type, PVOID parameters,
@@ -82,15 +79,15 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     thread->CreateEa = ea_copy;
     thread->CreateEaLength = ea_copy ? ea_length : 0;
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
-    if (!NT_SUCCESS(status) && IoTraceFiles && mode == UserMode) {
-        char text[120];
-        ULONG n = 0, chars = name.Length / sizeof(WCHAR);
-        for (ULONG i = chars > 110 ? chars - 110 : 0; i < chars && n < sizeof(text) - 1; i++)
-            text[n++] = name.Buffer[i] < 0x80 && name.Buffer[i] >= 0x20 ? (char)name.Buffer[i] : '?';
-        text[n] = 0;
-        KiLogPrintf("open of '%s' failed with %08x, %s pid %u", text, status, PsCurrentProcess()->ImageFileName,
-                    (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId);
-    }
+    /*
+     * a file of a feature on demand that a program opens to read or to run: the feature is asked for, once. a folder
+     * opened to list it is only looked at.
+     */
+    if ((status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) && mode == UserMode &&
+        disposition == FILE_OPEN && !oa.RootDirectory &&
+        (access & (FILE_READ_DATA | FILE_EXECUTE | GENERIC_READ | GENERIC_EXECUTE)) &&
+        ExFeatureFileFault(oa.ObjectName, (options & FILE_DIRECTORY_FILE) != 0))
+        status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
     thread->CreateEa = outer_ea;
     thread->CreateEaLength = outer_ea_length;
     if (ea_copy)
@@ -98,6 +95,9 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     thread->CreateQos = 0;
     KiFreeCapturedString(&name);
     if (!NT_SUCCESS(status)) {
+        /* Windows leaves the status block of a program alone when the open fails with an error. */
+        if (mode == UserMode && NT_ERROR(status))
+            return status;
         local.Status = status;
         store_iosb(iosb, &local);
         return status;
@@ -227,6 +227,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
                                          write ? "NtWriteFile" : "NtReadFile");
     if (!NT_SUCCESS(status))
         return status;
+    IopTakeWow64Iosb(file, &apc_routine, &iosb);
     /* scatter and gather i/o is for files with no buffering that do not serve one request at a time. */
     if (pages && ((file->Flags & FO_SYNCHRONOUS_IO) || !(file->Flags & FO_NO_INTERMEDIATE_BUFFERING))) {
         ObDereferenceObject(file);
@@ -802,6 +803,18 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
     status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
                              FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_OPEN_FOR_BACKUP_INTENT, KernelMode, TRUE);
+    /* the program of a feature on demand or an assembly of one, which a search looks at before anything opens it. */
+    if ((status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) && old == UserMode &&
+        !oa.RootDirectory) {
+        t->PreviousMode = old;
+        BOOLEAN arrived = ExFeatureFileFault(oa.ObjectName, TRUE);
+        t->PreviousMode = KernelMode;
+        if (arrived)
+            status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                     FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_OPEN_FOR_BACKUP_INTENT,
+                                     KernelMode, TRUE);
+    }
     if (NT_SUCCESS(status)) {
         PFILE_OBJECT file;
         status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&file, nullptr);
@@ -1036,6 +1049,7 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
+    IopTakeWow64Iosb(file, &routine, &iosb);
     /* sockets and game controllers read the caller's buffers themselves and may stay pending. */
     if (IopIsAfd(file))
         status = AfdDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
@@ -1043,6 +1057,10 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
         status = HttpDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else if (IopIsPad(file))
         status = PadDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
+    else if (IopIsNsi(file))
+        status = NsiDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
+    else if (IopIsNetbt(file))
+        status = NetbtDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
         status = buffered_control(file, IRP_MJ_DEVICE_CONTROL, event, apc_context, iosb, code, input, in_len, output,
                                   out_len);
@@ -1061,6 +1079,7 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
+    IopTakeWow64Iosb(file, &routine, &iosb);
     if (IopIsNamedPipe(file))
         status = NpfsFsControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
@@ -1085,6 +1104,8 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         HttpCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsPad(file))
         PadCancel(file, PsCurrentThread(), nullptr);
+    else if (IopIsNsi(file))
+        NsiCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsMimeFs(file)) {
         FsNotifyCancel(file, PsCurrentThread(), nullptr);
         FsLocksCancel(file, PsCurrentThread(), nullptr);
@@ -1110,6 +1131,8 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         status = HttpCancel(file, nullptr, request);
     else if (IopIsPad(file))
         status = PadCancel(file, nullptr, request);
+    else if (IopIsNsi(file))
+        status = NsiCancel(file, nullptr, request);
     else if (IopIsMimeFs(file)) {
         status = FsNotifyCancel(file, nullptr, request);
         NTSTATUS locks = FsLocksCancel(file, nullptr, request);
@@ -1121,5 +1144,73 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {{status}, 0};
     store_iosb(iosb, &io);
+    return status;
+}
+
+#define COPY_CHUNK_BUFFER (64 * 1024)
+
+/*
+ * the copy of a range of one file into another that kernelbase's CopyFile makes since windows 11 24h2: the bytes from
+ * the source offset to the destination offset, as reads and writes of the two files, done before it returns. a source
+ * that ends before the range answers what it had, and a range past its end the end of file.
+ */
+NTSTATUS NTAPI NtCopyFileChunk(HANDLE source, HANDLE dest, HANDLE event, PIO_STATUS_BLOCK iosb, ULONG length,
+                               PLARGE_INTEGER source_offset, PLARGE_INTEGER dest_offset, PULONG source_key,
+                               PULONG dest_key, ULONG flags)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    if (flags || !source_offset || !dest_offset)
+        return STATUS_INVALID_PARAMETER;
+    LARGE_INTEGER from, to;
+    NTSTATUS status = mode == UserMode ? KiCopyFromUser(&from, source_offset, sizeof(from))
+                                       : (from = *source_offset, STATUS_SUCCESS);
+    if (NT_SUCCESS(status))
+        status = mode == UserMode ? KiCopyFromUser(&to, dest_offset, sizeof(to)) : (to = *dest_offset, STATUS_SUCCESS);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (from.QuadPart < 0 || to.QuadPart < 0)
+        return STATUS_INVALID_PARAMETER;
+    PFILE_OBJECT in, out;
+    status = ObReferenceHandleFor(source, FILE_READ_DATA, IoFileObjectTypeObject, mode, &in);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandleFor(dest, FILE_WRITE_DATA, IoFileObjectTypeObject, mode, &out);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(in);
+        return status;
+    }
+    PUCHAR buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, COPY_CHUNK_BUFFER, KI_TAG('I', 'o', 'C', 'c'));
+    ULONG done = 0;
+    if (!buffer)
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    while (NT_SUCCESS(status) && done < length) {
+        ULONG want = length - done < COPY_CHUNK_BUFFER ? length - done : COPY_CHUNK_BUFFER, got = 0, put = 0;
+        status = IoReadFileObject(in, buffer, want, (ULONG64)from.QuadPart + done, &got);
+        if (status == STATUS_END_OF_FILE) {
+            status = done ? STATUS_SUCCESS : STATUS_END_OF_FILE;
+            break;
+        }
+        if (!NT_SUCCESS(status) || !got)
+            break;
+        status = IoWriteFileObject(out, buffer, got, (ULONG64)to.QuadPart + done, &put);
+        done += put;
+        if (NT_SUCCESS(status) && put < got)
+            status = STATUS_DISK_FULL;
+        if (got < want)
+            break;
+    }
+    if (buffer)
+        ExFreePool(buffer);
+    ObDereferenceObject(out);
+    ObDereferenceObject(in);
+    IO_STATUS_BLOCK io = {.Status = status, .Information = done};
+    store_iosb(iosb, &io);
+    if (event) {
+        PKEVENT ev;
+        if (NT_SUCCESS(ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, mode, &ev))) {
+            KeSetEvent(ev, 0, FALSE);
+            ObDereferenceObject(ev);
+        }
+    }
     return status;
 }

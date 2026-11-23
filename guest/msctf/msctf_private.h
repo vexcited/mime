@@ -7,9 +7,6 @@
 
 void *CtfAlloc(SIZE_T size);
 void CtfFree(void *p);
-void CtfTrace(const char *format, ...);
-extern BOOL g_ctf_trace;
-#define CTF_TRACE(...) do { if (g_ctf_trace) CtfTrace(__VA_ARGS__); } while (0)
 
 void CtfObjectCreated(void);
 void CtfObjectDestroyed(void);

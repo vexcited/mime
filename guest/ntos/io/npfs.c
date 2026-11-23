@@ -98,6 +98,7 @@ typedef struct NP_INSTANCE {
     ULONG ReadMode[2];       /* by end: server, client. */
     ULONG CompletionMode[2];
     ULONG ProcessId[2];      /* the process that opened each end. */
+    ULONG SessionId[2];      /* and its session. */
     struct _TOKEN *ClientToken; /* the identity the client end acts with, referenced. */
     ULONG ClientLevel;          /* the impersonation level the client opened with. */
     BOOLEAN ClientEffectiveOnly;
@@ -526,9 +527,14 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
-    if (!name.Length)
+    /*
+     * CreatePipe makes a pipe with no name below the handle of the file system, and opens its other end below the
+     * handle it got: no name finds such a pipe.
+     */
+    PFILE_OBJECT related = file->RelatedFileObject;
+    if (!name.Length && !(related && related->DeviceObject == file->DeviceObject && related->FsContext2 == END_ROOT))
         return STATUS_OBJECT_NAME_INVALID;
-    NP_PIPE *p = find_pipe(&name);
+    NP_PIPE *p = name.Length ? find_pipe(&name) : nullptr;
     if (p) {
         if (c->Disposition == FILE_CREATE)
             return STATUS_ACCESS_DENIED;
@@ -585,7 +591,14 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
     }
     memset(in, 0, sizeof(*in));
     in->Pipe = p;
-    in->State = FILE_PIPE_LISTENING_STATE;
+    /*
+     * NpCreateCcb of windows' npfs: an instance opened to read or write data listens from the start, one opened
+     * without, as rpcrt4 reserves the name of an endpoint with a handle that only synchronizes, waits disconnected and
+     * takes no client.
+     */
+    PIO_SECURITY_CONTEXT context = stack ? stack->Parameters.Create.SecurityContext : nullptr;
+    in->State = !context || (context->DesiredAccess & 0xF2000003) ? FILE_PIPE_LISTENING_STATE
+                                                                   : FILE_PIPE_DISCONNECTED_STATE;
     in->ServerOpen = TRUE;
     init_queue(&in->ToServer);
     init_queue(&in->ToClient);
@@ -594,6 +607,7 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[0] = c->CompletionMode;
     in->ProcessId[0] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->SessionId[0] = PsCurrentProcess()->SessionId;
     InsertTailList(&p->InstanceList, &in->Links);
     p->Instances++;
     file->FsContext = in;
@@ -751,6 +765,7 @@ static NTSTATUS open_host(PFILE_OBJECT file, PCUNICODE_STRING name, ULONG index)
     init_queue(&in->ToClient);
     InitializeListHead(&in->Listeners);
     in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->SessionId[1] = PsCurrentProcess()->SessionId;
     in->Host = (ULONG)sock;
     InsertTailList(&p->InstanceList, &in->Links);
     file->FsContext = in;
@@ -779,11 +794,17 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
 {
     UNICODE_STRING name;
     pipe_name(file, &name);
-    if (!name.Length) {
+    /* no name below the server end of a pipe is its other end, and anywhere else the file system itself. */
+    PFILE_OBJECT related = file->RelatedFileObject;
+    NP_INSTANCE *below = !name.Length && related && related->DeviceObject == file->DeviceObject &&
+                                 related->FsContext2 == END_SERVER
+                             ? related->FsContext
+                             : nullptr;
+    if (!name.Length && !below) {
         file->FsContext2 = END_ROOT;
         return STATUS_SUCCESS;
     }
-    NP_PIPE *p = find_pipe(&name);
+    NP_PIPE *p = below ? below->Pipe : find_pipe(&name);
     ULONG index;
     if (!p && discord_index(&name, &index))
         return open_host(file, &name, index);
@@ -798,8 +819,8 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     /* the handle still has the append right it asked for, the write end of CreatePipe is 0x120196 on windows. */
     if (context && context->Checked)
         context->GrantedAccess |= asked & FILE_CREATE_PIPE_INSTANCE;
-    NP_INSTANCE *in = listening_instance(p);
-    if (!in)
+    NP_INSTANCE *in = below ? below : listening_instance(p);
+    if (!in || in->State != FILE_PIPE_LISTENING_STATE || !in->ServerOpen)
         return STATUS_PIPE_NOT_AVAILABLE;
     in->State = FILE_PIPE_CONNECTED_STATE;
     in->ClientOpen = TRUE;
@@ -807,6 +828,7 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[1] = FILE_PIPE_QUEUE_OPERATION;
     in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->SessionId[1] = PsCurrentProcess()->SessionId;
     /* a server impersonates the identity the client opened with, at the level it allowed. */
     PETHREAD client = PsCurrentThread();
     in->ClientToken = SepReferenceEffectiveToken(client);
@@ -1084,7 +1106,11 @@ NTSTATUS NTAPI NtCreateNamedPipeFile(PHANDLE handle, ACCESS_MASK access, POBJECT
 {
     if (disposition != FILE_CREATE && disposition != FILE_OPEN && disposition != FILE_OPEN_IF)
         return STATUS_INVALID_PARAMETER;
-    if (type > FILE_PIPE_MESSAGE_TYPE || read_mode > FILE_PIPE_MESSAGE_MODE ||
+    /* the type carries FILE_PIPE_REJECT_REMOTE_CLIENTS beside the kind of pipe: no client here is remote. */
+    if (type & ~(FILE_PIPE_MESSAGE_TYPE | 2u))
+        return STATUS_INVALID_PARAMETER;
+    type &= FILE_PIPE_MESSAGE_TYPE;
+    if (read_mode > FILE_PIPE_MESSAGE_MODE ||
         (read_mode == FILE_PIPE_MESSAGE_MODE && type == FILE_PIPE_BYTE_STREAM_TYPE))
         return STATUS_INVALID_PARAMETER;
     NP_CREATE c = {type, read_mode, completion_mode, max_instances == 0xFFFFFFFF ? 0xFFFFFFFF : max_instances, in_quota,
@@ -1462,19 +1488,26 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         }
     case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:
     case FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE: {
-        /* the processes and sessions of the two ends, queried by name. */
+        /*
+         * the processes and sessions of the two ends, queried by name. a local client has no computer name, so that
+         * one is not found, as any name npfs does not keep.
+         */
         char name[32] = {};
         ULONG value = 0;
         status = in_len && in_len < sizeof(name) ? KiCopyFromUser(name, input, in_len) : STATUS_INVALID_PARAMETER;
+        if (NT_SUCCESS(status) && name[in_len - 1])
+            status = STATUS_INVALID_PARAMETER;
         if (NT_SUCCESS(status)) {
             if (!strcmp(name, "ClientProcessId"))
                 value = in->ProcessId[1];
             else if (!strcmp(name, "ServerProcessId"))
                 value = in->ProcessId[0];
-            else if (!strcmp(name, "ClientSessionId") || !strcmp(name, "ServerSessionId"))
-                value = 1;
+            else if (!strcmp(name, "ClientSessionId"))
+                value = in->SessionId[1];
+            else if (!strcmp(name, "ServerSessionId"))
+                value = in->SessionId[0];
             else
-                status = STATUS_INVALID_PARAMETER;
+                status = STATUS_NOT_FOUND;
         }
         if (NT_SUCCESS(status))
             status = out_len < sizeof(value) ? STATUS_BUFFER_TOO_SMALL : KiCopyToUser(output, &value, sizeof(value));

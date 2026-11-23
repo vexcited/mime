@@ -1,0 +1,6 @@
+; sensapi.dll: the connectivity checks of the system event notification service.
+LIBRARY sensapi.dll
+EXPORTS
+    IsDestinationReachableA
+    IsDestinationReachableW
+    IsNetworkAlive

@@ -1,0 +1,16 @@
+STRINGTABLE
+BEGIN
+    100 "Workstation"
+    101 "Creates and maintains client network connections to remote servers using the SMB protocol. If this service is stopped, these connections will be unavailable. If this service is disabled, any services that explicitly depend on it will fail to start."
+    102 "Microsoft Windows Network"
+    103 "Allow your machine to go to sleep when files opened remotely have not been written to."
+    104 "Allow sleep with remote opens"
+    1000 "Redirected Buffering Sub System"
+    1001 "Provides the framework for network mini-redirectors"
+    1002 "SMB MiniRedirector Wrapper and Engine"
+    1003 "Implements the framework for the SMB filesystem redirector"
+    1006 "SMB 2.0 MiniRedirector"
+    1007 "Implements the SMB 2.0 protocol, which provides connectivity to network resources on Windows Vista and later servers"
+    2000 "NT Lan Manager Datagram Receiver Driver"
+    2001 "Browser"
+END

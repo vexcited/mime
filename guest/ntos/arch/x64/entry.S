@@ -86,8 +86,7 @@ KiAcquireKernelLock:
     jz      6f
     decl    %r10d
     jnz     3b
-    cmpq    $0, KiKernelLockPhys(%rip)
-    je      2b
+    jmp     2b                  /* pure spin: the word wait hypercall is suspect under contention */
     lock incl LOCK_SLEEPERS(%r8)
     movl    (%r8), %eax
     testb   $1, %al
@@ -143,8 +142,6 @@ KiAcquireKernelLock:
      */
 8:  testb   $KPCR_FLUSH_USER, %gs:KPCR_FLUSH_PENDING
     jz      9f
-    cmpb    $0, KiNoLockFlush(%rip)
-    jne     9f
     movb    $0, %gs:KPCR_FLUSH_PENDING
     movq    %cr3, %rax
     movq    %rax, %cr3
@@ -300,6 +297,39 @@ KiFlushIpi:
 .endm
 
 /*
+ * the return to user mode of a frame the syscall instruction made, rip in rcx and the flags in r11, is a sysretq:
+ * anything else, a frame whose rip or flags were changed, a trap flag, another segment or an address that is not
+ * canonical, which sysretq would fault on in kernel mode, takes the iretq. ss is loaded first as amd parts keep a
+ * null ss unusable through sysretq, which the 32-bit code of wow64 would fault on.
+ */
+.macro RETURN_TO_USER
+    movq    KTRAP_RIP(%rsp), %rax
+    cmpq    %rax, KTRAP_RCX(%rsp)
+    jne     8f
+    shrq    $47, %rax
+    jnz     8f
+    movq    KTRAP_RFLAGS(%rsp), %rax
+    cmpq    %rax, KTRAP_R11(%rsp)
+    jne     8f
+    testl   $0x10100, %eax
+    jnz     8f
+    cmpq    $(KGDT64_R3_CODE | RPL_USER), KTRAP_CS(%rsp)
+    jne     8f
+    cmpq    $(KGDT64_R3_DATA | RPL_USER), KTRAP_SS(%rsp)
+    jne     8f
+    movl    $KGDT64_R0_DATA, %eax
+    movl    %eax, %ss
+    RESTORE_GPRS
+    movq    KTRAP_RSP(%rsp), %rsp
+    swapgs
+    sysretq
+8:  RESTORE_GPRS
+    addq    $KTRAP_RIP, %rsp
+    swapgs
+    iretq
+.endm
+
+/*
  * syscall from user mode: rcx = return rip, r11 = rflags, interrupts off.
  * the frame is built where the hardware would push one, at KPCR.KernelRsp.
  */
@@ -356,10 +386,7 @@ KiFastServiceExit:
     call    KiSettleTlbFlush
     movq    %rbx, %rsp
 1:  RESTORE_XMM
-    RESTORE_GPRS
-    addq    $KTRAP_RIP, %rsp
-    swapgs
-    iretq
+    RETURN_TO_USER
 
 /*
  * BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value), BOOLEAN KiFastWriteUser32(void *address, ULONG
@@ -423,6 +450,54 @@ KiIsrBase:
     ISR     vec
     .set    vec, vec + 1
     .endr
+
+/*
+ * the debug trap, on a stack of its own. a load of ss holds back the trap of a data breakpoint on the selector for
+ * one instruction, and when that instruction enters the kernel, int3, a fault or syscall, the trap arrives on the
+ * first instruction of the entry: in kernel mode, before swapgs, and for syscall on the stack of the program.
+ * such a trap is returned from at once and dr6 keeps what it was for, which the exception the entry is for reports,
+ * as windows does. any other trap in kernel mode is a breakpoint of the program on memory the kernel touched:
+ * dr6 is reset and the program never sees it. a trap from user mode moves to the stack of the thread and goes the
+ * usual way.
+ */
+    .globl  KiDebugTrap
+    .p2align 4
+KiDebugTrap:
+    testb   $RPL_USER, 8(%rsp)
+    jnz     2f
+    pushq   %rax
+    pushq   %rcx
+    movq    16(%rsp), %rax
+    leaq    KiIsrBase(%rip), %rcx
+    subq    %rcx, %rax
+    cmpq    $(256 * 16), %rax
+    jb      1f
+    movq    16(%rsp), %rax
+    leaq    KiSystemCall64(%rip), %rcx
+    cmpq    %rcx, %rax
+    je      1f
+    movl    $0xFFFF0FF0, %eax
+    movq    %rax, %dr6
+1:  popq    %rcx
+    popq    %rax
+    iretq
+2:  swapgs
+    pushq   %rax
+    pushq   %rcx
+    movq    %rsp, %rcx
+    movq    %gs:KPCR_TSS, %rax
+    movq    KTSS_RSP0(%rax), %rsp
+    pushq   48(%rcx)                /* ss */
+    pushq   40(%rcx)                /* rsp */
+    pushq   32(%rcx)                /* rflags */
+    pushq   24(%rcx)                /* cs */
+    pushq   16(%rcx)                /* rip */
+    movq    8(%rcx), %rax
+    movq    0(%rcx), %rcx
+    swapgs
+    pushq   $0
+    pushq   $1
+    jmp     KiTrapCommon
 
 /*
  * common entry: the processor pushed ss, rsp, rflags, cs, rip, the stub an
@@ -602,10 +677,7 @@ KiExceptionExit:
     call    KiReleaseKernelLock
     movq    %rbx, %rsp
     RESTORE_XMM
-    RESTORE_GPRS
-    addq    $KTRAP_RIP, %rsp
-    swapgs
-    iretq
+    RETURN_TO_USER
 
 2:  testl   $KTRAP_FLAG_LOCK_TAKEN, KTRAP_FLAGS(%rsp)
     jz      3f

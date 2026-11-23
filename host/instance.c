@@ -40,6 +40,8 @@ static void read_holder(int fd, MimeInstanceHolder *holder)
 
 static int open_lock(const MimePaths *paths)
 {
+    if (!mime_dir_exists(paths->runtime) && !mime_mkdir_p(paths->runtime, 0700))
+        mime_error("cannot create %s: %s", paths->runtime, strerror(errno));
     int fd = open(paths->lockfile, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0)
         mime_error("cannot open %s: %s", paths->lockfile, strerror(errno));

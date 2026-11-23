@@ -26,12 +26,14 @@
           pkgs.cmake
           pkgs.ninja
           pkgs.pkg-config
+          pkgs.wayland-scanner
           llvm.llvm
           llvm.lld
         ];
         buildInputs = [
-          pkgs.sdl3
           pkgs.wayland
+          pkgs.libxkbcommon
+          pkgs.pipewire
           pkgs.curl
           pkgs.systemdLibs
         ];

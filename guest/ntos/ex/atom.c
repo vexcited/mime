@@ -136,18 +136,9 @@ static NTSTATUS store_atom(PUSHORT user_atom, USHORT atom)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS add_atom(PWSTR user_name, ULONG length, PUSHORT user_atom)
+/* a reference on the atom of a name, made when there is none: 0 when the table is full. */
+static USHORT add_named(const WCHAR *name, ULONG chars)
 {
-    WCHAR name[MAX_NAME];
-    ULONG chars;
-    NTSTATUS status = capture(user_name, length, name, &chars);
-    if (!NT_SUCCESS(status))
-        return status;
-    USHORT atom;
-    if (integer_atom(name, chars, &atom, &status))
-        return NT_SUCCESS(status) ? store_atom(user_atom, atom) : status;
-    if (!chars)
-        return STATUS_INVALID_PARAMETER;
     ATOM_TABLE *t = table_of_caller();
     lock();
     int index = lookup(t, name, chars);
@@ -161,12 +152,12 @@ static NTSTATUS add_atom(PWSTR user_name, ULONG length, PUSHORT user_atom)
                 index = (int)i;
         if (index < 0) {
             unlock();
-            return STATUS_INSUFFICIENT_RESOURCES;
+            return 0;
         }
         if (!t->Atoms[index] &&
             !(t->Atoms[index] = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATOM_ENTRY), KI_TAG('A', 't', 'o', 'm')))) {
             unlock();
-            return STATUS_INSUFFICIENT_RESOURCES;
+            return 0;
         }
         ATOM_ENTRY *e = t->Atoms[index];
         e->Count = 1;
@@ -176,7 +167,23 @@ static NTSTATUS add_atom(PWSTR user_name, ULONG length, PUSHORT user_atom)
         t->Used++;
     }
     unlock();
-    return store_atom(user_atom, (USHORT)(FIRST_STRING_ATOM + index));
+    return (USHORT)(FIRST_STRING_ATOM + index);
+}
+
+static NTSTATUS add_atom(PWSTR user_name, ULONG length, PUSHORT user_atom)
+{
+    WCHAR name[MAX_NAME];
+    ULONG chars;
+    NTSTATUS status = capture(user_name, length, name, &chars);
+    if (!NT_SUCCESS(status))
+        return status;
+    USHORT atom;
+    if (integer_atom(name, chars, &atom, &status))
+        return NT_SUCCESS(status) ? store_atom(user_atom, atom) : status;
+    if (!chars)
+        return STATUS_INVALID_PARAMETER;
+    atom = add_named(name, chars);
+    return atom ? store_atom(user_atom, atom) : STATUS_INSUFFICIENT_RESOURCES;
 }
 
 NTSTATUS NTAPI NtAddAtom(PWSTR name, ULONG length, PUSHORT atom)
@@ -222,6 +229,15 @@ USHORT NTAPI MimeFindGlobalAtom(PCWSTR name)
     int index = lookup(t, name, chars);
     unlock();
     return index < 0 ? 0 : (USHORT)(FIRST_STRING_ATOM + index);
+}
+
+/* for win32k, whose SetProp of a name makes the atom itself. */
+USHORT NTAPI MimeAddGlobalAtom(PCWSTR name)
+{
+    ULONG chars = (ULONG)wcslen(name);
+    if (!chars || chars > MAX_NAME)
+        return 0;
+    return add_named(name, chars);
 }
 
 /* drops one reference; the last frees the atom unless pinned. integer atoms are never stored. */

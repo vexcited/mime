@@ -65,7 +65,7 @@ EXPORTS
     WinStationGetAllUserSessions=WinStationUnsupported
     WinStationGetChildSessionId=WinStationUnsupported
     WinStationGetConnectionProperty=WinStationUnsupported
-    WinStationGetCurrentSessionCapabilities=WinStationUnsupported
+    WinStationGetCurrentSessionCapabilities
     WinStationGetCurrentSessionConnectionProperty=WinStationUnsupported
     WinStationGetCurrentSessionTerminalName=WinStationUnsupported
     WinStationGetDeviceId=WinStationUnsupported
@@ -105,8 +105,8 @@ EXPORTS
     WinStationQueryAllowConcurrentConnections=WinStationUnsupported
     WinStationQueryCurrentSessionInformation=WinStationUnsupported
     WinStationQueryEnforcementCore=WinStationUnsupported
-    WinStationQueryInformationA=WinStationUnsupported
-    WinStationQueryInformationW=WinStationUnsupported
+    WinStationQueryInformationA=WinStationQueryInformationW
+    WinStationQueryInformationW
     WinStationQueryLicense=WinStationUnsupported
     WinStationQueryLogonCredentialsW=WinStationUnsupported
     WinStationQuerySessionVirtualIP=WinStationUnsupported
@@ -121,7 +121,7 @@ EXPORTS
     WinStationRegisterConsoleNotification=WinStationUnsupported
     WinStationRegisterConsoleNotificationEx=WinStationUnsupported
     WinStationRegisterConsoleNotificationEx2=WinStationUnsupported
-    WinStationRegisterCurrentSessionNotificationEvent=WinStationUnsupported
+    WinStationRegisterCurrentSessionNotificationEvent
     WinStationRegisterNotificationEvent=WinStationUnsupported
     WinStationRegisterSessionNotification=WinStationUnsupported
     WinStationRegisterSessionNotificationEx=WinStationUnsupported
@@ -153,7 +153,7 @@ EXPORTS
     WinStationTerminateGlassReplacementSession=WinStationUnsupported
     WinStationTerminateProcess=WinStationUnsupported
     WinStationUnRegisterConsoleNotification=WinStationUnsupported
-    WinStationUnRegisterNotificationEvent=WinStationUnsupported
+    WinStationUnRegisterNotificationEvent
     WinStationUnRegisterSessionNotification=WinStationUnsupported
     WinStationUserLoginAccessCheck=WinStationUnsupported
     WinStationVerify

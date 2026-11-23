@@ -33,6 +33,7 @@ EXPORTS
     InitSecurityInterfaceW=SECUR32.InitSecurityInterfaceW
     InitializeSecurityContextA=SECUR32.InitializeSecurityContextA
     InitializeSecurityContextW=SECUR32.InitializeSecurityContextW
+    LogonUserExExW=_LogonUserExExW@44
     LsaCallAuthenticationPackage=SECUR32.LsaCallAuthenticationPackage
     LsaConnectUntrusted=SECUR32.LsaConnectUntrusted
     LsaDeregisterLogonProcess=SECUR32.LsaDeregisterLogonProcess
@@ -46,6 +47,8 @@ EXPORTS
     LsaUnregisterPolicyChangeNotification=SECUR32.LsaUnregisterPolicyChangeNotification
     MakeSignature=SECUR32.MakeSignature
     QueryContextAttributesA=SECUR32.QueryContextAttributesA
+    QueryContextAttributesExA=SECUR32.QueryContextAttributesExA
+    QueryContextAttributesExW=SECUR32.QueryContextAttributesExW
     QueryContextAttributesW=SECUR32.QueryContextAttributesW
     QueryCredentialsAttributesA=SECUR32.QueryCredentialsAttributesA
     QueryCredentialsAttributesW=SECUR32.QueryCredentialsAttributesW
@@ -65,6 +68,10 @@ EXPORTS
     SaslInitializeSecurityContextW=SECUR32.SaslInitializeSecurityContextW
     SaslSetContextOption=SECUR32.SaslSetContextOption
     SealMessage=SECUR32.SealMessage
+    SeciAllocateAndSetCallFlags=SECUR32.SeciAllocateAndSetCallFlags
+    SeciAllocateAndSetCallTarget=SECUR32.SeciAllocateAndSetCallTarget
+    SeciAllocateAndSetIPAddress=SECUR32.SeciAllocateAndSetIPAddress
+    SeciFreeCallContext=SECUR32.SeciFreeCallContext
     SetContextAttributesA=SECUR32.SetContextAttributesA
     SetContextAttributesW=SECUR32.SetContextAttributesW
     SetCredentialsAttributesA=SECUR32.SetCredentialsAttributesA

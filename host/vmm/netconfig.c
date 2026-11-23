@@ -26,6 +26,7 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/wireless.h>
+#include <sys/stat.h>
 #endif
 
 #define WIN_AF_INET 2
@@ -171,6 +172,14 @@ static void read_links(Config *c)
         if (data) {
             l->mtu = data->ifi_mtu;
             l->speed = data->ifi_baudrate;
+            l->rx_bytes = data->ifi_ibytes;
+            l->rx_packets = data->ifi_ipackets;
+            l->rx_multicast = data->ifi_imcasts;
+            l->rx_errors = data->ifi_ierrors;
+            l->rx_dropped = data->ifi_iqdrops;
+            l->tx_bytes = data->ifi_obytes;
+            l->tx_packets = data->ifi_opackets;
+            l->tx_errors = data->ifi_oerrors;
         }
         if (ifa->ifa_flags & IFF_LOOPBACK)
             l->type = MIME_NET_LINK_LOOPBACK;
@@ -463,6 +472,18 @@ static void each_link(Config *c, const struct nlmsghdr *h)
                  m->ifi_type != ARPHRD_LOOPBACK) {
             l->mac_length = (uint8_t)size;
             memcpy(l->mac, RTA_DATA(a), size);
+        } else if (a->rta_type == IFLA_STATS64 && size >= sizeof(struct rtnl_link_stats64)) {
+            struct rtnl_link_stats64 stats;
+            memcpy(&stats, RTA_DATA(a), sizeof(stats));
+            l->rx_bytes = stats.rx_bytes;
+            l->rx_packets = stats.rx_packets;
+            l->rx_multicast = stats.multicast;
+            l->rx_errors = stats.rx_errors;
+            l->rx_dropped = stats.rx_dropped;
+            l->tx_bytes = stats.tx_bytes;
+            l->tx_packets = stats.tx_packets;
+            l->tx_errors = stats.tx_errors;
+            l->tx_dropped = stats.tx_dropped;
         }
     }
     if (!l->name[0])
@@ -526,9 +547,98 @@ static void each_link(Config *c, const struct nlmsghdr *h)
     }
 }
 
+/* the value of a "key=value" line of a file, false when the file or the key is not there. */
+static bool file_value(const char *path, const char *key, char *out, size_t size)
+{
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return false;
+    char line[512];
+    size_t length = strlen(key);
+    bool found = false;
+    while (!found && fgets(line, sizeof(line), f)) {
+        if (strncmp(line, key, length) || line[length] != '=')
+            continue;
+        line[strcspn(line, "\r\n")] = 0;
+        mime_strlcpy(out, line + length + 1, size);
+        found = true;
+    }
+    fclose(f);
+    return found;
+}
+
+static int64_t file_time(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 ? (int64_t)st.st_mtime : 0;
+}
+
+/*
+ * the DHCP lease of a link, from whichever client the host runs. NetworkManager keeps the options of the lease in
+ * /run/NetworkManager/devices/<index>, with the time it ends. systemd-networkd writes
+ * /run/systemd/netif/leases/<index> when it takes the lease, and dhcpcd keeps the last packet of the server in
+ * /var/lib/dhcpcd/<name>.lease. a link none of them leased keeps its zeros.
+ */
+static void read_lease(MimeNetLink *l)
+{
+    char path[128], server[64] = "", lease[32] = "", expiry[32] = "";
+    struct in_addr address;
+    snprintf(path, sizeof(path), "/run/NetworkManager/devices/%u", l->index);
+    if (file_value(path, "dhcp4.dhcp_server_identifier", server, sizeof(server)) &&
+        file_value(path, "dhcp4.dhcp_lease_time", lease, sizeof(lease)) && inet_pton(AF_INET, server, &address) == 1) {
+        memcpy(l->dhcp_server, &address, 4);
+        l->dhcp_lease = (uint32_t)strtoul(lease, nullptr, 10);
+        if (file_value(path, "dhcp4.expiry", expiry, sizeof(expiry))) {
+            uint64_t ends = strtoull(expiry, nullptr, 10);
+            l->dhcp_obtained = ends > l->dhcp_lease ? ends - l->dhcp_lease : 0;
+        }
+        return;
+    }
+    snprintf(path, sizeof(path), "/run/systemd/netif/leases/%u", l->index);
+    if (file_value(path, "SERVER_ADDRESS", server, sizeof(server)) && inet_pton(AF_INET, server, &address) == 1) {
+        memcpy(l->dhcp_server, &address, 4);
+        if (file_value(path, "LIFETIME", lease, sizeof(lease)))
+            l->dhcp_lease = (uint32_t)strtoul(lease, nullptr, 10);
+        l->dhcp_obtained = (uint64_t)file_time(path);
+        return;
+    }
+    snprintf(path, sizeof(path), "/var/lib/dhcpcd/%s.lease", l->name);
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return;
+    uint8_t packet[1500];
+    size_t size = fread(packet, 1, sizeof(packet), f);
+    fclose(f);
+    /* a BOOTP packet: the options follow the magic cookie at 236, each a code, a length and its bytes. */
+    if (size < 240 || memcmp(packet + 236, "\x63\x82\x53\x63", 4))
+        return;
+    for (size_t at = 240; at + 2 <= size && packet[at] != 255;) {
+        if (!packet[at]) {
+            at++;
+            continue;
+        }
+        uint8_t code = packet[at], length = packet[at + 1];
+        if (at + 2 + length > size)
+            break;
+        if (code == 54 && length == 4)
+            memcpy(l->dhcp_server, packet + at + 2, 4);
+        else if (code == 51 && length == 4)
+            l->dhcp_lease = (uint32_t)packet[at + 2] << 24 | (uint32_t)packet[at + 3] << 16 | (uint32_t)packet[at + 4] << 8 |
+                            packet[at + 5];
+        at += 2 + (size_t)length;
+    }
+    if (l->dhcp_server[0] || l->dhcp_server[1] || l->dhcp_server[2] || l->dhcp_server[3])
+        l->dhcp_obtained = (uint64_t)file_time(path);
+    else
+        l->dhcp_lease = 0;
+}
+
 static void read_links(Config *c)
 {
     netlink_dump(c, RTM_GETLINK, AF_UNSPEC, each_link);
+    for (uint32_t i = 0; i < c->head.links; i++)
+        if (!(c->links[i].flags & MIME_NET_IF_LOOPBACK))
+            read_lease(&c->links[i]);
 }
 
 static void read_addresses(Config *c)

@@ -220,8 +220,6 @@ EXPORTS
     GetClassInfoExW@12
     GetClassInfoW@12
     GetClassLongA@8
-    GetClassLongPtrA@8
-    GetClassLongPtrW@8
     GetClassLongW@8
     GetClassNameA@12
     GetClassNameW@12
@@ -354,15 +352,12 @@ EXPORTS
     GetWindow@8
     GetWindowContextHelpId@4
     GetWindowDC@4
-    GetWindowDPI@4
     GetWindowDisplayAffinity@8
     GetWindowDpiAwarenessContext@4
     GetWindowDpiHostingBehavior@4
     GetWindowFeedbackSetting@20
     GetWindowInfo@8
     GetWindowLongA@8
-    GetWindowLongPtrA@8
-    GetWindowLongPtrW@8
     GetWindowLongW@8
     GetWindowPlacement@8
     GetWindowRect@8
@@ -552,8 +547,6 @@ EXPORTS
     SetCaretBlinkTime@4
     SetCaretPos@8
     SetClassLongA@12
-    SetClassLongPtrA@12
-    SetClassLongPtrW@12
     SetClassLongW@12
     SetClassWord@12
     SetClipboardData@8
@@ -606,8 +599,6 @@ EXPORTS
     SetWindowDisplayAffinity@8
     SetWindowFeedbackSetting@20
     SetWindowLongA@12
-    SetWindowLongPtrA@12
-    SetWindowLongPtrW@12
     SetWindowLongW@12
     SetWindowPlacement@8
     SetWindowPos@28

@@ -595,6 +595,15 @@ static IPH_SNAPSHOT *build(void)
         a->up = a->admin_up && (l->Flags & MIME_AFD_IF_RUNNING);
         a->mtu = l->Mtu ? l->Mtu : 1500;
         a->speed = a->up ? l->Speed : 0;
+        a->rx_bytes = l->RxBytes;
+        a->rx_packets = l->RxPackets;
+        a->rx_multicast = l->RxMulticast <= l->RxPackets ? l->RxMulticast : l->RxPackets;
+        a->rx_errors = l->RxErrors;
+        a->rx_dropped = l->RxDropped;
+        a->tx_bytes = l->TxBytes;
+        a->tx_packets = l->TxPackets;
+        a->tx_errors = l->TxErrors;
+        a->tx_dropped = l->TxDropped;
         a->mac_length = l->MacLength <= 8 ? l->MacLength : 8;
         memcpy(a->mac, l->Mac, a->mac_length);
         const char *kind;

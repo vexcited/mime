@@ -58,6 +58,41 @@ BOOL is_root(PCWSTR id)
     return !lstrcmpiW(id, ROOT_ID);
 }
 
+#ifdef __i386__
+/*
+ * a 32-bit process runs on the wow64 layer of windows, which answers NtPlugPlayControl with STATUS_NOT_IMPLEMENTED:
+ * the request goes to the device of the plug and play manager as a control.
+ */
+static NTSTATUS control(MIME_PNP_CLASS klass, MIME_PNP_REQUEST *r, ULONG size)
+{
+    static HANDLE device;
+    if (!device) {
+        UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\DeviceApi\\CMApi");
+        OBJECT_ATTRIBUTES attributes;
+        InitializeObjectAttributes(&attributes, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+        IO_STATUS_BLOCK iosb;
+        HANDLE opened;
+        /* not a synchronous handle: the wait for a change of one thread must not hold the requests of the others. */
+        NTSTATUS status = NtOpenFile(&opened, FILE_READ_DATA | FILE_WRITE_DATA, &attributes, &iosb,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE, 0);
+        if (!NT_SUCCESS(status))
+            return status;
+        if (InterlockedCompareExchangePointer(&device, opened, nullptr))
+            NtClose(opened);
+    }
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtDeviceIoControlFile(device, nullptr, nullptr, nullptr, &iosb, MIME_PNP_CONTROL(klass), r, size, r, size);
+    if (NT_SUCCESS(status) && r->Flags == MIME_PNP_TOO_SMALL)
+        status = STATUS_BUFFER_TOO_SMALL;
+    return status;
+}
+#else
+static NTSTATUS control(MIME_PNP_CLASS klass, MIME_PNP_REQUEST *r, ULONG size)
+{
+    return NtPlugPlayControl(klass, r, size);
+}
+#endif
+
 /* the caller frees *out. */
 NTSTATUS request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCWSTR in, MIME_PNP_REQUEST **out)
 {
@@ -72,7 +107,7 @@ NTSTATUS request(MIME_PNP_CLASS klass, ULONG flags, const GUID *guid, PCWSTR in,
             r->Class = *guid;
         if (in)
             lstrcpynW(r->Instance, in, RTL_NUMBER_OF(r->Instance));
-        NTSTATUS status = NtPlugPlayControl(klass, r, size);
+        NTSTATUS status = control(klass, r, size);
         if (status == STATUS_BUFFER_TOO_SMALL && r->OutChars > chars) {
             chars = r->OutChars;
             HeapFree(GetProcessHeap(), 0, r);
@@ -125,8 +160,15 @@ CMAPI CONFIGRET WINAPI CM_Locate_DevNodeW(PDEVINST devinst, PCWSTR id, ULONG fla
         HKEY key = is_root(id) ? nullptr : open_enum(id, KEY_READ);
         if (!key && !is_root(id))
             return CR_NO_SUCH_DEVNODE;
-        if (key)
+        if (key) {
+            /* measured on windows 11: the key CM_Create_DevNode leaves for a phantom is not found, it has the value */
+            /* Phantom and only the handle of the creation leads to it. */
+            DWORD phantom = 0, bytes = sizeof(phantom);
+            RegQueryValueExW(key, L"Phantom", nullptr, nullptr, (BYTE *)&phantom, &bytes);
             RegCloseKey(key);
+            if (phantom && !present(id))
+                return CR_NO_SUCH_DEVNODE;
+        }
     }
     *devinst = node_of(id);
     return *devinst ? CR_SUCCESS : CR_OUT_OF_MEMORY;
@@ -170,7 +212,11 @@ static CONFIGRET related(PDEVINST out, DEVINST devinst, ULONG relation)
     }
     NTSTATUS status = request(MIME_PNP_RELATED, relation, nullptr, id, &r);
     if (!NT_SUCCESS(status)) {
-        if (relation == MIME_PNP_PARENT && present(id)) {
+        /* a device that is only a key of the registry hangs under the root, as windows answers for a phantom. */
+        HKEY key = relation == MIME_PNP_PARENT && !present(id) ? open_enum(id, KEY_READ) : nullptr;
+        if (key)
+            RegCloseKey(key);
+        if (relation == MIME_PNP_PARENT && (key || present(id))) {
             *out = node_of(ROOT_ID);
             return CR_SUCCESS;
         }
@@ -438,6 +484,71 @@ BOOL parse_guid(PCWSTR text, GUID *out)
     return TRUE;
 }
 
+static BOOL class_listed(const GUID *list, ULONG count, const GUID *klass)
+{
+    for (ULONG i = 0; i < count; i++)
+        if (!memcmp(&list[i], klass, sizeof(GUID)))
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * the classes are the keys of the registry that are named by a guid: setup classes, or interface classes with flag 1.
+ * the class of an interface a driver enabled is one too, whether or not a key was written for it: on windows the
+ * plug and play manager writes that key when the interface is registered.
+ */
+CMAPI CONFIGRET WINAPI CM_Enumerate_Classes(ULONG index, GUID *guid, ULONG flags)
+{
+    if (!guid)
+        return CR_INVALID_POINTER;
+    if (flags > 1)
+        return CR_INVALID_FLAG;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                      flags ? L"SYSTEM\\CurrentControlSet\\Control\\DeviceClasses"
+                            : L"SYSTEM\\CurrentControlSet\\Control\\Class",
+                      0, KEY_ENUMERATE_SUB_KEYS, &key))
+        return CR_REGISTRY_ERROR;
+    ULONG room = 256, seen = 0;
+    GUID *classes = HeapAlloc(GetProcessHeap(), 0, room * sizeof(GUID));
+    if (!classes) {
+        RegCloseKey(key);
+        return CR_OUT_OF_MEMORY;
+    }
+    for (DWORD i = 0; seen < room; i++) {
+        WCHAR name[64];
+        DWORD length = ARRAYSIZE(name);
+        LONG error = RegEnumKeyExW(key, i, name, &length, nullptr, nullptr, nullptr, nullptr);
+        if (error == ERROR_NO_MORE_ITEMS)
+            break;
+        GUID parsed;
+        if (error || !parse_guid(name, &parsed))
+            continue;
+        classes[seen++] = parsed;
+    }
+    RegCloseKey(key);
+    MIME_PNP_REQUEST *r;
+    if (flags && NT_SUCCESS(request(MIME_PNP_LIST_INTERFACES, 1, nullptr, nullptr, &r))) {
+        for (PCWSTR p = r->Out; *p && seen < room; p += lstrlenW(p) + 1) {
+            PCWSTR brace = nullptr;
+            for (PCWSTR q = p; *q; q++)
+                if (*q == L'{')
+                    brace = q;
+            GUID parsed;
+            if (brace && parse_guid(brace, &parsed) && !class_listed(classes, seen, &parsed))
+                classes[seen++] = parsed;
+        }
+        HeapFree(GetProcessHeap(), 0, r);
+    }
+    CONFIGRET result = CR_NO_SUCH_VALUE;
+    if (index < seen) {
+        *guid = classes[index];
+        result = CR_SUCCESS;
+    }
+    HeapFree(GetProcessHeap(), 0, classes);
+    return result;
+}
+
 CMAPI CONFIGRET WINAPI CM_Get_DevNode_PropertyW(DEVINST devinst, const DEVPROPKEY *key, DEVPROPTYPE *type,
                                                 PBYTE buffer, PULONG size, ULONG flags)
 {
@@ -507,15 +618,6 @@ CMAPI CONFIGRET WINAPI CM_Get_DevNode_PropertyW(DEVINST devinst, const DEVPROPKE
 
 /* ------------------------------------------------------------------ interfaces */
 
-static CONFIGRET interface_list(GUID *klass, PCWSTR device, MIME_PNP_REQUEST **out)
-{
-    if (!klass)
-        return CR_INVALID_POINTER;
-    if (device && device[0] && !present(device))
-        return CR_INVALID_DEVICE_ID;
-    return NT_SUCCESS(request(MIME_PNP_LIST_INTERFACES, 0, klass, device, out)) ? CR_SUCCESS : CR_FAILURE;
-}
-
 static ULONG multi_length(PCWSTR s)
 {
     ULONG n = 0;
@@ -524,18 +626,58 @@ static ULONG multi_length(PCWSTR s)
     return n + 1;
 }
 
+/*
+ * the links of a class as a multi-sz the caller frees: the ones drivers have enabled, which the kernel lists, and
+ * with CM_GET_DEVICE_INTERFACE_LIST_ALL_DEVICES the ones that are only registered.
+ */
+static CONFIGRET interface_list(GUID *klass, PCWSTR device, ULONG flags, WCHAR **out, ULONG *chars)
+{
+    if (!klass)
+        return CR_INVALID_POINTER;
+    BOOL all = (flags & CM_GET_DEVICE_INTERFACE_LIST_ALL_DEVICES) != 0;
+    if (device && device[0] && !present(device)) {
+        HKEY key = all ? open_enum(device, KEY_READ) : nullptr;
+        if (!key)
+            return CR_INVALID_DEVICE_ID;
+        RegCloseKey(key);
+    }
+    MIME_PNP_REQUEST *r = nullptr;
+    if (!NT_SUCCESS(request(MIME_PNP_LIST_INTERFACES, 0, klass, device, &r)))
+        r = nullptr;
+    ULONG live = r ? multi_length(r->Out) - 1 : 0, extra = 0;
+    WCHAR *registered = all ? registered_interfaces(klass, device, &extra) : nullptr;
+    WCHAR *list = HeapAlloc(GetProcessHeap(), 0, (live + extra + 1) * sizeof(WCHAR));
+    if (list) {
+        if (live)
+            memcpy(list, r->Out, live * sizeof(WCHAR));
+        if (extra)
+            memcpy(list + live, registered, extra * sizeof(WCHAR));
+        list[live + extra] = 0;
+    }
+    if (r)
+        HeapFree(GetProcessHeap(), 0, r);
+    if (registered)
+        HeapFree(GetProcessHeap(), 0, registered);
+    if (!list)
+        return CR_OUT_OF_MEMORY;
+    *out = list;
+    *chars = live + extra + 1;
+    return CR_SUCCESS;
+}
+
 CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_List_SizeW(PULONG length, GUID *klass, PCWSTR device, ULONG flags)
 {
     if (!length)
         return CR_INVALID_POINTER;
     if (flags & ~CM_GET_DEVICE_INTERFACE_LIST_ALL_DEVICES)
         return CR_INVALID_FLAG;
-    MIME_PNP_REQUEST *r;
-    CONFIGRET cr = interface_list(klass, device, &r);
+    WCHAR *list;
+    ULONG chars;
+    CONFIGRET cr = interface_list(klass, device, flags, &list, &chars);
     if (cr)
         return cr;
-    *length = multi_length(r->Out);
-    HeapFree(GetProcessHeap(), 0, r);
+    *length = chars;
+    HeapFree(GetProcessHeap(), 0, list);
     return CR_SUCCESS;
 }
 
@@ -554,18 +696,18 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_ListW(GUID *klass, PCWSTR device,
         return CR_INVALID_POINTER;
     if (flags & ~CM_GET_DEVICE_INTERFACE_LIST_ALL_DEVICES)
         return CR_INVALID_FLAG;
-    MIME_PNP_REQUEST *r;
-    CONFIGRET cr = interface_list(klass, device, &r);
+    WCHAR *list;
+    ULONG n;
+    CONFIGRET cr = interface_list(klass, device, flags, &list, &n);
     if (cr)
         return cr;
-    ULONG n = multi_length(r->Out);
     if (n > length) {
         buffer[0] = 0;
         cr = CR_BUFFER_SMALL;
     } else {
-        memcpy(buffer, r->Out, n * sizeof(WCHAR));
+        memcpy(buffer, list, n * sizeof(WCHAR));
     }
-    HeapFree(GetProcessHeap(), 0, r);
+    HeapFree(GetProcessHeap(), 0, list);
     return cr;
 }
 
@@ -603,12 +745,10 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_PropertyW(PCWSTR path, const DEVP
     CONFIGRET own = InterfaceOwnProperty(path, key, type, buffer, size, &handled);
     if (handled)
         return own;
-    MIME_PNP_REQUEST *r;
-    if (!NT_SUCCESS(request(MIME_PNP_INTERFACE_DEVICE, 0, nullptr, path, &r)))
+    WCHAR device[MAX_DEVICE_ID_LEN];
+    if (!interface_owner(path, device, nullptr, nullptr))
         return CR_NO_SUCH_DEVICE_INTERFACE;
-    DEVINST devinst = node_of(r->Out);
-    HeapFree(GetProcessHeap(), 0, r);
-    return CM_Get_DevNode_PropertyW(devinst, key, type, buffer, size, flags);
+    return CM_Get_DevNode_PropertyW(node_of(device), key, type, buffer, size, flags);
 }
 
 CMAPI DWORD WINAPI CM_MapCrToWin32Err(CONFIGRET cr, DWORD fallback)

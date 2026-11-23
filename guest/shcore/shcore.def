@@ -97,3 +97,4 @@ EXPORTS
     UnregisterScaleChangeEvent @96
     UnsubscribeFeatureStateChangeNotification @97
     SHRegGetValueFromHKCUHKLM @122
+    SHWindowsPolicy @190 NONAME

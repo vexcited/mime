@@ -8,14 +8,42 @@
 
 void KiRegisterService(unsigned int number, void *routine, unsigned char stack_args);
 void NtAccessCheck(void);
+void NtAccessCheckByType(void);
+void NtCopyFileChunk(void);
 void NtLoadDriver(void);
 void NtUnloadDriver(void);
 void NtAddAtom(void);
 void NtAddAtomEx(void);
 void NtAdjustGroupsToken(void);
 void NtAdjustPrivilegesToken(void);
+void NtPrivilegeCheck(void);
 void NtAlertThread(void);
 void NtAlertThreadByThreadId(void);
+void NtAlertThreadByThreadIdEx(void);
+void NtConnectPort(void);
+void NtAlpcSendWaitReceivePort(void);
+void NtAlpcAcceptConnectPort(void);
+void NtAlpcCancelMessage(void);
+void NtAlpcConnectPort(void);
+void NtAlpcConnectPortEx(void);
+void NtAlpcCreatePort(void);
+void NtAlpcCreatePortSection(void);
+void NtAlpcCreateResourceReserve(void);
+void NtAlpcCreateSectionView(void);
+void NtAlpcCreateSecurityContext(void);
+void NtAlpcDeletePortSection(void);
+void NtAlpcDeleteResourceReserve(void);
+void NtAlpcDeleteSectionView(void);
+void NtAlpcDeleteSecurityContext(void);
+void NtAlpcDisconnectPort(void);
+void NtAlpcImpersonateClientContainerOfPort(void);
+void NtAlpcImpersonateClientOfPort(void);
+void NtAlpcOpenSenderProcess(void);
+void NtAlpcOpenSenderThread(void);
+void NtAlpcQueryInformation(void);
+void NtAlpcQueryInformationMessage(void);
+void NtAlpcRevokeSecurityContext(void);
+void NtAlpcSetInformation(void);
 void NtAllocateLocallyUniqueId(void);
 void NtCompareTokens(void);
 void NtQuerySemaphore(void);
@@ -34,6 +62,7 @@ void NtCancelTimer(void);
 void NtClearEvent(void);
 void NtClose(void);
 void NtContinue(void);
+void NtContinueEx(void);
 void NtCreateDirectoryObject(void);
 void NtCreateEvent(void);
 void NtCreateFile(void);
@@ -64,11 +93,13 @@ void NtDeleteWnfStateData(void);
 void NtDeleteWnfStateName(void);
 void NtDeviceIoControlFile(void);
 void NtDisplayString(void);
+void NtRaiseHardError(void);
 void NtDuplicateObject(void);
 void NtDuplicateToken(void);
 void NtEnumerateKey(void);
 void NtEnumerateSystemEnvironmentValuesEx(void);
 void NtEnumerateValueKey(void);
+void NtQueryMultipleValueKey(void);
 void NtFilterToken(void);
 void NtFindAtom(void);
 void NtFlushBuffersFile(void);
@@ -86,6 +117,7 @@ void NtGetTickCount(void);
 void NtGetWriteWatch(void);
 void NtImpersonateAnonymousToken(void);
 void NtInitiatePowerAction(void);
+void NtPowerInformation(void);
 void NtIsProcessInJob(void);
 void NtLoadKey(void);
 void NtLoadKey2(void);
@@ -120,6 +152,7 @@ void NtProtectVirtualMemory(void);
 void NtPulseEvent(void);
 void NtQueryAttributesFile(void);
 void NtQueryDebugFilterState(void);
+void NtSystemDebugControl(void);
 void NtSetDebugFilterState(void);
 void NtQueryDefaultLocale(void);
 void NtQueryDefaultUILanguage(void);
@@ -136,11 +169,36 @@ void NtQueryInformationToken(void);
 void NtQueryInstallUILanguage(void);
 void NtQueryIoCompletion(void);
 void NtQueryKey(void);
+void NtSetInformationKey(void);
 void NtQueryLicenseValue(void);
+void NtQuerySecurityPolicy(void);
+void NtCreatePrivateNamespace(void);
+void NtSetCachedSigningLevel(void);
+void NtGetCachedSigningLevel(void);
+void NtOpenPrivateNamespace(void);
+void NtDeletePrivateNamespace(void);
+void NtGetNlsSectionPtr(void);
+void NtInitializeNlsFiles(void);
+void NtIsUILanguageComitted(void);
+void NtGetMUIRegistryInfo(void);
+void NtManageHotPatch(void);
+void NtCreateTimer2(void);
+void NtSetTimer2(void);
+void NtCancelTimer2(void);
+void NtCreateWorkerFactory(void);
+void NtQueryInformationWorkerFactory(void);
+void NtSetInformationWorkerFactory(void);
+void NtShutdownWorkerFactory(void);
+void NtReleaseWorkerFactoryWorker(void);
+void NtWorkerFactoryWorkerReady(void);
+void NtWaitForWorkViaWorkerFactory(void);
 void NtQueryObject(void);
 void NtQueryPerformanceCounter(void);
+void NtQueryAuxiliaryCounterFrequency(void);
+void NtConvertBetweenAuxiliaryCounterAndPerformanceCounter(void);
 void NtQuerySection(void);
 void NtQuerySecurityObject(void);
+void NtQuerySecurityAttributesToken(void);
 void NtQuerySymbolicLinkObject(void);
 void NtQuerySystemInformation(void);
 void NtQuerySystemEnvironmentValue(void);
@@ -156,6 +214,8 @@ void NtSetVolumeInformationFile(void);
 void NtQueryWnfStateData(void);
 void NtQueryWnfStateNameInformation(void);
 void NtQueueApcThread(void);
+void NtQueueApcThreadEx(void);
+void NtQueueApcThreadEx2(void);
 void NtRaiseException(void);
 void NtReadFile(void);
 void NtReadFileScatter(void);
@@ -185,6 +245,7 @@ void NtSetIoCompletionEx(void);
 void NtSetSecurityObject(void);
 void NtSetSystemInformation(void);
 void NtSetTimer(void);
+void NtSetTimerEx(void);
 void NtSetTimerResolution(void);
 void NtSetValueKey(void);
 void NtSetWnfProcessNotificationEvent(void);
@@ -202,21 +263,32 @@ void NtTraceEvent(void);
 void NtUnloadKey(void);
 void NtUnloadKey2(void);
 void NtUnloadKeyEx(void);
+void NtAreMappedFilesTheSame(void);
 void NtUnmapViewOfSection(void);
 void NtUnmapViewOfSectionEx(void);
 void NtUnsubscribeWnfStateChange(void);
 void NtUpdateWnfStateData(void);
 void NtWaitForAlertByThreadId(void);
 void NtWaitForMultipleObjects(void);
+void NtWaitForMultipleObjects32(void);
 void NtWaitForSingleObject(void);
 void NtWriteFile(void);
 void NtWriteVirtualMemory(void);
 void NtYieldExecution(void);
+void NtCompareObjects(void);
+void NtGetNextProcess(void);
+void NtGetNextThread(void);
 
 void KiInitializeSystemServices(void)
 {
 #ifdef MIME_SVC_NtAccessCheck
     KiRegisterService(MIME_SVC_NtAccessCheck, (void *)NtAccessCheck, STACK_ARGS(8));
+#endif
+#ifdef MIME_SVC_NtAccessCheckByType
+    KiRegisterService(MIME_SVC_NtAccessCheckByType, (void *)NtAccessCheckByType, STACK_ARGS(11));
+#endif
+#ifdef MIME_SVC_NtCopyFileChunk
+    KiRegisterService(MIME_SVC_NtCopyFileChunk, (void *)NtCopyFileChunk, STACK_ARGS(10));
 #endif
 #ifdef MIME_SVC_NtAddAtom
     KiRegisterService(MIME_SVC_NtAddAtom, (void *)NtAddAtom, STACK_ARGS(3));
@@ -230,11 +302,89 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtAdjustPrivilegesToken
     KiRegisterService(MIME_SVC_NtAdjustPrivilegesToken, (void *)NtAdjustPrivilegesToken, STACK_ARGS(6));
 #endif
+#ifdef MIME_SVC_NtPrivilegeCheck
+    KiRegisterService(MIME_SVC_NtPrivilegeCheck, (void *)NtPrivilegeCheck, STACK_ARGS(3));
+#endif
 #ifdef MIME_SVC_NtAlertThread
     KiRegisterService(MIME_SVC_NtAlertThread, (void *)NtAlertThread, STACK_ARGS(1));
 #endif
 #ifdef MIME_SVC_NtAlertThreadByThreadId
     KiRegisterService(MIME_SVC_NtAlertThreadByThreadId, (void *)NtAlertThreadByThreadId, STACK_ARGS(1));
+#endif
+#ifdef MIME_SVC_NtConnectPort
+    KiRegisterService(MIME_SVC_NtConnectPort, (void *)NtConnectPort, STACK_ARGS(8));
+#endif
+#ifdef MIME_SVC_NtAlpcSendWaitReceivePort
+    KiRegisterService(MIME_SVC_NtAlpcSendWaitReceivePort, (void *)NtAlpcSendWaitReceivePort, STACK_ARGS(8));
+#endif
+#ifdef MIME_SVC_NtAlpcAcceptConnectPort
+    KiRegisterService(MIME_SVC_NtAlpcAcceptConnectPort, (void *)NtAlpcAcceptConnectPort, STACK_ARGS(9));
+#endif
+#ifdef MIME_SVC_NtAlpcCancelMessage
+    KiRegisterService(MIME_SVC_NtAlpcCancelMessage, (void *)NtAlpcCancelMessage, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcConnectPort
+    KiRegisterService(MIME_SVC_NtAlpcConnectPort, (void *)NtAlpcConnectPort, STACK_ARGS(11));
+#endif
+#ifdef MIME_SVC_NtAlpcConnectPortEx
+    KiRegisterService(MIME_SVC_NtAlpcConnectPortEx, (void *)NtAlpcConnectPortEx, STACK_ARGS(11));
+#endif
+#ifdef MIME_SVC_NtAlpcCreatePort
+    KiRegisterService(MIME_SVC_NtAlpcCreatePort, (void *)NtAlpcCreatePort, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcCreatePortSection
+    KiRegisterService(MIME_SVC_NtAlpcCreatePortSection, (void *)NtAlpcCreatePortSection, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtAlpcCreateResourceReserve
+    KiRegisterService(MIME_SVC_NtAlpcCreateResourceReserve, (void *)NtAlpcCreateResourceReserve, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtAlpcCreateSectionView
+    KiRegisterService(MIME_SVC_NtAlpcCreateSectionView, (void *)NtAlpcCreateSectionView, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcCreateSecurityContext
+    KiRegisterService(MIME_SVC_NtAlpcCreateSecurityContext, (void *)NtAlpcCreateSecurityContext, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcDeletePortSection
+    KiRegisterService(MIME_SVC_NtAlpcDeletePortSection, (void *)NtAlpcDeletePortSection, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcDeleteResourceReserve
+    KiRegisterService(MIME_SVC_NtAlpcDeleteResourceReserve, (void *)NtAlpcDeleteResourceReserve, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcDeleteSectionView
+    KiRegisterService(MIME_SVC_NtAlpcDeleteSectionView, (void *)NtAlpcDeleteSectionView, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcDeleteSecurityContext
+    KiRegisterService(MIME_SVC_NtAlpcDeleteSecurityContext, (void *)NtAlpcDeleteSecurityContext, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcDisconnectPort
+    KiRegisterService(MIME_SVC_NtAlpcDisconnectPort, (void *)NtAlpcDisconnectPort, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtAlpcImpersonateClientContainerOfPort
+    KiRegisterService(MIME_SVC_NtAlpcImpersonateClientContainerOfPort, (void *)NtAlpcImpersonateClientContainerOfPort, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcImpersonateClientOfPort
+    KiRegisterService(MIME_SVC_NtAlpcImpersonateClientOfPort, (void *)NtAlpcImpersonateClientOfPort, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcOpenSenderProcess
+    KiRegisterService(MIME_SVC_NtAlpcOpenSenderProcess, (void *)NtAlpcOpenSenderProcess, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtAlpcOpenSenderThread
+    KiRegisterService(MIME_SVC_NtAlpcOpenSenderThread, (void *)NtAlpcOpenSenderThread, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtAlpcQueryInformation
+    KiRegisterService(MIME_SVC_NtAlpcQueryInformation, (void *)NtAlpcQueryInformation, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtAlpcQueryInformationMessage
+    KiRegisterService(MIME_SVC_NtAlpcQueryInformationMessage, (void *)NtAlpcQueryInformationMessage, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtAlpcRevokeSecurityContext
+    KiRegisterService(MIME_SVC_NtAlpcRevokeSecurityContext, (void *)NtAlpcRevokeSecurityContext, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAlpcSetInformation
+    KiRegisterService(MIME_SVC_NtAlpcSetInformation, (void *)NtAlpcSetInformation, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtAlertThreadByThreadIdEx
+    KiRegisterService(MIME_SVC_NtAlertThreadByThreadIdEx, (void *)NtAlertThreadByThreadIdEx, STACK_ARGS(2));
 #endif
 #ifdef MIME_SVC_NtAllocateLocallyUniqueId
     KiRegisterService(MIME_SVC_NtAllocateLocallyUniqueId, (void *)NtAllocateLocallyUniqueId, STACK_ARGS(1));
@@ -289,6 +439,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtContinue
     KiRegisterService(MIME_SVC_NtContinue, (void *)NtContinue, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtContinueEx
+    KiRegisterService(MIME_SVC_NtContinueEx, (void *)NtContinueEx, STACK_ARGS(2));
 #endif
 #ifdef MIME_SVC_NtCreateDirectoryObject
     KiRegisterService(MIME_SVC_NtCreateDirectoryObject, (void *)NtCreateDirectoryObject, STACK_ARGS(3));
@@ -386,6 +539,9 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtDisplayString
     KiRegisterService(MIME_SVC_NtDisplayString, (void *)NtDisplayString, STACK_ARGS(1));
 #endif
+#ifdef MIME_SVC_NtRaiseHardError
+    KiRegisterService(MIME_SVC_NtRaiseHardError, (void *)NtRaiseHardError, STACK_ARGS(6));
+#endif
 #ifdef MIME_SVC_NtDuplicateObject
     KiRegisterService(MIME_SVC_NtDuplicateObject, (void *)NtDuplicateObject, STACK_ARGS(7));
 #endif
@@ -400,6 +556,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtEnumerateValueKey
     KiRegisterService(MIME_SVC_NtEnumerateValueKey, (void *)NtEnumerateValueKey, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtQueryMultipleValueKey
+    KiRegisterService(MIME_SVC_NtQueryMultipleValueKey, (void *)NtQueryMultipleValueKey, STACK_ARGS(6));
 #endif
 #ifdef MIME_SVC_NtFilterToken
     KiRegisterService(MIME_SVC_NtFilterToken, (void *)NtFilterToken, STACK_ARGS(6));
@@ -451,6 +610,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtInitiatePowerAction
     KiRegisterService(MIME_SVC_NtInitiatePowerAction, (void *)NtInitiatePowerAction, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtPowerInformation
+    KiRegisterService(MIME_SVC_NtPowerInformation, (void *)NtPowerInformation, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtIsProcessInJob
     KiRegisterService(MIME_SVC_NtIsProcessInJob, (void *)NtIsProcessInJob, STACK_ARGS(2));
@@ -554,6 +716,9 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtSetDebugFilterState
     KiRegisterService(MIME_SVC_NtSetDebugFilterState, (void *)NtSetDebugFilterState, STACK_ARGS(3));
 #endif
+#ifdef MIME_SVC_NtSystemDebugControl
+    KiRegisterService(MIME_SVC_NtSystemDebugControl, (void *)NtSystemDebugControl, STACK_ARGS(6));
+#endif
 #ifdef MIME_SVC_NtQueryDebugFilterState
     KiRegisterService(MIME_SVC_NtQueryDebugFilterState, (void *)NtQueryDebugFilterState, STACK_ARGS(2));
 #endif
@@ -602,6 +767,72 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtQueryKey
     KiRegisterService(MIME_SVC_NtQueryKey, (void *)NtQueryKey, STACK_ARGS(5));
 #endif
+#ifdef MIME_SVC_NtSetInformationKey
+    KiRegisterService(MIME_SVC_NtSetInformationKey, (void *)NtSetInformationKey, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtGetNlsSectionPtr
+    KiRegisterService(MIME_SVC_NtGetNlsSectionPtr, (void *)NtGetNlsSectionPtr, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtInitializeNlsFiles
+    KiRegisterService(MIME_SVC_NtInitializeNlsFiles, (void *)NtInitializeNlsFiles, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtIsUILanguageComitted
+    KiRegisterService(MIME_SVC_NtIsUILanguageComitted, (void *)NtIsUILanguageComitted, STACK_ARGS(0));
+#endif
+#ifdef MIME_SVC_NtGetMUIRegistryInfo
+    KiRegisterService(MIME_SVC_NtGetMUIRegistryInfo, (void *)NtGetMUIRegistryInfo, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtManageHotPatch
+    KiRegisterService(MIME_SVC_NtManageHotPatch, (void *)NtManageHotPatch, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtCreateWorkerFactory
+    KiRegisterService(MIME_SVC_NtCreateWorkerFactory, (void *)NtCreateWorkerFactory, STACK_ARGS(10));
+#endif
+#ifdef MIME_SVC_NtQueryInformationWorkerFactory
+    KiRegisterService(MIME_SVC_NtQueryInformationWorkerFactory, (void *)NtQueryInformationWorkerFactory, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtSetInformationWorkerFactory
+    KiRegisterService(MIME_SVC_NtSetInformationWorkerFactory, (void *)NtSetInformationWorkerFactory, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtShutdownWorkerFactory
+    KiRegisterService(MIME_SVC_NtShutdownWorkerFactory, (void *)NtShutdownWorkerFactory, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtReleaseWorkerFactoryWorker
+    KiRegisterService(MIME_SVC_NtReleaseWorkerFactoryWorker, (void *)NtReleaseWorkerFactoryWorker, STACK_ARGS(1));
+#endif
+#ifdef MIME_SVC_NtWorkerFactoryWorkerReady
+    KiRegisterService(MIME_SVC_NtWorkerFactoryWorkerReady, (void *)NtWorkerFactoryWorkerReady, STACK_ARGS(1));
+#endif
+#ifdef MIME_SVC_NtWaitForWorkViaWorkerFactory
+    KiRegisterService(MIME_SVC_NtWaitForWorkViaWorkerFactory, (void *)NtWaitForWorkViaWorkerFactory, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtCreateTimer2
+    KiRegisterService(MIME_SVC_NtCreateTimer2, (void *)NtCreateTimer2, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtSetTimer2
+    KiRegisterService(MIME_SVC_NtSetTimer2, (void *)NtSetTimer2, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtCancelTimer2
+    KiRegisterService(MIME_SVC_NtCancelTimer2, (void *)NtCancelTimer2, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtQuerySecurityPolicy
+    KiRegisterService(MIME_SVC_NtQuerySecurityPolicy, (void *)NtQuerySecurityPolicy, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtSetCachedSigningLevel
+    KiRegisterService(MIME_SVC_NtSetCachedSigningLevel, (void *)NtSetCachedSigningLevel, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtGetCachedSigningLevel
+    KiRegisterService(MIME_SVC_NtGetCachedSigningLevel, (void *)NtGetCachedSigningLevel, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtCreatePrivateNamespace
+    KiRegisterService(MIME_SVC_NtCreatePrivateNamespace, (void *)NtCreatePrivateNamespace, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtOpenPrivateNamespace
+    KiRegisterService(MIME_SVC_NtOpenPrivateNamespace, (void *)NtOpenPrivateNamespace, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtDeletePrivateNamespace
+    KiRegisterService(MIME_SVC_NtDeletePrivateNamespace, (void *)NtDeletePrivateNamespace, STACK_ARGS(1));
+#endif
 #ifdef MIME_SVC_NtQueryLicenseValue
     KiRegisterService(MIME_SVC_NtQueryLicenseValue, (void *)NtQueryLicenseValue, STACK_ARGS(5));
 #endif
@@ -611,11 +842,21 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtQueryPerformanceCounter
     KiRegisterService(MIME_SVC_NtQueryPerformanceCounter, (void *)NtQueryPerformanceCounter, STACK_ARGS(2));
 #endif
+#ifdef MIME_SVC_NtQueryAuxiliaryCounterFrequency
+    KiRegisterService(MIME_SVC_NtQueryAuxiliaryCounterFrequency, (void *)NtQueryAuxiliaryCounterFrequency, STACK_ARGS(1));
+#endif
+#ifdef MIME_SVC_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter
+    KiRegisterService(MIME_SVC_NtConvertBetweenAuxiliaryCounterAndPerformanceCounter,
+                      (void *)NtConvertBetweenAuxiliaryCounterAndPerformanceCounter, STACK_ARGS(4));
+#endif
 #ifdef MIME_SVC_NtQuerySection
     KiRegisterService(MIME_SVC_NtQuerySection, (void *)NtQuerySection, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtQuerySecurityObject
     KiRegisterService(MIME_SVC_NtQuerySecurityObject, (void *)NtQuerySecurityObject, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtQuerySecurityAttributesToken
+    KiRegisterService(MIME_SVC_NtQuerySecurityAttributesToken, (void *)NtQuerySecurityAttributesToken, STACK_ARGS(6));
 #endif
 #ifdef MIME_SVC_NtQuerySymbolicLinkObject
     KiRegisterService(MIME_SVC_NtQuerySymbolicLinkObject, (void *)NtQuerySymbolicLinkObject, STACK_ARGS(3));
@@ -661,6 +902,12 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtQueueApcThread
     KiRegisterService(MIME_SVC_NtQueueApcThread, (void *)NtQueueApcThread, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtQueueApcThreadEx
+    KiRegisterService(MIME_SVC_NtQueueApcThreadEx, (void *)NtQueueApcThreadEx, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtQueueApcThreadEx2
+    KiRegisterService(MIME_SVC_NtQueueApcThreadEx2, (void *)NtQueueApcThreadEx2, STACK_ARGS(7));
 #endif
 #ifdef MIME_SVC_NtRaiseException
     KiRegisterService(MIME_SVC_NtRaiseException, (void *)NtRaiseException, STACK_ARGS(3));
@@ -746,6 +993,9 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtSetSystemInformation
     KiRegisterService(MIME_SVC_NtSetSystemInformation, (void *)NtSetSystemInformation, STACK_ARGS(3));
 #endif
+#ifdef MIME_SVC_NtSetTimerEx
+    KiRegisterService(MIME_SVC_NtSetTimerEx, (void *)NtSetTimerEx, STACK_ARGS(4));
+#endif
 #ifdef MIME_SVC_NtSetTimer
     KiRegisterService(MIME_SVC_NtSetTimer, (void *)NtSetTimer, STACK_ARGS(7));
 #endif
@@ -800,6 +1050,9 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtUnloadKeyEx
     KiRegisterService(MIME_SVC_NtUnloadKeyEx, (void *)NtUnloadKeyEx, STACK_ARGS(2));
 #endif
+#ifdef MIME_SVC_NtAreMappedFilesTheSame
+    KiRegisterService(MIME_SVC_NtAreMappedFilesTheSame, (void *)NtAreMappedFilesTheSame, STACK_ARGS(2));
+#endif
 #ifdef MIME_SVC_NtUnmapViewOfSection
     KiRegisterService(MIME_SVC_NtUnmapViewOfSection, (void *)NtUnmapViewOfSection, STACK_ARGS(2));
 #endif
@@ -818,6 +1071,9 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtWaitForMultipleObjects
     KiRegisterService(MIME_SVC_NtWaitForMultipleObjects, (void *)NtWaitForMultipleObjects, STACK_ARGS(5));
 #endif
+#ifdef MIME_SVC_NtWaitForMultipleObjects32
+    KiRegisterService(MIME_SVC_NtWaitForMultipleObjects32, (void *)NtWaitForMultipleObjects32, STACK_ARGS(5));
+#endif
 #ifdef MIME_SVC_NtWaitForSingleObject
     KiRegisterService(MIME_SVC_NtWaitForSingleObject, (void *)NtWaitForSingleObject, STACK_ARGS(3));
 #endif
@@ -829,5 +1085,14 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtYieldExecution
     KiRegisterService(MIME_SVC_NtYieldExecution, (void *)NtYieldExecution, STACK_ARGS(0));
+#endif
+#ifdef MIME_SVC_NtCompareObjects
+    KiRegisterService(MIME_SVC_NtCompareObjects, (void *)NtCompareObjects, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtGetNextProcess
+    KiRegisterService(MIME_SVC_NtGetNextProcess, (void *)NtGetNextProcess, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtGetNextThread
+    KiRegisterService(MIME_SVC_NtGetNextThread, (void *)NtGetNextThread, STACK_ARGS(6));
 #endif
 }

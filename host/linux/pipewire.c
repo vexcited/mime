@@ -1,9 +1,8 @@
 #include "pipewire.h"
 
-#if MIME_HAVE_PIPEWIRE
-
 #include <pipewire/extensions/metadata.h>
 #include <pipewire/pipewire.h>
+#include <spa/param/audio/format-utils.h>
 #include <spa/param/audio/raw.h>
 #include <spa/param/format.h>
 #include <spa/param/param.h>
@@ -58,7 +57,18 @@ static struct {
     struct pw_context *(*context_new)(struct pw_loop *, struct pw_properties *, size_t);
     struct pw_core *(*context_connect)(struct pw_context *, struct pw_properties *, size_t);
     void (*proxy_destroy)(struct pw_proxy *);
+    struct pw_properties *(*properties_new)(const char *, ...);
+    struct pw_stream *(*stream_new)(struct pw_core *, const char *, struct pw_properties *);
+    void (*stream_add_listener)(struct pw_stream *, struct spa_hook *, const struct pw_stream_events *, void *);
+    int (*stream_connect)(struct pw_stream *, enum pw_direction, uint32_t, enum pw_stream_flags,
+                          const struct spa_pod **, uint32_t);
+    struct pw_buffer *(*stream_dequeue_buffer)(struct pw_stream *);
+    int (*stream_queue_buffer)(struct pw_stream *, struct pw_buffer *);
+    int (*stream_set_active)(struct pw_stream *, bool);
+    void (*stream_destroy)(struct pw_stream *);
 } pw;
+
+static struct pw_thread_loop *g_loop;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_synced = PTHREAD_COND_INITIALIZER;
@@ -435,6 +445,14 @@ static bool load(void)
         {&pw.context_new, "pw_context_new"},
         {&pw.context_connect, "pw_context_connect"},
         {&pw.proxy_destroy, "pw_proxy_destroy"},
+        {&pw.properties_new, "pw_properties_new"},
+        {&pw.stream_new, "pw_stream_new"},
+        {&pw.stream_add_listener, "pw_stream_add_listener"},
+        {&pw.stream_connect, "pw_stream_connect"},
+        {&pw.stream_dequeue_buffer, "pw_stream_dequeue_buffer"},
+        {&pw.stream_queue_buffer, "pw_stream_queue_buffer"},
+        {&pw.stream_set_active, "pw_stream_set_active"},
+        {&pw.stream_destroy, "pw_stream_destroy"},
     };
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
         void *address = dlsym(lib, symbols[i].name);
@@ -474,6 +492,7 @@ bool mime_pipewire_start(void)
     pw.thread_loop_unlock(loop);
     if (!g_registry)
         return false;
+    g_loop = loop;
     /* the first list the guest reads already holds what the server tells. */
     struct timespec until;
     clock_gettime(CLOCK_REALTIME, &until);
@@ -509,17 +528,23 @@ static uint32_t form_of(const char *type)
     return MIME_AUDIO_FORM_UNKNOWN;
 }
 
-int mime_pipewire_describe(bool capture, uint32_t twin, MimeAudioDevice *d)
+void mime_pipewire_list(bool capture, MimeAudioDeviceList *out)
 {
-    int result = -1;
+    memset(out, 0, sizeof(*out));
+    MimeAudioDevice *chosen = nullptr;
     pthread_mutex_lock(&g_lock);
-    Object *node = nullptr;
-    for (Object *o = g_alive ? g_objects : nullptr; o && !node; o = o->next) {
-        if (o->kind == KIND_NODE && o->capture == capture && !strcmp(o->description, d->name) && !twin--)
-            node = o;
-    }
-    if (node) {
-        result = g_default[capture][0] && !strcmp(g_default[capture], node->name);
+    for (const Object *node = g_alive ? g_objects : nullptr; node && out->count < MIME_AUDIO_MAX_DEVICES; node = node->next) {
+        if (node->kind != KIND_NODE || node->capture != capture || !node->description[0])
+            continue;
+        MimeAudioDevice *d = &out->devices[out->count++];
+        d->id = node->id;
+        /* the cut may fall inside a character, which the guest's conversion replaces. */
+        copy(d->name, sizeof(d->name), node->description);
+        /* what the server mixes in, for a device that tells no format of its own. */
+        d->rate = 48000;
+        d->channels = 2;
+        d->bits = 32;
+        d->is_float = 1;
         if (node->bits) {
             d->bits = node->bits;
             d->is_float = node->is_float;
@@ -533,31 +558,179 @@ int mime_pipewire_describe(bool capture, uint32_t twin, MimeAudioDevice *d)
                 d->channel_mask = node->channel_mask;
             }
         }
+        if (!chosen && g_default[capture][0] && !strcmp(g_default[capture], node->name))
+            chosen = d;
         const Object *card = nullptr;
         for (const Object *o = g_objects; o && !card; o = o->next)
             if (o->kind == KIND_DEVICE && o->id == node->device)
                 card = o;
-        if (card) {
-            copy(d->adapter, sizeof(d->adapter), card->adapter);
-            d->form = form_of(card->form);
-            for (uint32_t i = 0; i < card->route_count; i++) {
-                const Route *route = &card->routes[i];
-                if (route->device != node->route_device || (route->direction == SPA_DIRECTION_INPUT) != capture)
-                    continue;
-                copy(d->port, sizeof(d->port), route->description);
-                if (form_of(route->type) != MIME_AUDIO_FORM_UNKNOWN)
-                    d->form = form_of(route->type);
-            }
+        if (!card)
+            continue;
+        copy(d->adapter, sizeof(d->adapter), card->adapter);
+        d->form = form_of(card->form);
+        for (uint32_t i = 0; i < card->route_count; i++) {
+            const Route *route = &card->routes[i];
+            if (route->device != node->route_device || (route->direction == SPA_DIRECTION_INPUT) != capture)
+                continue;
+            copy(d->port, sizeof(d->port), route->description);
+            if (form_of(route->type) != MIME_AUDIO_FORM_UNKNOWN)
+                d->form = form_of(route->type);
         }
     }
+    if (!chosen && out->count)
+        chosen = &out->devices[0];
+    if (chosen)
+        chosen->flags |= MIME_AUDIO_DEVICE_DEFAULT;
     pthread_mutex_unlock(&g_lock);
-    return result;
 }
 
-#else
+struct MimePwStream {
+    struct pw_stream *stream;
+    struct spa_hook listener;
+    MimePwProcess process;
+    void *ctx;
+    uint32_t stride;
+    bool capture;
+    bool failed;
+};
 
-bool mime_pipewire_start(void) { return false; }
+static void stream_process(void *data)
+{
+    MimePwStream *s = data;
+    struct pw_buffer *b = pw.stream_dequeue_buffer(s->stream);
+    if (!b)
+        return;
+    struct spa_data *d = &b->buffer->datas[0];
+    if (d->data && s->capture) {
+        uint32_t offset = SPA_MIN(d->chunk->offset, d->maxsize);
+        uint32_t size = SPA_MIN(d->chunk->size, d->maxsize - offset);
+        s->process(s->ctx, (uint8_t *)d->data + offset, size / s->stride);
+    } else if (d->data) {
+        uint32_t frames = d->maxsize / s->stride;
+        if (b->requested && b->requested < frames)
+            frames = (uint32_t)b->requested;
+        s->process(s->ctx, d->data, frames);
+        d->chunk->offset = 0;
+        d->chunk->stride = (int32_t)s->stride;
+        d->chunk->size = frames * s->stride;
+    }
+    pw.stream_queue_buffer(s->stream, b);
+}
 
-int mime_pipewire_describe(bool capture, uint32_t twin, MimeAudioDevice *d) { return -1; }
+static void stream_state(void *data, enum pw_stream_state old, enum pw_stream_state state, const char *error)
+{
+    MimePwStream *s = data;
+    if (state == PW_STREAM_STATE_ERROR)
+        __atomic_store_n(&s->failed, true, __ATOMIC_RELEASE);
+}
 
-#endif
+static const struct pw_stream_events stream_events = {
+    PW_VERSION_STREAM_EVENTS,
+    .state_changed = stream_state,
+    .process = stream_process,
+};
+
+/* the speakers of a count of channels in the order windows has them. */
+static void positions_of(uint32_t channels, uint32_t *position)
+{
+    static const uint32_t layouts[9][8] = {
+        {0},
+        {SPA_AUDIO_CHANNEL_MONO},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_LFE},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_RL, SPA_AUDIO_CHANNEL_RR},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_FC, SPA_AUDIO_CHANNEL_RL, SPA_AUDIO_CHANNEL_RR},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_FC, SPA_AUDIO_CHANNEL_LFE, SPA_AUDIO_CHANNEL_RL,
+         SPA_AUDIO_CHANNEL_RR},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_FC, SPA_AUDIO_CHANNEL_LFE, SPA_AUDIO_CHANNEL_RC,
+         SPA_AUDIO_CHANNEL_SL, SPA_AUDIO_CHANNEL_SR},
+        {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR, SPA_AUDIO_CHANNEL_FC, SPA_AUDIO_CHANNEL_LFE, SPA_AUDIO_CHANNEL_RL,
+         SPA_AUDIO_CHANNEL_RR, SPA_AUDIO_CHANNEL_SL, SPA_AUDIO_CHANNEL_SR},
+    };
+    for (uint32_t i = 0; i < channels && channels <= 8; i++)
+        position[i] = layouts[channels][i];
+}
+
+MimePwStream *mime_pipewire_open(bool capture, uint32_t device, uint32_t rate, uint32_t channels, uint32_t bits,
+                                 bool is_float, MimePwProcess process, void *ctx)
+{
+    if (!g_loop || !channels || channels > 8)
+        return nullptr;
+    /* a device the guest names is told by the name the server knows it by. */
+    char target[256] = "";
+    if (device) {
+        pthread_mutex_lock(&g_lock);
+        for (const Object *o = g_alive ? g_objects : nullptr; o; o = o->next)
+            if (o->kind == KIND_NODE && o->id == device && o->capture == capture)
+                copy(target, sizeof(target), o->name);
+        pthread_mutex_unlock(&g_lock);
+        if (!target[0])
+            return nullptr;
+    }
+    MimePwStream *s = calloc(1, sizeof(*s));
+    if (!s)
+        return nullptr;
+    s->process = process;
+    s->ctx = ctx;
+    s->capture = capture;
+    s->stride = channels * bits / 8;
+    struct spa_audio_info_raw info = {
+        .format = is_float ? SPA_AUDIO_FORMAT_F32_LE
+                  : bits == 16 ? SPA_AUDIO_FORMAT_S16_LE
+                  : bits == 24 ? SPA_AUDIO_FORMAT_S24_LE
+                               : SPA_AUDIO_FORMAT_S32_LE,
+        .rate = rate,
+        .channels = channels,
+    };
+    positions_of(channels, info.position);
+    uint8_t buffer[1024];
+    struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+    const struct spa_pod *params[1] = {spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)};
+    /* the period of windows' own mixer. */
+    char latency[32];
+    snprintf(latency, sizeof(latency), "%u/%u", rate / 100, rate);
+    pw.thread_loop_lock(g_loop);
+    struct pw_properties *props =
+        pw.properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, capture ? "Capture" : "Playback",
+                          PW_KEY_MEDIA_ROLE, "Game", PW_KEY_APP_NAME, "Mime", PW_KEY_NODE_NAME, "Mime",
+                          PW_KEY_NODE_LATENCY, latency, target[0] ? PW_KEY_TARGET_OBJECT : nullptr, target,
+                          PW_KEY_NODE_DONT_RECONNECT, "true", nullptr);
+    s->stream = props ? pw.stream_new(g_core, "Mime", props) : nullptr;
+    bool ok = s->stream != nullptr;
+    if (ok) {
+        pw.stream_add_listener(s->stream, &s->listener, &stream_events, s);
+        ok = pw.stream_connect(s->stream, capture ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT, PW_ID_ANY,
+                               PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS |
+                                   PW_STREAM_FLAG_INACTIVE,
+                               params, 1) >= 0;
+        if (!ok)
+            pw.stream_destroy(s->stream);
+    }
+    pw.thread_loop_unlock(g_loop);
+    if (!ok) {
+        free(s);
+        return nullptr;
+    }
+    return s;
+}
+
+bool mime_pipewire_run(MimePwStream *s, bool running)
+{
+    pw.thread_loop_lock(g_loop);
+    bool ok = pw.stream_set_active(s->stream, running) >= 0;
+    pw.thread_loop_unlock(g_loop);
+    return ok;
+}
+
+bool mime_pipewire_failed(const MimePwStream *s)
+{
+    return __atomic_load_n(&s->failed, __ATOMIC_ACQUIRE);
+}
+
+void mime_pipewire_close(MimePwStream *s)
+{
+    pw.thread_loop_lock(g_loop);
+    pw.stream_destroy(s->stream);
+    pw.thread_loop_unlock(g_loop);
+    free(s);
+}

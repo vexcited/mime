@@ -1,5 +1,6 @@
 /* threads: creation, user mode entry, termination and reaping. */
 #include "../ntos.h"
+#include "classref.h"
 #include "../se/se.h"
 #include <mime/mx64.h>
 #include <mime/wow32.h>
@@ -72,6 +73,14 @@ PVOID PsCreateIdleThread(PKPRCB prcb)
 void PspThreadDelete(PVOID object)
 {
     PETHREAD thread = object;
+    if (thread->ThreadListEntry.Flink) {
+        PEPROCESS process = CONTAINING_RECORD(thread->Tcb.Process, EPROCESS, Pcb);
+        ULONG64 s = KiAcquireDispatcherLock();
+        RemoveEntryList(&thread->ThreadListEntry);
+        process->GoneKernelTime += thread->Tcb.KernelTime - thread->Tcb.KernelTime % KI_CLOCK_TICK_HNS;
+        process->GoneUserTime += thread->Tcb.UserTime - thread->Tcb.UserTime % KI_CLOCK_TICK_HNS;
+        KiReleaseDispatcherLock(s);
+    }
     if (thread->Tcb.StackAllocation)
         MmFreeKernelStack(thread->Tcb.StackAllocation, thread->Tcb.StackLimit, thread->Tcb.StackAllocationSize);
     if (thread->Cid.UniqueThread)
@@ -96,7 +105,7 @@ static void NTAPI reaper(PVOID context)
                 KiReleaseDispatcherLock(s);
                 break;
             }
-            PETHREAD t = CONTAINING_RECORD(RemoveHeadList(&g_dead_threads), ETHREAD, ThreadListEntry);
+            PETHREAD t = CONTAINING_RECORD(RemoveHeadList(&g_dead_threads), ETHREAD, DeadLinks);
             KiReleaseDispatcherLock(s);
             ObDereferenceObject(t);
         }
@@ -145,8 +154,10 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
     KeQuerySystemTime((PLARGE_INTEGER)&thread->CreateTime);
     KiInitializeThread(&thread->Tcb, &process->Pcb, top, limit, routine, context);
 
+    static ULONG64 sequence;
     ULONG64 s = KiAcquireDispatcherLock();
     InsertTailList(&process->ThreadListHead, &thread->ThreadListEntry);
+    thread->ListSequence = ++sequence;
     process->ThreadCount++;
     KiReleaseDispatcherLock(s);
 
@@ -189,18 +200,107 @@ static void user_thread_startup(PVOID context)
     thread->PreviousMode = UserMode;
     if (ethread->FirstEntryContext) {
         CONTEXT start;
+#ifdef __x86_64__
+        /* like windows, a thread starts without the state beyond sse another thread may have set before it ran. */
+        KiResetXstate(thread);
+#endif
         KiTrapFrameToContext(frame, &start, CONTEXT_FULL);
         start.ContextFlags = CONTEXT_FULL;
         KiCopyToUser((PVOID)ethread->FirstEntryContext, &start, sizeof(start));
         KiInitializeUserFrame(frame, (ULONG64)process->SystemDll->LdrInitializeThunk, ethread->FirstEntryStack,
                               ethread->FirstEntryContext, (ULONG64)process->NtdllBase, (ULONG64)thread->Teb);
         ethread->FirstEntryContext = 0;
+        /* like windows, a thread of a process with an instrumentation callback starts there, r10 the thunk. */
+        thread->InstrumentReturn = TRUE;
     }
     KiExitToUserMode(frame);
     KiEnterUserMode(frame);
 }
 
 #define MIME_NATIVE_STACK_SIZE (1024 * 1024)
+
+/* RtlpGetEntireXStateAreaLength2: the bytes an xsave of the features takes, as the shared page describes them. */
+static ULONG xstate_area_length(ULONG64 features)
+{
+    const XSTATE_CONFIGURATION *x = &SharedUserData->XState;
+    if (!(x->ControlFlags & 2))
+        return x->Size;
+    ULONG length = 576;
+    for (ULONG i = 2; i < 64; i++) {
+        if (!(features >> i & 1))
+            continue;
+        if (x->AlignedFeatures >> i & 1)
+            length = (length + 63) & ~63u;
+        length += x->AllFeatures[i];
+    }
+    return length;
+}
+
+/*
+ * the cpu area of a 32-bit thread, read from PspWow64SetupCpuArea, PspWow64InitThread and PspWow64InitThreadGuestx86
+ * of ntoskrnl 26300 and RtlInitializeExtendedContext2 of its ntdll: the flags and machine, the x86 context, a
+ * CONTEXT_EX and, when the processor has extended state x86 code may use, an xsave area. it sits at the top of the
+ * 64-bit stack, which ends below it. ntdll's RtlWow64GetCpuAreaInfo finds each part from the shared page the same way.
+ */
+#define WOW64_X86_FEATURES 0x40000000000009FCull
+#define I386_CONTEXT_LENGTH 0x2CC
+
+/* CONTEXT_EX of 26300, which ends with a chunk for the kernel's shadow stack. */
+typedef struct {
+    CONTEXT_CHUNK All, Legacy, XState, KernelCet;
+} CONTEXT_EX_CHUNKS;
+
+static ULONG64 wow64_cpu_features(ULONG *flags)
+{
+    ULONG64 features = SharedUserData->XState.EnabledFeatures & WOW64_X86_FEATURES;
+    *flags = CONTEXT_I386 | (features ? 0x40 : 0); /* CONTEXT_XSTATE */
+    return features;
+}
+
+/* RtlGetExtendedContextLength3 for an x86 context. */
+static ULONG wow64_context_length(ULONG flags, ULONG64 features)
+{
+    ULONG length = I386_CONTEXT_LENGTH + sizeof(CONTEXT_EX_CHUNKS);
+    if (flags & 0x40)
+        length = xstate_area_length(features) + ((length + 3) & ~3u) - 4 - 448;
+    return length + 3;
+}
+
+/* PspWow64SetupCpuArea: the area below the top of the 64-bit stack. */
+static ULONG_PTR wow64_cpu_area(ULONG_PTR top)
+{
+    ULONG flags;
+    ULONG64 features = wow64_cpu_features(&flags);
+    ULONG_PTR below = ((((top - 4) & ~(ULONG_PTR)3) - 5) & ~(ULONG_PTR)7) - wow64_context_length(flags, features);
+    return ((below & ~(ULONG_PTR)3) - 4) & ~(ULONG_PTR)15;
+}
+
+/* RtlInitializeExtendedContext2 for the x86 context of the area, which it returns. */
+static I386_CONTEXT *init_wow64_context(PWOW64_CPURESERVED area)
+{
+    ULONG flags;
+    ULONG64 features = wow64_cpu_features(&flags);
+    PUCHAR context = (PUCHAR)(((ULONG_PTR)area + 4 + 3) & ~(ULONG_PTR)3);
+    CONTEXT_EX_CHUNKS *ex = (CONTEXT_EX_CHUNKS *)(context + I386_CONTEXT_LENGTH);
+    memset(context, 0, I386_CONTEXT_LENGTH + sizeof(*ex));
+    *(PULONG)context = flags;
+    ex->All.Offset = ex->Legacy.Offset = -I386_CONTEXT_LENGTH;
+    ex->All.Length = I386_CONTEXT_LENGTH + sizeof(*ex);
+    /* without the extended registers flag the legacy part of an x86 context ends before them. */
+    ex->Legacy.Length = 0xCC;
+    ex->XState.Offset = 0x21;
+    if (flags & 0x40) {
+        PUCHAR xsave = (PUCHAR)(((ULONG_PTR)ex + 95) & ~(ULONG_PTR)63);
+        ULONG length = xstate_area_length(features) - 512;
+        memset(xsave, 0, length);
+        if (SharedUserData->XState.ControlFlags & 2)
+            *(PULONG64)(xsave + 8) = features | 1ull << 63;
+        ex->XState.Offset = (LONG)(xsave - (PUCHAR)ex);
+        ex->XState.Length = length;
+        ex->All.Length = (ULONG)(xsave + length - context);
+    }
+    return (I386_CONTEXT *)context;
+}
 
 /*
  * the 32-bit half of a wow64 thread, laid out like windows: the 32-bit teb sits 0x2000 bytes after the 64-bit one
@@ -212,32 +312,35 @@ static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID 
 {
     PUCHAR teb32 = (PUCHAR)teb + MIME_TEB_SIZE;
     PULONG t = (PULONG)teb32;
-    ULONG_PTR cpu = (native_top - sizeof(WOW64_CPURESERVED)) & ~(ULONG_PTR)63;
+    ULONG_PTR cpu = wow64_cpu_area(native_top);
     PWOW64_CPURESERVED area = (PWOW64_CPURESERVED)cpu;
-    memset(area, 0, sizeof(*area));
+    area->Flags = 0;
     area->Machine = IMAGE_FILE_MACHINE_I386;
+    I386_CONTEXT *c = init_wow64_context(area);
     /*
-     * the 32-bit start state is there before the thread runs, as on windows, so another thread can read and change it
-     * while this one is suspended. RtlUserThreadStart gets the entry in eax and the argument in ebx, and here also on
-     * the stack, below where wow64.dll puts the context it starts from.
+     * PspWow64InitThreadGuestx86: the thread starts in the 32-bit RtlUserThreadStart with the entry in eax and the
+     * argument in ebx, on its stack less a random multiple of 4 bytes under 2 KiB, and with the floating point
+     * state of a reset. the state is there before the thread runs, so another thread can read and change it while
+     * this one is suspended.
      */
     ULONG ntdll32 = (ULONG)(ULONG_PTR)process->Peb->SparePointers[0], thread_start = PspWow64NtdllExport("RtlUserThreadStart");
     if (ntdll32 && thread_start) {
         ULONG argument = parameter == process->Peb ? (ULONG)(ULONG_PTR)process->Wow64Peb : (ULONG)(ULONG_PTR)parameter;
-        ULONG top = (ULONG)(((ULONG_PTR)stack + stack_size - sizeof(I386_CONTEXT)) & ~15ull);
-        PULONG frame = (PULONG)(ULONG_PTR)top - 3;
-        frame[0] = 0;
-        frame[1] = (ULONG)(ULONG_PTR)start;
-        frame[2] = argument;
-        I386_CONTEXT *c = &area->Context;
-        c->ContextFlags = CONTEXT_I386_FULL;
+        ULONG top = (ULONG)((ULONG_PTR)stack + stack_size) - 4 * (ULONG)(MiRandom() & 0x1FF);
+        c->ContextFlags |= CONTEXT_I386_FULL | CONTEXT_I386_FLOATING_POINT | CONTEXT_I386_DEBUG_REGISTERS |
+                           CONTEXT_I386_EXTENDED_REGISTERS;
+        c->FloatSave.ControlWord = 0x27F;
+        c->FloatSave.TagWord = 0xFFFF;
+        *(PUSHORT)&c->ExtendedRegisters[0] = 0x27F;
+        *(PULONG)&c->ExtendedRegisters[0x18] = 0x1F80;
+        *(PULONG)&c->ExtendedRegisters[0x1C] = 0xFFFF;
         c->Eip = ntdll32 + thread_start;
         c->Eax = (ULONG)(ULONG_PTR)start;
         c->Ebx = argument;
-        c->Esp = (ULONG)(ULONG_PTR)frame;
+        c->Esp = top - 16;
         c->EFlags = 0x202;
         c->SegCs = 0x23;
-        c->SegDs = c->SegEs = c->SegSs = 0x2B;
+        c->SegDs = c->SegEs = c->SegSs = c->SegGs = 0x2B;
         c->SegFs = 0x53;
     }
     teb->TlsSlots[WOW64_TLS_CPURESERVED] = area;
@@ -262,6 +365,38 @@ static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID 
     string->Buffer = (ULONG)(ULONG_PTR)teb32 + MIME_TEB32_STATIC_BUFFER;
     t[MIME_TEB32_TLS_LINKS / 4] = t[MIME_TEB32_TLS_LINKS / 4 + 1] = (ULONG)(ULONG_PTR)teb32 + MIME_TEB32_TLS_LINKS;
     thread->Tcb.Teb32 = teb32;
+}
+
+extern FAST_MUTEX PspSharedSlotLock;
+
+/*
+ * the slot of 64 bytes each thread has in a page of zeros mapped once into its process, which the teb names in
+ * SchedulerSharedDataSlot on 26300. called in the address space of the process.
+ */
+NTSTATUS PspAssignSharedSlot(PEPROCESS process, PETHREAD thread)
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    if (thread->SharedSlot)
+        return status;
+    ExAcquireFastMutex(&PspSharedSlotLock);
+    if (!process->ThreadSharedPage) {
+        PSECTION section;
+        status = MiCreateDataSection(nullptr, PAGE_SIZE, PAGE_READWRITE, SEC_COMMIT, &section);
+        if (NT_SUCCESS(status)) {
+            PVOID base = nullptr;
+            SIZE_T view = PAGE_SIZE;
+            status = MiMapViewOfSection(section, process, &base, 0, &view, PAGE_READWRITE, 0);
+            ObDereferenceObject(section);
+            if (NT_SUCCESS(status))
+                process->ThreadSharedPage = base;
+        }
+    }
+    if (process->ThreadSharedPage && process->ThreadSharedSlots < PAGE_SIZE / 64)
+        thread->SharedSlot = (PUCHAR)process->ThreadSharedPage + 64 * process->ThreadSharedSlots++;
+    else if (NT_SUCCESS(status))
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    ExReleaseFastMutex(&PspSharedSlotLock);
+    return status;
 }
 
 #define THREAD_CREATE_FLAGS_CREATE_SUSPENDED 0x00000001
@@ -301,17 +436,28 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
         stack_reserve = (stack_commit + 0xFFFFF) & ~(SIZE_T)0xFFFFF;
     stack_reserve = (stack_reserve + 0xFFFF) & ~(SIZE_T)0xFFFF;
 
+    BOOLEAN first = process->ThreadCount == 0;
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     KiAttachProcess(&process->Pcb);
 
     PVOID stack = nullptr, teb_va = nullptr;
     SIZE_T size = stack_reserve;
-    NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | (process->Machine == IMAGE_FILE_MACHINE_I386 ? 0 : MEM_TOP_DOWN), PAGE_READWRITE);
-    /* the 32-bit teb that follows a wow64 thread's must be reachable from 32-bit code. */
+    NTSTATUS status = process->Machine == IMAGE_FILE_MACHINE_I386
+                          ? MiAllocateVirtual(process, &stack, &size, MEM_RESERVE, PAGE_READWRITE)
+                          : MiAllocateThreadMemory(process, &stack, &size, MEM_RESERVE, PAGE_READWRITE);
+    /*
+     * the 32-bit teb that follows a wow64 thread's must be reachable from 32-bit code. every other teb sits with the
+     * peb, like on windows, see MiAllocatePebOrTeb.
+     */
     SIZE_T teb_size = MIME_TEB_SIZE + (wow64 ? MIME_TEB32_SIZE : 0);
-    if (NT_SUCCESS(status))
-        status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT | (wow64 ? 0 : MEM_TOP_DOWN),
-                                   PAGE_READWRITE);
+    if (NT_SUCCESS(status)) {
+        if (wow64)
+            status = MiAllocateVirtual(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        else if (process->Machine == IMAGE_FILE_MACHINE_I386)
+            status = MiAllocateThreadMemory(process, &teb_va, &teb_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        else
+            status = MiAllocatePebOrTeb(process, teb_size, FALSE, &teb_va);
+    }
     /* the translator runs on a stack of its own, the program keeps the thread stack. */
     PVOID native_stack = nullptr;
     SIZE_T native_size = MIME_NATIVE_STACK_SIZE;
@@ -334,8 +480,9 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
     /*
      * like RtlCreateUserStack and MiCheckForUserStackOverflow: the commit is at the top with a guard page below it,
      * and touching the guard commits it and moves the guard one page down, see MiGrowUserStack. the bottom of the
-     * reservation stays committed under a last guard: hitting that one is a stack overflow, and the bytes below are
-     * where the exception is dispatched, as windows keeps a few pages for it. the stack limit is the committed top.
+     * reservation stays reserved, as a walk of a windows stack shows it: a guard that would reach it is a stack
+     * overflow, and the bytes below are committed then, for the exception to be dispatched on. the stack limit is
+     * the committed top.
      */
     SIZE_T zone = stack_reserve >= 4 * MIME_STACK_OVERFLOW_ZONE ? MIME_STACK_OVERFLOW_ZONE : ROUND_TO_PAGES(stack_reserve / 4);
     ULONG_PTR stack_top = (ULONG_PTR)stack + stack_reserve, last_guard = (ULONG_PTR)stack + zone;
@@ -349,8 +496,6 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
         ULONG Protect;
     } parts[] = {
         {committed, commit, PAGE_READWRITE},
-        {(ULONG_PTR)stack, zone, PAGE_READWRITE},
-        {last_guard, PAGE_SIZE, PAGE_READWRITE | PAGE_GUARD},
         {committed - MI_STACK_GUARD_SIZE, committed - MI_STACK_GUARD_SIZE > last_guard ? MI_STACK_GUARD_SIZE : 0,
          PAGE_READWRITE | PAGE_GUARD},
     };
@@ -383,7 +528,18 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
     teb->CurrentLocale = HalBootInfo->locale_lcid ? HalBootInfo->locale_lcid : 0x0409;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
-    InitializeListHead(&teb->TlsLinks);
+    /* a 64-bit kernelbase leaves TlsLinks empty, like windows. a 32-bit one links the tebs through it. */
+    if (process->Machine == IMAGE_FILE_MACHINE_I386)
+        InitializeListHead(&teb->TlsLinks);
+    /* like MmCreateTeb on 26300: the OS/2 version of the tib, no transaction context, and a state for RtlRandom. */
+    teb->NtTib.FiberData = (PVOID)0x1e00;
+    teb->TxFsContext = 0xfffe;
+    teb->RngState[0] = MiRandom();
+    teb->RngState[1] = MiRandom();
+    teb->HeapData = (ULONG)MiRandom() & 0xffff0000;
+    if (process->Machine != IMAGE_FILE_MACHINE_I386 && NT_SUCCESS(PspAssignSharedSlot(process, thread)))
+        teb->SchedulerSharedDataSlot = thread->SharedSlot;
+    *(PULONG64)teb->PrimaryGroupAffinity = KiProcessAffinity(&process->Pcb);
     /*
      * like PspAllocateThread, the creation flags the loader reads become teb flags: SkipThreadAttach, LoaderWorker and
      * SkipLoaderInit. a thread that skips the loader's initialization never takes the loader lock, so its creator may
@@ -391,13 +547,19 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
      */
     USHORT same = (flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH ? 0x0008 : 0) |
                   (flags & THREAD_CREATE_FLAGS_LOADER_WORKER ? 0x2000 : 0) |
-                  (flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT ? 0x4000 : 0);
+                  (flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT ? 0x4000 : 0) |
+                  (first ? 0x0400 : 0); /* InitialThread. */
     teb->SameTebFlags = same;
     if (flags & THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER)
         thread->HideFromDebugger = TRUE;
 
-    /* initial context consumed by LdrInitializeThunk, then NtContinue'd into RtlUserThreadStart. */
-    ULONG64 ctx_va = (stack_base - sizeof(CONTEXT)) & ~15ull;
+    /*
+     * initial context consumed by LdrInitializeThunk, then NtContinue'd into RtlUserThreadStart. windows 11 starts a
+     * thread 0x28 bytes under the top of its stack and a random number of 16 byte steps more, 0 to 127, measured
+     * with scratch/dlls/crash3/rsp2.c of the research repository. the context goes under that.
+     */
+    ULONG64 start_sp = stack_base - 0x20 - ((ULONG64)(MiRandom() & 127) << 4);
+    ULONG64 ctx_va = (start_sp - sizeof(CONTEXT)) & ~15ull;
     ULONG64 sp = native_stack ? (ULONG64)native_stack + native_size : ctx_va;
     if (wow64) {
         /* the 64-bit teb describes the 64-bit stack, which holds the cpu area and the 64-bit start context. */
@@ -409,13 +571,13 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
         teb->NtTib.StackLimit = native_stack;
         teb->DeallocationStack = native_stack;
         ctx_va = (native_base - sizeof(CONTEXT)) & ~15ull;
-        sp = ctx_va;
+        sp = start_sp = ctx_va;
     }
     /*
      * as on windows the trap frame holds the RtlUserThreadStart state until the thread runs, so the context another
      * thread reads or changes meanwhile is that one. the first entry to user mode saves it for LdrInitializeThunk.
      */
-    KiInitializeUserFrame(thread->Tcb.TrapFrame, (ULONG64)user_start, ctx_va, (ULONG64)start, (ULONG64)parameter,
+    KiInitializeUserFrame(thread->Tcb.TrapFrame, (ULONG64)user_start, start_sp, (ULONG64)start, (ULONG64)parameter,
                           (ULONG64)teb_va);
     thread->FirstEntryContext = ctx_va;
     thread->FirstEntryStack = sp;
@@ -497,7 +659,11 @@ static void release_user_memory(PEPROCESS process, PETHREAD thread)
         if (thread->Tcb.Teb32)
             unlink_tls_links((PUCHAR)thread->Tcb.Teb32 + MIME_TEB32_TLS_LINKS, sizeof(ULONG));
     }
-    PVOID regions[] = {thread->UserStackAllocation, thread->NativeStackAllocation, thread->Tcb.Teb};
+    /* a teb among the others gives its pages back, one that is an allocation of its own goes whole. */
+    PVOID teb = thread->Tcb.Teb;
+    if (teb && MiFreeTeb(process, teb, MIME_TEB_SIZE))
+        teb = nullptr;
+    PVOID regions[] = {thread->UserStackAllocation, thread->NativeStackAllocation, teb};
     for (ULONG i = 0; i < sizeof(regions) / sizeof(regions[0]); i++) {
         PVOID base = regions[i];
         SIZE_T size = 0;
@@ -536,8 +702,8 @@ void PspExitThread(NTSTATUS status)
     if (!process->SystemProcess)
         release_user_memory(process, thread);
 
+    /* as on windows the thread stays in the list of its process until its object goes. */
     ULONG64 s = KiAcquireDispatcherLock();
-    RemoveEntryList(&thread->ThreadListEntry);
     BOOLEAN last = --process->ThreadCount == 0;
     if (last && !process->Terminating) {
         process->Terminating = TRUE;
@@ -555,7 +721,7 @@ void PspExitThread(NTSTATUS status)
     thread->HasTerminated = TRUE;
     thread->Tcb.Header.SignalState = 1;
     KiSignalWaiters(&thread->Tcb.Header, 0);
-    InsertTailList(&g_dead_threads, &thread->ThreadListEntry);
+    InsertTailList(&g_dead_threads, &thread->DeadLinks);
     thread->Tcb.State = Terminated;
     KiSwapThread();
     KeBugCheckEx(0x00000001, (ULONG_PTR)thread, 0, 0, 0);
@@ -601,28 +767,37 @@ NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTR
     NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_CREATE_THREAD, &process);
     if (!NT_SUCCESS(status))
         return status;
-    /* the descriptor a creator asks for is worked out first, so a refused one starts no thread. */
+    /* the descriptor and the attribute list are worked out first, so a refused one starts no thread. */
     OBJECT_ATTRIBUTES oa;
     UNICODE_STRING name;
     SD_BLOB *sd = nullptr;
+    PVOID list = nullptr;
     status = ObCaptureObjectAttributes(attributes, &oa, &name);
     if (NT_SUCCESS(status))
         status = ObComputeSecurity(PsThreadTypeObject, attributes ? &oa : nullptr, nullptr, KeGetPreviousMode(), &sd);
     KiFreeCapturedString(&name);
+    if (NT_SUCCESS(status))
+        status = PspCaptureThreadAttributes(attribute_list, &list);
     if (!NT_SUCCESS(status)) {
+        if (sd)
+            SeSdDereference(sd);
         ObDereferenceObject(process);
         return status;
     }
     PETHREAD thread;
     status = PspCreateUserThread(process, start, parameter, flags,
                                  max_stack_size, stack_size, &thread);
-    ObDereferenceObject(process);
     if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(process);
+        PspFreeThreadAttributes(list);
         if (sd)
             SeSdDereference(sd);
         return status;
     }
     ObAttachSecurity(thread, sd);
+    PspReturnThreadAttributes(list, process, thread);
+    ObDereferenceObject(process);
+    PspFreeThreadAttributes(list);
     HANDLE h;
     status = ObInsertObject(thread, access ? access : THREAD_ALL_ACCESS, 0, &h);
     if (NT_SUCCESS(status))
@@ -734,6 +909,42 @@ NTSTATUS PspWaitForSuspension(PETHREAD thread)
     }
 }
 
+/* PsSuspendThread for the kernel's own use, which a PspResumeThread undoes: the thread stops before user mode. */
+NTSTATUS PspSuspendThread(PETHREAD thread)
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG64 state = KiAcquireDispatcherLock();
+    ULONG old = thread->Tcb.SuspendCount;
+    if (thread->Tcb.Terminating) {
+        status = STATUS_THREAD_IS_TERMINATING;
+    } else if (old == 127) {
+        status = (NTSTATUS)0xC000004AL;
+    } else {
+        thread->Tcb.SuspendCount++;
+        if (!old)
+            KeClearEvent(&thread->Tcb.SuspendEvent);
+        PspCheckForSuspendApc(&thread->Tcb);
+    }
+    KiReleaseDispatcherLock(state);
+    return status;
+}
+
+void PspResumeThread(PETHREAD thread)
+{
+    ULONG64 state = KiAcquireDispatcherLock();
+    ULONG old = thread->Tcb.SuspendCount;
+    if (old) {
+        thread->Tcb.SuspendCount--;
+        if (old == 1)
+            KeSetEvent(&thread->Tcb.SuspendEvent, 0, FALSE);
+        if (old == 1 && thread->Tcb.State == Initialized)
+            KiReadyThread(&thread->Tcb);
+        else if (old == 1 && thread->Tcb.Suspended)
+            KeReleaseSemaphore(&thread->Tcb.SuspendSemaphore, 0, 1, FALSE);
+    }
+    KiReleaseDispatcherLock(state);
+}
+
 NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous)
 {
     PETHREAD thread;
@@ -835,9 +1046,57 @@ NTSTATUS NTAPI NtResumeProcess(HANDLE handle)
     return suspend_or_resume_process(handle, FALSE);
 }
 
+static NTSTATUS query_thread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length, PULONG returned);
+
+/* like NtQueryInformationProcess: the probes, the length windows takes for the class, then the thread. */
 NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length,
                                         PULONG returned)
 {
+    /* windows asks no range of this buffer up front. */
+    ULONG alignment = (ULONG)klass == 38 ? 8 : (ULONG)klass == 49 || length >= 4 ? 4 : 1;
+    NTSTATUS status = KiProbeQueryBuffer(info, length, alignment, FALSE);
+    if (NT_SUCCESS(status))
+        status = KiProbeReturnLength(returned);
+    if (!NT_SUCCESS(status))
+        return status;
+    if ((ULONG)klass == 29) { /* ThreadWow64Context */
+        PETHREAD thread;
+        status = PsReferenceThreadHandle(handle, THREAD_GET_CONTEXT, &thread);
+        if (!NT_SUCCESS(status))
+            return status;
+        status = PspWow64GetContextThread(thread, info, length);
+        ObDereferenceObject(thread);
+        ULONG size = 0x2CC;
+        if (NT_SUCCESS(status) && returned)
+            KiCopyToUser(returned, &size, sizeof(size));
+        return status;
+    }
+    PS_CLASS_ANSWER reference;
+    if (KeGetPreviousMode() != UserMode ||
+        !PspClassAnswer(PspThreadClassRuns, RTL_NUMBER_OF(PspThreadClassRuns), (ULONG)klass, length, &reference))
+        return query_thread(handle, klass, info, length, returned);
+    if (reference.Decided) {
+        if (returned && reference.Returned != PS_CLASS_NO_LENGTH)
+            KiCopyToUser(returned, &reference.Returned, sizeof(ULONG));
+        return reference.Status;
+    }
+    ULONG before = 0;
+    BOOLEAN fixed = returned && !reference.Variable;
+    if (fixed)
+        KiCopyFromUser(&before, returned, sizeof(before));
+    status = query_thread(handle, klass, info, length, returned);
+    if (status == STATUS_INVALID_INFO_CLASS)
+        return PspClassDefault(&reference, info, length, returned);
+    if (fixed && NT_SUCCESS(status))
+        KiCopyToUser(returned, reference.Returned != PS_CLASS_NO_LENGTH ? &reference.Returned : &before, sizeof(ULONG));
+    return status;
+}
+
+FAST_MUTEX PspSharedSlotLock;
+
+static NTSTATUS query_thread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length, PULONG returned)
+{
+    NTSTATUS status;
     /* what anyone who can see a thread may know, with the full or the limited right. */
     ACCESS_MASK rights = THREAD_QUERY_INFORMATION;
     switch (klass) {
@@ -852,13 +1111,6 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     default:
         break;
     }
-    /* windows asks no range of this buffer up front. */
-    ULONG alignment = (ULONG)klass == 38 ? 8 : (ULONG)klass == 49 || length >= 4 ? 4 : 1;
-    NTSTATUS status = KiProbeQueryBuffer(info, length, alignment, FALSE);
-    if (NT_SUCCESS(status))
-        status = KiProbeReturnLength(returned);
-    if (!NT_SUCCESS(status))
-        return status;
     /* ThreadSuspendCount: like windows, an exact length is checked before the handle. */
     if ((ULONG)klass == 35 && length != sizeof(ULONG))
         return STATUS_INFO_LENGTH_MISMATCH;
@@ -889,8 +1141,9 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     case ThreadTimes:
         out.times[0] = thread->CreateTime;
         out.times[1] = thread->ExitTime;
-        out.times[2] = thread->Tcb.KernelTime;
-        out.times[3] = thread->Tcb.UserTime;
+        /* windows charges whole clock ticks. */
+        out.times[2] = thread->Tcb.KernelTime - thread->Tcb.KernelTime % KI_CLOCK_TICK_HNS;
+        out.times[3] = thread->Tcb.UserTime - thread->Tcb.UserTime % KI_CLOCK_TICK_HNS;
         size = sizeof(out.times);
         break;
     case ThreadQuerySetWin32StartAddress:
@@ -918,6 +1171,42 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
         out.u32 = thread->HideFromDebugger;
         size = 1;
         break;
+    case 22: /* ThreadIoPriority: normal. */
+        out.u32 = 2;
+        size = sizeof(ULONG);
+        break;
+    case 24: /* ThreadPagePriority: normal. */
+        out.u32 = 5;
+        size = sizeof(ULONG);
+        break;
+    case 25: /* ThreadActualBasePriority */
+        out.u32 = (ULONG)thread->Tcb.BasePriority;
+        size = sizeof(ULONG);
+        break;
+    case 38: { /* ThreadNameInformation: no name, a string of no length whose text would follow it. */
+        ULONG lengths = 0, need = sizeof(UNICODE_STRING);
+        PVOID text = (PUCHAR)info + sizeof(UNICODE_STRING);
+        ObDereferenceObject(thread);
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
+        if (length < need)
+            return STATUS_BUFFER_TOO_SMALL;
+        status = KiCopyToUser(info, &lengths, sizeof(lengths));
+        return NT_SUCCESS(status) ? KiCopyToUser((PUCHAR)info + 8, &text, sizeof(text)) : status;
+    }
+    case 54: /* the io and page priorities in effect: normal. */
+    case 55:
+        out.u32 = (ULONG)klass == 54 ? 2 : 5;
+        size = sizeof(ULONG);
+        break;
+    case 36: /* ThreadHeterogeneousCpuPolicy: dynamic. */
+        out.u32 = 5;
+        size = sizeof(ULONG);
+        break;
+    case 59: /* ThreadIndexInformation: 1 and 1 for the first thread on windows 11 26300. */
+        out.times[0] = 0x100000001ull;
+        size = sizeof(ULONG64);
+        break;
     case 35: /* ThreadSuspendCount */
         out.u32 = thread->Tcb.SuspendCount;
         size = sizeof(ULONG);
@@ -926,6 +1215,18 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
         PEPROCESS process = (PEPROCESS)KiCurrentThread()->Process;
         out.u32 = process->ThreadCount <= 1;
         size = sizeof(ULONG);
+        break;
+    }
+    case 57: {
+        /* measured on windows 11 26300: a thread asks for itself only, and gets a slot of 64 bytes in a page of
+           zeros mapped once into its process, the same slot each time. */
+        if (thread != PsCurrentThread()) {
+            status = STATUS_NOT_SUPPORTED;
+            break;
+        }
+        status = PspAssignSharedSlot(PsCurrentProcess(), thread);
+        out.ptr = thread->SharedSlot;
+        size = sizeof(PVOID);
         break;
     }
     default:
@@ -944,10 +1245,55 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     return status;
 }
 
+#define TLS_MINIMUM_AVAILABLE 64
+#define TLS_EXPANSION_SLOTS 1024
+
+/* ThreadZeroTlsCell: TlsFree clears the slot it frees in the teb of every thread of the process. */
+static NTSTATUS zero_tls_cell(PEPROCESS process, ULONG index)
+{
+    if (index >= TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
+        return STATUS_INVALID_PARAMETER;
+    if (process->Machine == IMAGE_FILE_MACHINE_I386)
+        return STATUS_SUCCESS;
+    ULONG capacity = (ULONG)process->ThreadCount + 16, count = 0;
+    PVOID *tebs = ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity * sizeof(PVOID), KI_TAG('P', 's', 'T', 'z'));
+    if (!tebs)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG64 state = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead && count < capacity; e = e->Flink) {
+        PETHREAD thread = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (thread->Tcb.Teb && !thread->Tcb.Terminating)
+            tebs[count++] = thread->Tcb.Teb;
+    }
+    KiReleaseDispatcherLock(state);
+    PVOID zero = nullptr;
+    for (ULONG i = 0; i < count; i++) {
+        PTEB teb = tebs[i];
+        if (index < TLS_MINIMUM_AVAILABLE) {
+            KiCopyToUser(&teb->TlsSlots[index], &zero, sizeof(zero));
+            continue;
+        }
+        PVOID *expansion = nullptr;
+        if (NT_SUCCESS(KiCopyFromUser(&expansion, &teb->TlsExpansionSlots, sizeof(expansion))) && expansion)
+            KiCopyToUser(&expansion[index - TLS_MINIMUM_AVAILABLE], &zero, sizeof(zero));
+    }
+    ExFreePool(tebs);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length)
 {
     if (klass == ThreadImpersonationToken)
         return SepSetThreadToken(handle, info, length);
+    if ((ULONG)klass == 29) { /* ThreadWow64Context */
+        PETHREAD thread;
+        NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SET_CONTEXT, &thread);
+        if (!NT_SUCCESS(status))
+            return status;
+        status = PspWow64SetContextThread(thread, info, length);
+        ObDereferenceObject(thread);
+        return status;
+    }
     /* the scheduling classes need a length and a value, then a handle that may set them. */
     ACCESS_MASK rights = THREAD_SET_INFORMATION;
     ULONG want = 0;
@@ -962,10 +1308,16 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
     case ThreadAffinityMask:
         want = sizeof(ULONG64);
         break;
+    case ThreadEnableAlignmentFaultFixup:
+        want = sizeof(BOOLEAN);
+        break;
+    case ThreadZeroTlsCell:
+        want = sizeof(ULONG);
+        break;
     default:
         break;
     }
-    if (klass != ThreadIdealProcessor && klass != ThreadIdealProcessorEx && want)
+    if (klass != ThreadIdealProcessor && klass != ThreadIdealProcessorEx && klass != ThreadEnableAlignmentFaultFixup && want)
         rights = THREAD_SET_LIMITED_INFORMATION;
     ULONG64 value = 0;
     if (want) {
@@ -998,6 +1350,9 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
             if (NT_SUCCESS(status))
                 thread->Tcb.UserSuspendGate = gate;
         }
+    } else if (klass == ThreadZeroTlsCell) {
+        PEPROCESS process = CONTAINING_RECORD(thread->Tcb.Process, EPROCESS, Pcb);
+        status = process == PsCurrentProcess() ? zero_tls_cell(process, (ULONG)value) : STATUS_ACCESS_DENIED;
     } else if (klass == ThreadDynamicCodePolicyInfo) {
         status = PspSetThreadDynamicCodePolicy(thread, info, length);
     } else if (klass == ThreadHideFromDebugger) {
@@ -1023,6 +1378,8 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
             KiSetBasePriorityThread(&thread->Tcb, increment);
     } else if (klass == ThreadPriorityBoost) {
         thread->Tcb.DisableBoost = (ULONG)value != 0;
+    } else if (klass == ThreadEnableAlignmentFaultFixup) {
+        thread->Tcb.AutoAlignment = (UCHAR)value != 0;
     } else if (klass == ThreadAffinityMask) {
         PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
         /* like KiSetLegacyAffinityThread, processors that do not exist are dropped from the mask before it is checked. */
@@ -1106,6 +1463,16 @@ NTSTATUS NTAPI NtAlertThreadByThreadId(HANDLE id)
     return status;
 }
 
+/*
+ * the locks of the ntdll of windows 11 wake with this one and name the lock. measured on windows 11 26300 with
+ * scratch/dlls/probe/alertex.c of the research repository: the pointer is never read, not even a bad one, and
+ * the rest is NtAlertThreadByThreadId.
+ */
+NTSTATUS NTAPI NtAlertThreadByThreadIdEx(HANDLE id, PVOID lock)
+{
+    return NtAlertThreadByThreadId(id);
+}
+
 NTSTATUS NTAPI NtWaitForAlertByThreadId(PVOID hint, PLARGE_INTEGER timeout)
 {
     LARGE_INTEGER t;
@@ -1141,6 +1508,60 @@ NTSTATUS NTAPI NtQueueApcThread(HANDLE handle, PPS_APC_ROUTINE routine, PVOID ar
     }
     ObDereferenceObject(thread);
     return status;
+}
+
+#define QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC 0x1
+
+/*
+ * QueueUserAPC of the kernelbase of windows 11 comes here, with no reserve object and no flags. mime has no reserve
+ * objects, so any handle in their place is not one, and no special user apcs, which run without an alertable wait.
+ */
+NTSTATUS NTAPI NtQueueApcThreadEx2(HANDLE handle, HANDLE reserve, ULONG flags, PPS_APC_ROUTINE routine, PVOID arg1,
+                                   PVOID arg2, PVOID arg3)
+{
+    if (flags & ~QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC)
+        return STATUS_INVALID_PARAMETER;
+    if (reserve)
+        return STATUS_INVALID_HANDLE;
+    if (flags)
+        return STATUS_NOT_SUPPORTED;
+    return NtQueueApcThread(handle, routine, arg1, arg2, arg3);
+}
+
+/* the second argument is a reserve object, or 1 for a special user apc. */
+NTSTATUS NTAPI NtQueueApcThreadEx(HANDLE handle, HANDLE option, PPS_APC_ROUTINE routine, PVOID arg1, PVOID arg2,
+                                  PVOID arg3)
+{
+    if ((ULONG_PTR)option == QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC)
+        return NtQueueApcThreadEx2(handle, nullptr, QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC, routine, arg1, arg2, arg3);
+    return NtQueueApcThreadEx2(handle, option, 0, routine, arg1, arg2, arg3);
+}
+
+typedef struct KCONTINUE_ARGUMENT {
+    ULONG ContinueType; /* unwind, resume, long jump or set, which only the shadow stack tells apart. */
+    ULONG ContinueFlags;
+    ULONG64 Reserved[2];
+} KCONTINUE_ARGUMENT;
+
+#define KCONTINUE_LAST 4
+#define KCONTINUE_FLAG_TEST_ALERT 0x1
+#define KCONTINUE_FLAG_DELIVER_APC 0x2
+
+/*
+ * the argument is NtContinue's alert flag, or a KCONTINUE_ARGUMENT. KiUserApcDispatcher passes the one the kernel
+ * left in its frame and starts over when this returns success with the next apc in that frame. here the next apc
+ * gets a frame of its own from the same stack pointer as the thread returns to user mode, which comes to the same.
+ */
+NTSTATUS NTAPI NtContinueEx(PCONTEXT context, PVOID argument)
+{
+    if ((ULONG_PTR)argument < 0x10000)
+        return NtContinue(context, (BOOLEAN)(ULONG_PTR)argument);
+    KCONTINUE_ARGUMENT arg;
+    if (!NT_SUCCESS(KiCopyFromUser(&arg, argument, sizeof(arg))))
+        return STATUS_ACCESS_VIOLATION;
+    if (arg.ContinueType >= KCONTINUE_LAST || (arg.ContinueFlags & ~(KCONTINUE_FLAG_TEST_ALERT | KCONTINUE_FLAG_DELIVER_APC)))
+        return STATUS_INVALID_PARAMETER;
+    return NtContinue(context, (arg.ContinueFlags & (KCONTINUE_FLAG_TEST_ALERT | KCONTINUE_FLAG_DELIVER_APC)) != 0);
 }
 
 HANDLE NTAPI PsGetThreadId(PETHREAD thread)
@@ -1198,7 +1619,7 @@ BOOLEAN NTAPI PsIsThreadTerminating(PETHREAD thread)
 void PsDumpThreads(void)
 {
     static const char *const states[] = {"initialized", "ready", "running", "standby", "terminated", "waiting"};
-    enum { MAX = 512 };
+    enum { MAX = 4096 };
     static PETHREAD threads[MAX];
     static PVOID satisfied[MAX];
     ULONG n = 0;
@@ -1207,8 +1628,10 @@ void PsDumpThreads(void)
         PEPROCESS process = CONTAINING_RECORD(p, EPROCESS, ActiveProcessLinks);
         for (PLIST_ENTRY t = process->ThreadListHead.Flink; t != &process->ThreadListHead && n < MAX; t = t->Flink) {
             threads[n] = CONTAINING_RECORD(t, ETHREAD, ThreadListEntry);
+            if (!ObReferenceObjectSafe(threads[n]))
+                continue;
             satisfied[n] = KiSatisfiedWaitObject(&threads[n]->Tcb);
-            ObReferenceObject(threads[n++]);
+            n++;
         }
     }
     KiReleaseDispatcherLock(s);

@@ -14,11 +14,12 @@ BEGIN
             VALUE "CompanyName", "Microsoft Corporation"
             VALUE "FileDescription", "Crypto Network Related API"
             VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
-            VALUE "InternalName", "cryptnet.dll"
+            VALUE "InternalName", "CRYPTNET.DLL"
             VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
-            VALUE "OriginalFilename", "cryptnet.dll"
+            VALUE "OriginalFilename", "CRYPTNET.DLL"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9278"
+            VALUE "OleSelfRegister", ""
         END
     END
     BLOCK "VarFileInfo"

@@ -135,6 +135,7 @@ EXPORTS
     CryptVerifyCertificateSignature@20
     CryptVerifyCertificateSignatureEx@32
     CryptVerifyDetachedMessageSignature@32
+    CryptVerifyMessageSignature@28
     PFXImportCertStore@12
     PFXIsPFXBlob@4
     PFXVerifyPassword@12

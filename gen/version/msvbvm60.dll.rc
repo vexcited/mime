@@ -3,7 +3,7 @@ FILEVERSION 6, 0, 98, 48
 PRODUCTVERSION 6, 0, 98, 48
 FILEFLAGSMASK 0x3F
 FILEFLAGS 0x0
-FILEOS 0x40004
+FILEOS 0x4
 FILETYPE 2
 FILESUBTYPE 0
 BEGIN
@@ -15,9 +15,12 @@ BEGIN
             VALUE "FileDescription", "Visual Basic Virtual Machine"
             VALUE "FileVersion", "6.00.9848"
             VALUE "InternalName", "MSVBVM60.DLL"
-            VALUE "LegalCopyright", "Copyright \251 1987-2000 Microsoft Corp."
+            VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
+            VALUE "LegalTrademarks", "Microsoft\256 is a registered trademark of Microsoft Corporation. Windows(TM) is a trademark of Microsoft Corporation"
             VALUE "ProductName", "Visual Basic"
             VALUE "ProductVersion", "6.00.9848"
+            VALUE "Comments", "April 28, 2020"
+            VALUE "OLESelfRegister", ""
         END
     END
     BLOCK "VarFileInfo"

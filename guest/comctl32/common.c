@@ -235,6 +235,11 @@ BOOL CcFocusCuesHidden(HWND hwnd)
 
 void CcDrawThemedEdge(HWND hwnd, HTHEME theme)
 {
+    CcDrawThemedEdgePart(hwnd, theme, 0, 0);
+}
+
+void CcDrawThemedEdgePart(HWND hwnd, HTHEME theme, int part, int state)
+{
     if (!theme || !(GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_CLIENTEDGE))
         return;
     RECT w;
@@ -243,11 +248,83 @@ void CcDrawThemedEdge(HWND hwnd, HTHEME theme)
     HDC dc = GetWindowDC(hwnd);
     if (!dc)
         return;
-    UINT dpi = GetWindowDPI(hwnd);
+    UINT dpi = GetDpiForWindow(hwnd);
     int ex = GetSystemMetricsForDpi(SM_CXEDGE, dpi), ey = GetSystemMetricsForDpi(SM_CYEDGE, dpi);
     ExcludeClipRect(dc, w.left + ex, w.top + ey, w.right - ex, w.bottom - ey);
-    DrawThemeBackground(theme, dc, 0, 0, &w, nullptr);
+    DrawThemeBackground(theme, dc, part, state, &w, nullptr);
     ReleaseDC(hwnd, dc);
+}
+
+static SRWLOCK g_theme_lock = SRWLOCK_INIT;
+static struct {
+    LPCWSTR Name;
+    UINT Dpi;
+    HTHEME Theme;
+} g_themes[16];
+
+HTHEME CcClassTheme(HWND hwnd, LPCWSTR name)
+{
+    if (!IsAppThemed())
+        return nullptr;
+    UINT dpi = GetDpiForWindow(hwnd);
+    HTHEME theme = nullptr;
+    AcquireSRWLockExclusive(&g_theme_lock);
+    SIZE_T i = 0;
+    while (i < RTL_NUMBER_OF(g_themes) && g_themes[i].Theme && (g_themes[i].Dpi != dpi || wcscmp(g_themes[i].Name, name)))
+        i++;
+    if (i < RTL_NUMBER_OF(g_themes)) {
+        if (!g_themes[i].Theme) {
+            g_themes[i].Name = name;
+            g_themes[i].Dpi = dpi;
+            g_themes[i].Theme = OpenThemeDataForDpi(nullptr, name, dpi);
+        }
+        theme = g_themes[i].Theme;
+    }
+    ReleaseSRWLockExclusive(&g_theme_lock);
+    return theme;
+}
+
+typedef struct WINDOW_FLAGS {
+    struct WINDOW_FLAGS *Next;
+    HWND Hwnd;
+    UINT Flags;
+} WINDOW_FLAGS;
+
+static SRWLOCK g_flags_lock = SRWLOCK_INIT;
+static WINDOW_FLAGS *g_flags;
+
+UINT CcWindowFlags(HWND hwnd)
+{
+    UINT flags = 0;
+    AcquireSRWLockShared(&g_flags_lock);
+    for (WINDOW_FLAGS *f = g_flags; f; f = f->Next)
+        if (f->Hwnd == hwnd) {
+            flags = f->Flags;
+            break;
+        }
+    ReleaseSRWLockShared(&g_flags_lock);
+    return flags;
+}
+
+void CcSetWindowFlags(HWND hwnd, UINT flags)
+{
+    AcquireSRWLockExclusive(&g_flags_lock);
+    WINDOW_FLAGS **link = &g_flags;
+    while (*link && (*link)->Hwnd != hwnd)
+        link = &(*link)->Next;
+    WINDOW_FLAGS *f = *link;
+    if (f && !flags) {
+        *link = f->Next;
+        CcFree(f);
+    } else if (f) {
+        f->Flags = flags;
+    } else if (flags && (f = CcAlloc(sizeof(*f)))) {
+        f->Hwnd = hwnd;
+        f->Flags = flags;
+        f->Next = g_flags;
+        g_flags = f;
+    }
+    ReleaseSRWLockExclusive(&g_flags_lock);
 }
 
 /*
@@ -266,7 +343,7 @@ int CcMagicScale(HWND hwnd, BOOL forced, BOOL themed, int value)
 {
     if (!hwnd)
         return value;
-    UINT dpi = GetWindowDPI(hwnd);
+    UINT dpi = GetDpiForWindow(hwnd);
     if (!dpi)
         dpi = 96;
     BOOL on = g_force_magic || forced;
@@ -285,7 +362,7 @@ int CcMagicScale(HWND hwnd, BOOL forced, BOOL themed, int value)
 
 int CcScale(HWND hwnd, int value)
 {
-    UINT dpi = hwnd ? GetWindowDPI(hwnd) : 96;
+    UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 96;
     if (!dpi)
         dpi = 96;
     return MulDiv(value, (int)dpi, 96);

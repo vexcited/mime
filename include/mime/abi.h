@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#define MIME_ABI_VERSION 5
+#define MIME_ABI_VERSION 6
 
 /* guest physical layout. */
 #ifdef __x86_64__
@@ -82,6 +82,7 @@ typedef struct MimeDisplayInfo {
 } MimeDisplayInfo;
 
 #define MIME_DISPLAY_STRETCH 0x1 /* windows drawn at a lower dpi than the display's are stretched by the host, see MimeWinConfig. */
+#define MIME_DISPLAY_NO_MINIMIZE 0x2 /* the desktop of the host has no place for a minimized window, as a tiling one. */
 
 /*
  * MIME_HC_TRAY manages notification icons, balloons and menus. commands occupy up to MIME_TRAY_COMMAND_SIZE
@@ -432,7 +433,6 @@ typedef struct MimeBootInfo {
     MimeMemRange reserved[MIME_BOOT_MAX_RANGES];
 
     char system_root[64]; /* "C:\\Windows". */
-    char cmdline[256];
     /* where programs write fetched feature packages; on the host share, so nothing of mime lands on C:. */
     char feature_cache[260];
     /* the root bundle of a host that keeps its roots outside /etc, exported beside the cache; empty when it has none. */
@@ -456,27 +456,28 @@ typedef struct MimeBootInfo {
     MimeKeyboardLayout keyboard;
     /* the host's gpus in the order dxgi lists them, which the display key and the device tree name. */
     uint32_t gpu_count;
-    uint32_t pad3;
+    uint32_t wheel_lines; /* the lines a notch of the wheel scrolls on the host, 0 when its desktop has no such setting. */
     MimeBootGpu gpus[MIME_BOOT_GPUS];
 } MimeBootInfo;
 
 /*
- * embedded kernel, drivers and DLLs. files are page-aligned for direct guest mapping; DLLs use 4K file
- * alignment to match their memory layout.
+ * embedded kernel, drivers, programs and mime's own DLLs. files are page-aligned for direct guest mapping; DLLs use 4K
+ * file alignment to match their memory layout. the system files of windows that are microsoft's are named with no
+ * bytes, see MimeRomEntry.genuine.
  */
 #define MIME_ROM_MAGIC 0x004D4F52454D494Dull /* "MIMEROM". */
 
 /* the entries of data/genuine-<arch>.manifest the rom and the host can know. */
-#define MIME_GENUINE_MAX 256
+#define MIME_GENUINE_MAX 1024
 
 typedef struct MimeRomEntry {
-    char path[96]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded. */
+    char path[128]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded: a file of the driver store has a long one. */
     uint64_t offset; /* from the rom header, page aligned. */
-    uint64_t size;
+    uint64_t size; /* 0 for a file of the manifest. */
     /*
-     * a file whose microsoft original is listed in data/genuine-<arch>.manifest has 1 + its index there and its size. the
-     * machine starts only when the host holds every one: reads, sizes and data sections of the file show that copy,
-     * see MIME_HC_GENUINE_OPEN, and images still map this one.
+     * a file listed in data/genuine-<arch>.manifest has 1 + its index there and its size, and no bytes here: size is 0.
+     * it is always microsoft's copy, which the host holds, and the machine starts only when the host has every one:
+     * reads, sizes, data sections and images of the file are that copy, see MIME_HC_GENUINE_OPEN.
      */
     uint64_t genuine_size;
     uint32_t genuine;
@@ -591,6 +592,8 @@ enum {
     MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
     MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */
     MIME_HC_FS_DELETE_REPARSE = 0x6B, /* handle and the tag the guest expects: the link becomes the empty file or directory it was made from. */
+    MIME_HC_FS_SPARSE = 0x71,    /* handle, MIME_FS_SPARSE_* op, start, end, pa and capacity in MimeFsRange entries: allocates the holes of the file, zeroes a range of it, punching what whole MIME_FS_SPARSE_UNIT pieces it covers when the op says so, or lists the ranges that hold data and returns their count. */
+    MIME_HC_FS_OBJECT_ID = 0x6F, /* handle, pa of 16 bytes and create: the object id stored with the file. with create, the bytes at pa are stored when it has none. MIME_HC_STATUS_NOT_FOUND for a file without one, MIME_HC_STATUS_INVALID where none can be stored. */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
@@ -646,6 +649,12 @@ enum {
      * tells whether the socket is there and returns no socket.
      */
     MIME_HC_NET_IPC = 0x57,
+    /*
+     * an icmp echo on a socket of its own, MimeNetEcho at pa and the payload: the socket to watch for reading, then
+     * MIME_HC_NET_ECHO_REPLY takes the answer, an echo reply or an icmp error about it.
+     */
+    MIME_HC_NET_ECHO = 0x5A,       /* (MimeNetEcho pa, pa, len) -> socket */
+    MIME_HC_NET_ECHO_REPLY = 0x5B, /* (socket, MimeNetEchoReply pa, pa, max) -> bytes of payload written */
 
     /* the clipboard in every format the host and the guest can exchange, see MIME_CLIP_*. */
     MIME_HC_CLIP_OFFER = 0x48,   /* (MIME_CLIP_* mask) the guest owns the clipboard and can render these, none to withdraw */
@@ -824,6 +833,20 @@ typedef struct MimeNetLink {
     uint8_t mac_length;
     uint8_t mac[8];
     uint8_t pad[7];
+    /* what the link received and sent since the host started it. packets count every kind, multicast included. */
+    uint64_t rx_bytes;
+    uint64_t rx_packets;
+    uint64_t rx_multicast;
+    uint64_t rx_errors;
+    uint64_t rx_dropped;
+    uint64_t tx_bytes;
+    uint64_t tx_packets;
+    uint64_t tx_errors;
+    uint64_t tx_dropped;
+    /* the DHCP lease of the link's IPv4 address, zeros when the host has none or does not tell. */
+    uint8_t dhcp_server[4];
+    uint32_t dhcp_lease;    /* seconds the lease lasts. */
+    uint64_t dhcp_obtained; /* seconds since 1970. */
 } MimeNetLink;
 
 enum {
@@ -873,6 +896,30 @@ typedef struct MimeNetConfig {
     MimeNetAddr server[MIME_NET_MAX_DNS];
     /* MimeNetLink link[links], MimeNetAddress address[addresses], MimeNetRoute route[routes]. */
 } MimeNetConfig;
+
+enum {
+    MIME_NET_ECHO_DONT_FRAGMENT = 1u << 0,
+};
+
+typedef struct MimeNetEcho {
+    MimeNetAddr destination;
+    MimeNetAddr source; /* family 0 for any. */
+    uint8_t ttl;        /* 0 for the host's default. */
+    uint8_t flags;      /* MIME_NET_ECHO_* */
+    uint16_t sequence;
+    uint32_t pad;
+} MimeNetEcho;
+
+typedef struct MimeNetEchoReply {
+    MimeNetAddr from;
+    uint32_t size; /* of the whole payload, more than was written when it did not fit. */
+    uint8_t error; /* an icmp error about the echo rather than its reply, type and code say which. */
+    uint8_t type;
+    uint8_t code;
+    uint8_t ttl;
+    uint8_t tos;
+    uint8_t pad[3];
+} MimeNetEchoReply;
 
 /*
  * control channel. the host queues messages and raises MIME_IRQ_CTRL, the
@@ -1077,6 +1124,18 @@ typedef struct MimeFsLinkName {
     uint64_t parent_id; /* file id of the directory the name is in. */
     uint16_t name[];    /* the last component, not terminated. */
 } MimeFsLinkName;
+
+/* the ops of MIME_HC_FS_SPARSE, and the piece a sparse file is allocated in, as ntfs does. */
+#define MIME_FS_SPARSE_FILL 0u
+#define MIME_FS_SPARSE_ZERO 1u
+#define MIME_FS_SPARSE_PUNCH 2u
+#define MIME_FS_SPARSE_RANGES 3u
+#define MIME_FS_SPARSE_UNIT 65536ull
+
+typedef struct MimeFsRange {
+    uint64_t offset;
+    uint64_t length;
+} MimeFsRange;
 
 typedef struct MimeFsInfo {
     uint64_t size;
@@ -1375,7 +1434,10 @@ enum {
     MIME_INPUT_IME = 26,
     /* the compositor shows a window on another monitor: x is its index in MIME_HC_MONITORS' list. */
     MIME_INPUT_WINDOW_DISPLAY = 27,
-    /* the compositor gave the window another size: width and height are those of the host window, the part of the window it covers, in guest pixels. */
+    /*
+     * the compositor gave the window another size: width and height are those of the host window, the part of the
+     * window it covers, in guest pixels. flags 1 tells instead that the drag of a border the host took over ended.
+     */
     MIME_INPUT_WINDOW_SIZE = 28,
     /*
      * notification area event: pad is the guest icon id, flags the MIME_TRAY_EVENT_*, x and y the screen

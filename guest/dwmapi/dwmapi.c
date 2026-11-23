@@ -275,9 +275,7 @@ DWMAPI DwmFlush(void)
     MimeVblankInfo(&vblank);
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    UINT64 next = MimeVblankTime(&vblank, MimeVblankIndex(&vblank, (UINT64)now.QuadPart) + 1);
-    UINT64 ms = ((next - (UINT64)now.QuadPart) * 1000 + vblank.frequency - 1) / vblank.frequency;
-    Sleep((DWORD)(ms ? ms : 1));
+    MimeSleepUntil(MimeVblankTime(&vblank, MimeVblankIndex(&vblank, (UINT64)now.QuadPart) + 1));
     return S_OK;
 }
 

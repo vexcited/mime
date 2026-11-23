@@ -373,13 +373,19 @@ typedef struct _IP_ADAPTER_INFO {
     BOOL HaveWins;
     IP_ADDR_STRING PrimaryWinsServer;
     IP_ADDR_STRING SecondaryWinsServer;
-    LONGLONG LeaseObtained; /* time_t */
+    /* a time_t. the 32-bit iphlpapi.dll of windows writes it with 32 bits, records of 640 bytes, measured on 26100. */
+#ifdef _WIN64
+    LONGLONG LeaseObtained;
     LONGLONG LeaseExpires;
+#else
+    LONG LeaseObtained;
+    LONG LeaseExpires;
+#endif
 } IP_ADAPTER_INFO, *PIP_ADAPTER_INFO;
 #ifdef _WIN64
 MIME_STATIC_ASSERT(sizeof(IP_ADAPTER_INFO) == 704, "IP_ADAPTER_INFO");
 #else
-MIME_STATIC_ASSERT(sizeof(IP_ADAPTER_INFO) == 648, "IP_ADAPTER_INFO");
+MIME_STATIC_ASSERT(sizeof(IP_ADAPTER_INFO) == 640, "IP_ADAPTER_INFO");
 #endif
 
 typedef struct {
@@ -1187,5 +1193,87 @@ IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ ConvertInterfaceLuidToAlias(const NET_L
 IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ ConvertInterfaceAliasToLuid(const WCHAR *alias, PNET_LUID luid);
 IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ ConvertLengthToIpv4Mask(ULONG length, PULONG mask);
 IPHLPAPI_DLL_LINKAGE DWORD NETIOAPI_API_ ConvertIpv4MaskToLength(ULONG mask, PUINT8 length);
+
+/* icmpapi.h and ipexport.h: echo requests. */
+typedef ULONG IPAddr;
+
+typedef struct ip_option_information {
+    UCHAR Ttl;
+    UCHAR Tos;
+    UCHAR Flags;
+    UCHAR OptionsSize;
+    PUCHAR OptionsData;
+} IP_OPTION_INFORMATION, *PIP_OPTION_INFORMATION;
+
+typedef struct icmp_echo_reply {
+    IPAddr Address;
+    ULONG Status;
+    ULONG RoundTripTime;
+    USHORT DataSize;
+    USHORT Reserved; /* the count of replies until IcmpParseReplies takes it. */
+    PVOID Data;
+    IP_OPTION_INFORMATION Options;
+} ICMP_ECHO_REPLY, *PICMP_ECHO_REPLY;
+MIME_STATIC_ASSERT(sizeof(ICMP_ECHO_REPLY) == (sizeof(PVOID) == 8 ? 40 : 28), "ICMP_ECHO_REPLY");
+
+#pragma pack(push, 1)
+typedef struct _IPV6_ADDRESS_EX {
+    USHORT sin6_port;
+    ULONG sin6_flowinfo;
+    USHORT sin6_addr[8];
+    ULONG sin6_scope_id;
+} IPV6_ADDRESS_EX, *PIPV6_ADDRESS_EX;
+#pragma pack(pop)
+
+typedef struct icmpv6_echo_reply_lh {
+    IPV6_ADDRESS_EX Address;
+    ULONG Status;
+    unsigned int RoundTripTime;
+} ICMPV6_ECHO_REPLY, *PICMPV6_ECHO_REPLY;
+MIME_STATIC_ASSERT(sizeof(ICMPV6_ECHO_REPLY) == 36, "ICMPV6_ECHO_REPLY");
+
+#define IP_FLAG_REVERSE 0x1
+#define IP_FLAG_DF 0x2
+
+#define IP_STATUS_BASE 11000
+#define IP_SUCCESS 0
+#define IP_BUF_TOO_SMALL (IP_STATUS_BASE + 1)
+#define IP_DEST_NET_UNREACHABLE (IP_STATUS_BASE + 2)
+#define IP_DEST_HOST_UNREACHABLE (IP_STATUS_BASE + 3)
+#define IP_DEST_PROT_UNREACHABLE (IP_STATUS_BASE + 4)
+#define IP_DEST_PORT_UNREACHABLE (IP_STATUS_BASE + 5)
+#define IP_NO_RESOURCES (IP_STATUS_BASE + 6)
+#define IP_PACKET_TOO_BIG (IP_STATUS_BASE + 9)
+#define IP_REQ_TIMED_OUT (IP_STATUS_BASE + 10)
+#define IP_BAD_ROUTE (IP_STATUS_BASE + 12)
+#define IP_TTL_EXPIRED_TRANSIT (IP_STATUS_BASE + 13)
+#define IP_TTL_EXPIRED_REASSEM (IP_STATUS_BASE + 14)
+#define IP_PARAM_PROBLEM (IP_STATUS_BASE + 15)
+#define IP_SOURCE_QUENCH (IP_STATUS_BASE + 16)
+#define IP_DEST_SCOPE_MISMATCH (IP_STATUS_BASE + 45)
+#define IP_GENERAL_FAILURE (IP_STATUS_BASE + 50)
+
+typedef void(NTAPI *PIO_APC_ROUTINE_ICMP)(PVOID context, PVOID iosb, ULONG reserved);
+
+IPHLPAPI_DLL_LINKAGE HANDLE WINAPI IcmpCreateFile(void);
+IPHLPAPI_DLL_LINKAGE HANDLE WINAPI Icmp6CreateFile(void);
+IPHLPAPI_DLL_LINKAGE BOOL WINAPI IcmpCloseHandle(HANDLE handle);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI IcmpSendEcho(HANDLE handle, IPAddr destination, LPVOID request, WORD request_size,
+                                               PIP_OPTION_INFORMATION options, LPVOID reply, DWORD reply_size,
+                                               DWORD timeout);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI IcmpSendEcho2(HANDLE handle, HANDLE event, PIO_APC_ROUTINE_ICMP apc, PVOID context,
+                                                IPAddr destination, LPVOID request, WORD request_size,
+                                                PIP_OPTION_INFORMATION options, LPVOID reply, DWORD reply_size,
+                                                DWORD timeout);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI IcmpSendEcho2Ex(HANDLE handle, HANDLE event, PIO_APC_ROUTINE_ICMP apc,
+                                                  PVOID context, IPAddr source, IPAddr destination, LPVOID request,
+                                                  WORD request_size, PIP_OPTION_INFORMATION options, LPVOID reply,
+                                                  DWORD reply_size, DWORD timeout);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI IcmpParseReplies(LPVOID reply, DWORD reply_size);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI Icmp6SendEcho2(HANDLE handle, HANDLE event, PIO_APC_ROUTINE_ICMP apc, PVOID context,
+                                                 struct sockaddr_in6 *source, struct sockaddr_in6 *destination,
+                                                 LPVOID request, WORD request_size, PIP_OPTION_INFORMATION options,
+                                                 LPVOID reply, DWORD reply_size, DWORD timeout);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI Icmp6ParseReplies(LPVOID reply, DWORD reply_size);
 
 #endif

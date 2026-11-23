@@ -161,6 +161,8 @@ typedef struct AFD_NATIVE_POLL {
 } AFD_NATIVE_POLL;
 
 static ULONG native_interest(AFD_SOCKET *socket);
+static ULONG64 service_echoes(void);
+static BOOLEAN echo_event(ULONG id);
 
 /* a thread in select or WSAPoll, woken whenever the worker ran. */
 typedef struct AFD_POLLER {
@@ -183,11 +185,14 @@ static LIST_ENTRY g_sockets;
 static LIST_ENTRY g_pollers;
 static LIST_ENTRY g_native_polls;
 static LIST_ENTRY g_resolvers;
+static LIST_ENTRY g_echoes;
 static PUCHAR g_bounce;
 /* host arguments live in the kernel image, which is physically contiguous. */
 static MIME_AFD_ADDRESS g_addr __attribute__((aligned(16)));
 static MimeNetPoll g_poll __attribute__((aligned(16)));
 static ULONG g_events[AFD_EVENTS_BATCH] __attribute__((aligned(16)));
+static MimeNetEcho g_echo __attribute__((aligned(16)));
+static MimeNetEchoReply g_echo_reply __attribute__((aligned(16)));
 
 static void lock(void)
 {
@@ -1038,6 +1043,14 @@ static void NTAPI worker(PVOID context)
         lock();
         service_native_polls();
         BOOLEAN finite = native_poll_timeout(&timeout);
+        ULONG64 echo = service_echoes();
+        if (echo != ~0ull) {
+            ULONG64 current = now();
+            LONGLONG wait = -(LONGLONG)(echo <= current ? 0 : echo - current);
+            if (!finite || wait > timeout.QuadPart)
+                timeout.QuadPart = wait;
+            finite = TRUE;
+        }
         unlock();
         KeWaitForSingleObject(&g_work, Executive, KernelMode, FALSE, finite ? &timeout : nullptr);
         lock();
@@ -1060,7 +1073,7 @@ static void NTAPI worker(PVOID context)
                 AFD_SOCKET *s = find_host(id);
                 if (s)
                     service(s);
-                else if (!HttpHostEvent(id))
+                else if (!echo_event(id) && !HttpHostEvent(id))
                     NpfsHostEvent(id);
             }
             if (n < AFD_EVENTS_BATCH)
@@ -1093,6 +1106,215 @@ static NTSTATUS check_address(const MIME_AFD_ADDRESS *a, const AFD_SOCKET *s)
     if (a->Family != (USHORT)s->Family)
         return MimeAfdStatus(10047);
     return STATUS_SUCCESS;
+}
+
+/* ------------------------------------------------------------ icmp echoes */
+
+/*
+ * an echo of IcmpSendEcho2 on a host socket of its own. windows does this in tcpip and completes it through nsi; here
+ * the request pends on the afd file of iphlpapi until the answer, an icmp error about it or the timeout.
+ */
+typedef struct AFD_ECHO {
+    LIST_ENTRY Links;
+    AFD_REQUEST *Request;
+    ULONG Host;
+    ULONG64 Start, Deadline;
+    PVOID Reply;
+    ULONG ReplySize;
+    PVOID Output;
+} AFD_ECHO;
+
+static USHORT g_echo_sequence;
+
+static void finish_echo(AFD_ECHO *e, NTSTATUS status, MIME_AFD_ECHO_RESULT *result)
+{
+    MIME_AFD_ECHO_RESULT none;
+    if (!result) {
+        memset(&none, 0, sizeof(none));
+        result = &none;
+    }
+    result->RoundTrip = (ULONG)((now() - e->Start) / 10000);
+    RemoveEntryList(&e->Links);
+    if (e->Host)
+        host(MIME_HC_NET_CLOSE, e->Host, 0, 0, 0, 0, nullptr);
+    AFD_REQUEST *r = e->Request;
+    NTSTATUS copied = attach_copy(r->Process, e->Output, result, sizeof(*result), TRUE);
+    ExFreePool(e);
+    immediate(r, NT_SUCCESS(copied) ? status : copied, sizeof(*result));
+}
+
+/* takes the answer when the host has one, otherwise watches the socket for it. */
+static BOOLEAN poll_echo(AFD_ECHO *e)
+{
+    ULONG64 got = 0;
+    LONG error = host(MIME_HC_NET_ECHO_REPLY, e->Host, pa(&g_echo_reply), pa(g_bounce), AFD_CHUNK, 0, &got);
+    if (error == WSAEWOULDBLOCK) {
+        g_poll.socket = e->Host;
+        g_poll.events = MIME_NET_READ;
+        g_poll.revents = 0;
+        g_poll.error = 0;
+        host(MIME_HC_NET_POLL, pa(&g_poll), 1, 1, 0, 0, nullptr);
+        return FALSE;
+    }
+    if (error) {
+        finish_echo(e, STATUS_UNSUCCESSFUL, nullptr);
+        return TRUE;
+    }
+    MIME_AFD_ECHO_RESULT result;
+    memset(&result, 0, sizeof(result));
+    memcpy(&result.From, &g_echo_reply.from, sizeof(result.From));
+    result.Ttl = g_echo_reply.ttl;
+    result.Tos = g_echo_reply.tos;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (g_echo_reply.error) {
+        result.Error = 1;
+        result.Type = g_echo_reply.type;
+        result.Code = g_echo_reply.code;
+        status = STATUS_UNSUCCESSFUL;
+    } else if (g_echo_reply.size > e->ReplySize) {
+        status = STATUS_BUFFER_TOO_SMALL;
+    } else {
+        result.DataSize = g_echo_reply.size;
+        status = attach_copy(e->Request->Process, e->Reply, g_bounce, g_echo_reply.size, TRUE);
+    }
+    finish_echo(e, status, &result);
+    return TRUE;
+}
+
+static BOOLEAN echo_event(ULONG id)
+{
+    for (PLIST_ENTRY link = g_echoes.Flink; link != &g_echoes; link = link->Flink) {
+        AFD_ECHO *e = CONTAINING_RECORD(link, AFD_ECHO, Links);
+        if (e->Host == id) {
+            poll_echo(e);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* ends the echoes past their timeout and gives the time to the next one, or ~0. */
+static ULONG64 service_echoes(void)
+{
+    ULONG64 next = ~0ull;
+    PLIST_ENTRY link = g_echoes.Flink;
+    while (link != &g_echoes) {
+        AFD_ECHO *e = CONTAINING_RECORD(link, AFD_ECHO, Links);
+        link = link->Flink;
+        if (e->Deadline > now()) {
+            if (e->Deadline < next)
+                next = e->Deadline;
+            continue;
+        }
+        if (!poll_echo(e))
+            finish_echo(e, STATUS_TIMEOUT, nullptr);
+    }
+    return next;
+}
+
+static BOOLEAN cancel_echoes(PFILE_OBJECT file, PETHREAD thread, PVOID iosb, BOOLEAN cleanup)
+{
+    BOOLEAN found = FALSE;
+    PLIST_ENTRY link = g_echoes.Flink;
+    while (link != &g_echoes) {
+        AFD_ECHO *e = CONTAINING_RECORD(link, AFD_ECHO, Links);
+        link = link->Flink;
+        AFD_REQUEST *r = e->Request;
+        if (r->File != file || (!cleanup && r->Process != PsCurrentProcess()) || (thread && r->Thread != thread) ||
+            (iosb && ((ULONG_PTR)r->Iosb & ~(ULONG_PTR)1) != (ULONG_PTR)iosb))
+            continue;
+        finish_echo(e, STATUS_CANCELLED, nullptr);
+        found = TRUE;
+    }
+    return found;
+}
+
+static NTSTATUS echo_status(LONG error)
+{
+    switch (error) {
+    case WSAEMSGSIZE:
+        return STATUS_INVALID_BUFFER_SIZE;
+    case 10051:
+        return (NTSTATUS)0xC000023CL; /* STATUS_NETWORK_UNREACHABLE */
+    case 10065:
+        return (NTSTATUS)0xC000023DL; /* STATUS_HOST_UNREACHABLE */
+    case WSAENOBUFS:
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    return STATUS_UNSUCCESSFUL;
+}
+
+static BOOLEAN unspecified(const MIME_AFD_ADDRESS *a)
+{
+    const UCHAR *bytes = a->Family == 2 ? a->Data + 2 : a->Data + 6;
+    for (ULONG i = 0; i < (a->Family == 2 ? 4u : 16u); i++)
+        if (bytes[i])
+            return FALSE;
+    return TRUE;
+}
+
+static NTSTATUS do_echo(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                        PVOID input, ULONG in_len, PVOID output, ULONG out_len)
+{
+    MIME_AFD_ECHO in;
+    NTSTATUS status = capture(&in, input, sizeof(in), in_len);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (!output || out_len < sizeof(MIME_AFD_ECHO_RESULT) || !in.Timeout || in.RequestSize > 65535 ||
+        (in.Destination.Family != 2 && in.Destination.Family != 23) ||
+        (in.Source.Family && in.Source.Family != in.Destination.Family))
+        return STATUS_INVALID_PARAMETER;
+    if (unspecified(&in.Destination))
+        return STATUS_AFD_INVALID_ADDRESS_COMPONENT;
+    AFD_REQUEST *r = new_request(file, AFD_RECV, 0, event, apc, context, iosb, &status);
+    if (!r)
+        return status;
+    AFD_ECHO *e = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*e), KI_TAG('A', 'f', 'd', 'I'));
+    if (!e)
+        return immediate(r, STATUS_INSUFFICIENT_RESOURCES, 0);
+    memset(e, 0, sizeof(*e));
+    e->Request = r;
+    e->Reply = (PVOID)(ULONG_PTR)in.Reply;
+    e->ReplySize = in.ReplySize;
+    e->Output = output;
+    InitializeListHead(&e->Links);
+    lock();
+    status = KiCopyFromUser(g_bounce, (PVOID)(ULONG_PTR)in.Request, in.RequestSize);
+    if (!NT_SUCCESS(status)) {
+        unlock();
+        ExFreePool(e);
+        return immediate(r, STATUS_ACCESS_VIOLATION, 0);
+    }
+    memset(&g_echo, 0, sizeof(g_echo));
+    memcpy(&g_echo.destination, &in.Destination, sizeof(g_echo.destination));
+    if (in.Source.Family)
+        memcpy(&g_echo.source, &in.Source, sizeof(g_echo.source));
+    g_echo.ttl = in.Ttl;
+    g_echo.flags = in.Flags & MIME_AFD_ECHO_DONT_FRAGMENT ? MIME_NET_ECHO_DONT_FRAGMENT : 0;
+    g_echo.sequence = ++g_echo_sequence;
+    ULONG64 id = 0;
+    LONG error = host(MIME_HC_NET_ECHO, pa(&g_echo), pa(g_bounce), in.RequestSize, 0, 0, &id);
+    if (error == 10049 || error == 10047) {
+        unlock();
+        ExFreePool(e);
+        return immediate(r, STATUS_AFD_INVALID_ADDRESS_COMPONENT, 0);
+    }
+    r->Pending = TRUE;
+    e->Start = now();
+    /* windows times echoes out in whole half seconds, at least one: 1 to 999 ms wait 500, 1499 wait 1000. */
+    ULONG64 halves = in.Timeout / 500 ? in.Timeout / 500 : 1;
+    e->Deadline = e->Start + halves * 500 * 10000;
+    InsertTailList(&g_echoes, &e->Links);
+    /* a failed send still completes like windows does, through the status of the request. */
+    if (error) {
+        finish_echo(e, echo_status(error), nullptr);
+    } else {
+        e->Host = (ULONG)id;
+        if (!poll_echo(e))
+            KeSetEvent(&g_work, IO_NO_INCREMENT, FALSE);
+    }
+    unlock();
+    return STATUS_PENDING;
 }
 
 /* completes now when it can, otherwise queues it or fails a non blocking one. */
@@ -1129,7 +1351,17 @@ static NTSTATUS capture_buffers(AFD_REQUEST *r, ULONG64 buffers)
 {
     if (r->Count && !buffers)
         return STATUS_ACCESS_VIOLATION;
-    NTSTATUS status = KiCopyFromUser(r->Buffers, (PVOID)(ULONG_PTR)buffers, r->Count * sizeof(MIME_AFD_BUFFER));
+    NTSTATUS status = STATUS_SUCCESS;
+    if (PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386) {
+        /* the WSABUF of a 32-bit program is a length and a pointer of four bytes each. */
+        for (ULONG i = 0; i < r->Count && NT_SUCCESS(status); i++) {
+            ULONG narrow[2];
+            status = KiCopyFromUser(narrow, (PUCHAR)(ULONG_PTR)buffers + i * sizeof(narrow), sizeof(narrow));
+            r->Buffers[i] = (MIME_AFD_BUFFER){narrow[0], 0, narrow[1]};
+        }
+    } else {
+        status = KiCopyFromUser(r->Buffers, (PVOID)(ULONG_PTR)buffers, r->Count * sizeof(MIME_AFD_BUFFER));
+    }
     if (!NT_SUCCESS(status))
         return status;
     ULONG64 total = 0;
@@ -1575,6 +1807,56 @@ static NTSTATUS do_config(PVOID output, ULONG out_len, ULONG_PTR *information)
     return status;
 }
 
+/* the same configuration in a pool block the caller frees, for the network store. */
+MIME_AFD_CONFIG *AfdCopyConfig(void)
+{
+    MIME_AFD_CONFIG *config = ExAllocatePool2(POOL_FLAG_NON_PAGED, AFD_CONFIG_SIZE, KI_TAG('A', 'f', 'd', 'C'));
+    if (!config)
+        return nullptr;
+    memset(config, 0, AFD_CONFIG_SIZE);
+    ULONG64 size = 0;
+    if (host(MIME_HC_NET_CONFIG, pa(config), AFD_CONFIG_SIZE, 0, 0, 0, &size) || size < sizeof(*config) ||
+        size > AFD_CONFIG_SIZE) {
+        ExFreePool(config);
+        return nullptr;
+    }
+    return config;
+}
+
+/* the open sockets in a pool block the caller frees, for the tcp and udp tables of the network store. */
+ULONG AfdCopySockets(MIME_AFD_SOCKET_INFO **out)
+{
+    *out = nullptr;
+    lock();
+    ULONG total = 0;
+    for (PLIST_ENTRY e = g_sockets.Flink; e != &g_sockets; e = e->Flink)
+        total++;
+    MIME_AFD_SOCKET_INFO *list =
+        total ? ExAllocatePool2(POOL_FLAG_NON_PAGED, total * sizeof(*list), KI_TAG('A', 'f', 'd', 'L')) : nullptr;
+    ULONG count = 0;
+    for (PLIST_ENTRY e = g_sockets.Flink; list && e != &g_sockets; e = e->Flink) {
+        AFD_SOCKET *s = CONTAINING_RECORD(e, AFD_SOCKET, Links);
+        if (!s->Host || s->Closed)
+            continue;
+        MIME_AFD_SOCKET_INFO *info = &list[count++];
+        memset(info, 0, sizeof(*info));
+        info->ProcessId = s->ProcessId;
+        info->Family = s->Family;
+        info->Type = s->Type;
+        info->State = s->State;
+        info->Bound = s->Bound;
+        info->Flags = (s->Hup ? 1 : 0) | (s->ShutWrite ? 2 : 0);
+        info->ConnectTime = s->ConnectTime;
+        if (!host(MIME_HC_NET_NAME, s->Host, 0, pa(&g_addr), 0, 0, nullptr))
+            info->Local = g_addr;
+        if (s->State == MIME_AFD_STATE_CONNECTED && !host(MIME_HC_NET_NAME, s->Host, 1, pa(&g_addr), 0, 0, nullptr))
+            info->Remote = g_addr;
+    }
+    unlock();
+    *out = list;
+    return count;
+}
+
 /* every open socket with its addresses, for the tcp and udp tables. */
 static NTSTATUS do_sockets(PVOID output, ULONG out_len, ULONG_PTR *information)
 {
@@ -1840,6 +2122,8 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
         return do_connect(file, s, event, apc, context, iosb, input, in_len);
     case IOCTL_AFD_ACCEPT:
         return do_accept(file, s, event, apc, context, iosb, input, in_len);
+    case IOCTL_AFD_ECHO:
+        return do_echo(file, event, apc, context, iosb, input, in_len, output, out_len);
     }
     /* the rest answer at once and complete like a synchronous request. */
     NTSTATUS status;
@@ -1931,6 +2215,7 @@ NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
     lock();
     if (s) {
         found |= cancel_native_polls(file, thread, iosb, FALSE);
+        found |= cancel_echoes(file, thread, iosb, FALSE);
         found |= cancel_list(&s->Receivers, file, thread, iosb);
         found |= cancel_list(&s->Senders, file, thread, iosb);
         found |= cancel_list(&s->Accepters, file, thread, iosb);
@@ -1993,6 +2278,7 @@ static NTSTATUS NTAPI afd_cleanup(PDEVICE_OBJECT device, PIRP irp)
         s->Closed = TRUE;
         cancel_native_polls(file, nullptr, nullptr, TRUE);
         service_native_polls();
+        cancel_echoes(file, nullptr, nullptr, TRUE);
         fail_list(&s->Receivers, STATUS_AFD_CANCELLED);
         fail_list(&s->Senders, STATUS_AFD_CANCELLED);
         fail_list(&s->Connects, STATUS_AFD_CANCELLED);
@@ -2058,6 +2344,7 @@ void IopInitializeAfd(void)
     InitializeListHead(&g_pollers);
     InitializeListHead(&g_native_polls);
     InitializeListHead(&g_resolvers);
+    InitializeListHead(&g_echoes);
     g_bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, AFD_CHUNK, KI_TAG('A', 'f', 'd', 'B'));
     if (!g_bounce) {
         KiLogPrintf("afd has no bounce buffer");

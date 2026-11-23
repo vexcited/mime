@@ -632,7 +632,7 @@ HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT
                         DWORD usage, D3DFORMAT format, D3DPOOL pool, HANDLE *shared, D9Texture **out)
 {
     const D9Format *f = D9GetFormat(format);
-    if (!width || !height || !depth || f->d3d == D3DFMT_UNKNOWN || (f->flags & D9_FORMAT_NULL))
+    if (!width || !height || !depth || f->d3d == D3DFMT_UNKNOWN || (f->flags & D9_FORMAT_NULL) || D9FormatPlain(f))
         return D3DERR_INVALIDCALL;
     if ((usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) && pool != D3DPOOL_DEFAULT)
         return D3DERR_INVALIDCALL;

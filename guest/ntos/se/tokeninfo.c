@@ -702,6 +702,7 @@ typedef struct OUTPUT {
     PUCHAR Data; /* NULL while only measuring. */
     ULONG_PTR Base;
     ULONG Size;
+    ULONG Written; /* when the class writes less than the length it asks for. */
 } OUTPUT;
 
 static ULONG out_alloc(OUTPUT *o, ULONG bytes, ULONG alignment)
@@ -741,6 +742,9 @@ static void out_groups(OUTPUT *o, const SEP_GROUP *groups, ULONG count, ULONG st
 {
     ULONG head = out_alloc(o, 8 + 16 * (count - start), 8);
     out_ulong(o, head, count - start);
+    /* an empty list asks for the eight bytes of its head and writes the count alone. */
+    if (count == start)
+        o->Written = 4;
     for (ULONG i = start; i < count; i++)
         out_sid_entry(o, head + 8 + 16 * (i - start), groups[i].Sid, groups[i].Attributes);
 }
@@ -774,6 +778,97 @@ static ULONG out_privilege_entries(OUTPUT *o, ULONG at, const TOKEN *t)
 static void out_bytes_ulong(OUTPUT *o, ULONG value)
 {
     out_ulong(o, out_alloc(o, 4, 4), value);
+}
+
+static void out_quad(OUTPUT *o, ULONG at, ULONG64 value)
+{
+    out_write(o, at, &value, sizeof(value));
+}
+
+/* the two numbers of the attribute every process token carries, TSA://ProcUnique: they tell tokens apart. */
+static void proc_unique(const TOKEN *t, ULONG64 values[2])
+{
+    values[0] = 0x80 + (t->TokenId & 0x7F);
+    values[1] = t->TokenId + 1;
+}
+
+static const WCHAR proc_unique_name[] = L"TSA://ProcUnique";
+
+/* a SID_AND_ATTRIBUTES_HASH: the count, the entries, a hash of the low byte of each last subauthority, the sids. */
+static ULONG out_sid_hash(OUTPUT *o, const SEP_GROUP *groups, ULONG count)
+{
+    ULONG head = out_alloc(o, 0x110, 8);
+    ULONG entries = out_alloc(o, 16 * count, 8);
+    out_ulong(o, head, count);
+    out_pointer(o, head + 8, entries);
+    ULONG64 hash[32] = {};
+    for (ULONG i = 0; i < count; i++) {
+        const UCHAR *sid = groups[i].Sid;
+        UCHAR low = sid[1] ? (UCHAR)((const ULONG *)(sid + 8))[sid[1] - 1] : 0;
+        if (i < 64) {
+            hash[low & 0xF] |= 1ull << i;
+            hash[16 + (low >> 4)] |= 1ull << i;
+        }
+        out_sid_entry(o, entries + 16 * i, sid, groups[i].Attributes);
+    }
+    out_write(o, head + 0x10, hash, sizeof(hash));
+    return head;
+}
+
+/*
+ * TokenAccessInformation as windows 11 26300 lays it out, measured with scratch/dlls/probe/token.c of the research
+ * repository: the head, the hash of the groups with 0x30 bytes to spare behind the sids, the empty hashes of the
+ * restricted sids and the capabilities, the security attributes as the kernel links them, then the privileges.
+ */
+static void out_access_information(OUTPUT *o, const TOKEN *t)
+{
+    ULONG head = out_alloc(o, 0x58, 8);
+    ULONG sids = out_sid_hash(o, t->Groups, t->GroupCount);
+    out_alloc(o, 0x30, 4);
+    ULONG restricted = out_sid_hash(o, t->Restricted, t->RestrictedCount);
+    ULONG capabilities = out_sid_hash(o, t->Capabilities, t->CapabilityCount);
+    /* one attribute: a list head, the attribute with its name and its two values, each on the lists of the other. */
+    ULONG attributes = out_alloc(o, 0x140, 8);
+    ULONG n = SepPrivilegeCount(t);
+    ULONG privileges = out_alloc(o, 4 + 12 * n, 4);
+    out_pointer(o, head, sids);
+    out_pointer(o, head + 8, restricted);
+    out_pointer(o, head + 0x10, privileges);
+    out_write(o, head + 0x18, &t->AuthenticationId, 8);
+    out_ulong(o, head + 0x20, t->Type);
+    out_ulong(o, head + 0x24, t->ImpersonationLevel);
+    out_ulong(o, head + 0x28, t->MandatoryPolicy);
+    out_ulong(o, head + 0x2C, t->Flags & 0x3E00);
+    out_ulong(o, head + 0x30, t->LowboxNumber);
+    out_pointer(o, head + 0x40, capabilities);
+    out_pointer(o, head + 0x50, attributes);
+    ULONG64 values[2];
+    proc_unique(t, values);
+    ULONG a = attributes;
+    out_quad(o, a, 1);
+    out_pointer(o, a + 0x08, a + 0x30);
+    out_pointer(o, a + 0x10, a + 0x30);
+    out_pointer(o, a + 0x20, a + 0x20);
+    out_pointer(o, a + 0x28, a + 0x20);
+    out_pointer(o, a + 0x30, a + 0x08);
+    out_pointer(o, a + 0x38, a + 0x08);
+    out_quad(o, a + 0x50, 0x200020);
+    out_pointer(o, a + 0x58, a + 0xA0);
+    out_quad(o, a + 0x60, 0x4100000002ull);
+    out_quad(o, a + 0x68, 0x200000000ull);
+    out_pointer(o, a + 0x78, a + 0xC0);
+    out_pointer(o, a + 0x80, a + 0x100);
+    out_pointer(o, a + 0x90, a + 0x90);
+    out_pointer(o, a + 0x98, a + 0x90);
+    out_write(o, a + 0xA0, proc_unique_name, 0x20);
+    out_pointer(o, a + 0xC0, a + 0x100);
+    out_pointer(o, a + 0xC8, a + 0x78);
+    out_quad(o, a + 0xE8, values[0]);
+    out_pointer(o, a + 0x100, a + 0x78);
+    out_pointer(o, a + 0x108, a + 0xC0);
+    out_quad(o, a + 0x128, values[1]);
+    out_ulong(o, privileges, n);
+    out_privilege_entries(o, privileges + 4, t);
 }
 
 /*
@@ -845,12 +940,12 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
     case TokenGroupsAndPrivileges: {
         n = SepPrivilegeCount(t);
         at = out_alloc(o, 56, 8);
-        /* the sids rounded up to eight bytes, each array after the other. */
-        ULONG sid_bytes = 16 * t->GroupCount, restricted_bytes = 16 * t->RestrictedCount;
+        /* the sids follow their entries without padding, with 0x30 bytes to spare, each array after the other. */
+        ULONG sid_bytes = 16 * t->GroupCount + 0x30, restricted_bytes = 16 * t->RestrictedCount;
         for (ULONG i = 0; i < t->GroupCount; i++)
-            sid_bytes += (SepSidLength(t->Groups[i].Sid) + 7) & ~7u;
+            sid_bytes += SepSidLength(t->Groups[i].Sid);
         for (ULONG i = 0; i < t->RestrictedCount; i++)
-            restricted_bytes += (SepSidLength(t->Restricted[i].Sid) + 7) & ~7u;
+            restricted_bytes += SepSidLength(t->Restricted[i].Sid);
         ULONG sids = out_alloc(o, sid_bytes, 8);
         ULONG restricted = t->RestrictedCount ? out_alloc(o, restricted_bytes, 8) : 0;
         ULONG privileges = out_alloc(o, 12 * n, 4);
@@ -871,7 +966,7 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
             out_pointer(o, sids + 16 * i, cursor);
             out_ulong(o, sids + 16 * i + 8, t->Groups[i].Attributes);
             out_write(o, cursor, t->Groups[i].Sid, bytes);
-            cursor += (bytes + 7) & ~7u;
+            cursor += bytes;
         }
         cursor = restricted + 16 * t->RestrictedCount;
         for (ULONG i = 0; i < t->RestrictedCount; i++) {
@@ -879,7 +974,7 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
             out_pointer(o, restricted + 16 * i, cursor);
             out_ulong(o, restricted + 16 * i + 8, t->Restricted[i].Attributes);
             out_write(o, cursor, t->Restricted[i].Sid, bytes);
-            cursor += (bytes + 7) & ~7u;
+            cursor += bytes;
         }
         out_privilege_entries(o, privileges, t);
         return STATUS_SUCCESS;
@@ -953,11 +1048,45 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
         return STATUS_SUCCESS;
     case TokenUserClaimAttributes:
     case TokenDeviceClaimAttributes:
-    case TokenSecurityAttributes:
         /* no claims: a version, an attribute count of zero and no list. */
         at = out_alloc(o, 16, 8);
         out_ulong(o, at, 1);
         return STATUS_SUCCESS;
+    case TokenSecurityAttributes: {
+        /* version 1, one attribute: its name, two 64-bit values, not inheritable and mandatory. */
+        ULONG64 values[2];
+        proc_unique(t, values);
+        at = out_alloc(o, 0x68, 8);
+        out_quad(o, at, 0x100000001ull);
+        out_pointer(o, at + 0x08, at + 0x10);
+        out_quad(o, at + 0x10, 0x200020);
+        out_pointer(o, at + 0x18, at + 0x38);
+        out_quad(o, at + 0x20, 0x4100000002ull);
+        out_quad(o, at + 0x28, 2);
+        out_pointer(o, at + 0x30, at + 0x58);
+        out_write(o, at + 0x38, proc_unique_name, 0x20);
+        out_write(o, at + 0x58, values, sizeof(values));
+        return STATUS_SUCCESS;
+    }
+    case TokenAccessInformation:
+        out_access_information(o, t);
+        return STATUS_SUCCESS;
+    case TokenPrivateNameSpace:
+        out_bytes_ulong(o, 0);
+        return STATUS_SUCCESS;
+    case TokenSingletonAttributes:
+        at = out_alloc(o, 16, 8);
+        out_ulong(o, at, 1);
+        return STATUS_SUCCESS;
+    case 0x35:
+        out_bytes_ulong(o, 0);
+        return STATUS_SUCCESS;
+    case 0x36:
+    case 0x37:
+    case 0x38:
+        return STATUS_INVALID_PARAMETER;
+    case 0x3A:
+        return STATUS_NOT_FOUND;
     case TokenDeviceGroups:
         out_alloc(o, 24, 8);
         return STATUS_SUCCESS;
@@ -968,7 +1097,9 @@ static NTSTATUS query_fill(const TOKEN *t, ULONG klass, ULONG length, OUTPUT *o)
         out_alloc(o, 8, 8);
         return STATUS_SUCCESS;
     case TokenBnoIsolation:
+        /* the prefix and the flag are written, not the padding behind them. */
         out_alloc(o, 16, 8);
+        o->Written = 9;
         return STATUS_SUCCESS;
     case TokenIsSandboxed:
         out_bytes_ulong(o, (t->Flags & (TOKEN_LOWBOX | TOKEN_IS_RESTRICTED)) != 0);
@@ -1011,23 +1142,37 @@ static NTSTATUS query_linked(PTOKEN token, ULONG length, PVOID info, PULONG retu
     return NT_SUCCESS(status) ? ObStoreHandle(info, h) : status;
 }
 
+/* the classes windows 11 26300 knows: the others are refused before the handle is looked at. */
+static BOOLEAN query_class_known(ULONG klass)
+{
+    return (klass >= 1 && klass <= 0x22 && klass != TokenSessionReference) || klass == 0x25 ||
+           (klass >= 0x27 && klass <= 0x2C) || klass == 0x2F || klass == 0x30 || (klass >= 0x35 && klass <= 0x38) ||
+           klass == 0x3A;
+}
+
+/*
+ * the order of the checks is that of windows 11 26300, measured with scratch/dlls/probe/token.c of the research
+ * repository: the buffer's boundary, the returned length, the class, the audit privilege and the exact length of
+ * the elevation, and only then the handle.
+ */
 NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned)
 {
+    if (KeGetPreviousMode() != KernelMode && length && ((ULONG_PTR)info & 3))
+        return STATUS_DATATYPE_MISALIGNMENT;
     if (!returned)
         return STATUS_ACCESS_VIOLATION;
+    if (!query_class_known(klass))
+        return STATUS_INVALID_INFO_CLASS;
+    if (klass == TokenAuditPolicy && !SepSinglePrivilegeCheck(SE_SECURITY_PRIVILEGE, KeGetPreviousMode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    if (klass == TokenElevation && length != 4) {
+        write_length(returned, 4);
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
     PTOKEN token;
     NTSTATUS status = SepReferenceTokenByHandle(handle, query_access(klass), &token, nullptr);
     if (!NT_SUCCESS(status))
         return status;
-    if (klass == TokenAuditPolicy && !SepSinglePrivilegeCheck(SE_SECURITY_PRIVILEGE, KeGetPreviousMode())) {
-        ObDereferenceObject(token);
-        return STATUS_PRIVILEGE_NOT_HELD;
-    }
-    if (klass == TokenElevation && length != 4) {
-        ObDereferenceObject(token);
-        write_length(returned, 4);
-        return STATUS_INFO_LENGTH_MISMATCH;
-    }
     if (klass == TokenLinkedToken) {
         status = query_linked(token, length, info, returned);
         ObDereferenceObject(token);
@@ -1037,11 +1182,11 @@ NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, U
     ULONG capacity = 0;
     for (;;) {
         /* measured and filled under one hold of the lock, so the buffer always fits. */
-        OUTPUT measure = {nullptr, (ULONG_PTR)info, 0};
+        OUTPUT measure = {nullptr, (ULONG_PTR)info, 0, 0};
         ExAcquireFastMutex(&SeLock);
         status = query_fill(token, klass, length, &measure);
         if (NT_SUCCESS(status) && measure.Size <= length && measure.Size <= capacity) {
-            OUTPUT fill = {buffer, (ULONG_PTR)info, 0};
+            OUTPUT fill = {buffer, (ULONG_PTR)info, 0, 0};
             query_fill(token, klass, length, &fill);
         }
         ExReleaseFastMutex(&SeLock);
@@ -1055,7 +1200,16 @@ NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, U
             break;
         }
         if (measure.Size <= capacity) {
-            status = write_caller(info, buffer, measure.Size);
+            /* windows leaves the four bytes after the attributes of the user as the caller had them. */
+            if (klass == TokenUser && measure.Size >= 16)
+                KiCopyFromUser(buffer + 12, (PUCHAR)info + 12, 4);
+            status = write_caller(info, buffer, measure.Written ? measure.Written : measure.Size);
+            /* the security attributes are built in the caller's buffer, which windows clears whole first. */
+            if (NT_SUCCESS(status) && klass == TokenSecurityAttributes) {
+                static const UCHAR zero[256];
+                for (ULONG at = measure.Size; at < length && NT_SUCCESS(status); at += sizeof(zero))
+                    status = write_caller((PUCHAR)info + at, zero, length - at < sizeof(zero) ? length - at : sizeof(zero));
+            }
             break;
         }
         if (buffer)
@@ -1069,6 +1223,86 @@ NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, U
     }
     if (buffer)
         ExFreePool(buffer);
+    ObDereferenceObject(token);
+    return status;
+}
+
+/*
+ * the security attributes of a token by name, as windows 11 26300 answers, measured with scratch/dlls/com/tokattr.c
+ * of the research repository. no names ask for them all. a name matches without regard to case, and one the token
+ * does not carry fails the whole query with STATUS_NOT_FOUND and a length of 0. each name asked for gets its own
+ * entry: the array first, then the name and the values of each entry. the rest of the buffer is cleared.
+ */
+NTSTATUS NTAPI NtQuerySecurityAttributesToken(HANDLE handle, PUNICODE_STRING names, ULONG count, PVOID info,
+                                              ULONG length, PULONG returned)
+{
+    if (count && !names)
+        return STATUS_INVALID_PARAMETER;
+    PTOKEN token;
+    NTSTATUS status = SepReferenceTokenByHandle(handle, TOKEN_QUERY, &token, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = write_length(returned, 0);
+    UNICODE_STRING wanted = {sizeof(proc_unique_name) - 2, sizeof(proc_unique_name), (PWSTR)proc_unique_name};
+    for (ULONG i = 0; i < count && NT_SUCCESS(status); i++) {
+        UNICODE_STRING name;
+        WCHAR text[sizeof(proc_unique_name) / 2];
+        status = read_caller(&name, names + i, sizeof(name));
+        if (!NT_SUCCESS(status))
+            break;
+        if (!name.Length || !name.Buffer) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        if (name.Length != wanted.Length) {
+            status = STATUS_NOT_FOUND;
+            continue;
+        }
+        status = read_caller(text, name.Buffer, name.Length);
+        name.Buffer = text;
+        if (NT_SUCCESS(status) && !RtlEqualUnicodeString(&name, &wanted, TRUE))
+            status = STATUS_NOT_FOUND;
+    }
+    ULONG entries = count ? count : 1;
+    ULONG64 size = 0x10 + 0x28 * (ULONG64)entries + 0x30 * (ULONG64)entries;
+    if (NT_SUCCESS(status) && size > 0xFFFFFFFFu)
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    if (NT_SUCCESS(status))
+        status = write_length(returned, (ULONG)size);
+    if (NT_SUCCESS(status) && length < size)
+        status = STATUS_BUFFER_TOO_SMALL;
+    PUCHAR buffer = NT_SUCCESS(status) ? ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)size, TAG_OUT) : nullptr;
+    if (NT_SUCCESS(status) && !buffer)
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    if (NT_SUCCESS(status)) {
+        ULONG64 values[2];
+        ExAcquireFastMutex(&SeLock);
+        proc_unique(token, values);
+        ExReleaseFastMutex(&SeLock);
+        OUTPUT o = {buffer, (ULONG_PTR)info, 0, 0};
+        ULONG head = out_alloc(&o, 0x10, 8);
+        ULONG array = out_alloc(&o, 0x28 * entries, 8);
+        out_quad(&o, head, 1 | (ULONG64)entries << 32);
+        out_pointer(&o, head + 8, array);
+        for (ULONG i = 0; i < entries; i++) {
+            ULONG entry = array + 0x28 * i;
+            ULONG name = out_alloc(&o, 0x20, 8);
+            ULONG value = out_alloc(&o, sizeof(values), 8);
+            out_quad(&o, entry, 0x200020);
+            out_pointer(&o, entry + 0x08, name);
+            /* a 64-bit unsigned value, not inheritable and ignored by comparisons. */
+            out_quad(&o, entry + 0x10, 0x4100000002ull);
+            out_quad(&o, entry + 0x18, 2);
+            out_pointer(&o, entry + 0x20, value);
+            out_write(&o, name, proc_unique_name, 0x20);
+            out_write(&o, value, values, sizeof(values));
+        }
+        status = write_caller(info, buffer, (SIZE_T)size);
+        static const UCHAR zero[256];
+        for (ULONG at = (ULONG)size; at < length && NT_SUCCESS(status); at += sizeof(zero))
+            status = write_caller((PUCHAR)info + at, zero, length - at < sizeof(zero) ? length - at : sizeof(zero));
+        ExFreePool(buffer);
+    }
     ObDereferenceObject(token);
     return status;
 }
@@ -1236,16 +1470,15 @@ NTSTATUS NTAPI NtSetInformationToken(HANDLE handle, ULONG klass, PVOID info, ULO
             status = STATUS_PRIVILEGE_NOT_HELD;
             break;
         }
-        ExAcquireFastMutex(&SeLock);
-        if (klass == TokenVirtualizationAllowed) {
-            t->Flags = value ? t->Flags | TOKEN_VIRTUALIZE_ALLOWED : t->Flags & ~TOKEN_VIRTUALIZE_ALLOWED;
-        } else if (klass == TokenUIAccess) {
-            t->Flags = value ? t->Flags | TOKEN_UIACCESS : t->Flags & ~TOKEN_UIACCESS;
-        } else if (!value) {
-            t->Flags &= ~TOKEN_VIRTUALIZE_ENABLED;
-        } else if (t->Flags & TOKEN_VIRTUALIZE_ALLOWED) {
-            t->Flags |= TOKEN_VIRTUALIZE_ENABLED;
+        if (klass == TokenVirtualizationEnabled) {
+            SeSetVirtualizationToken(t, value != 0);
+            break;
         }
+        ExAcquireFastMutex(&SeLock);
+        if (klass == TokenVirtualizationAllowed)
+            t->Flags = value ? t->Flags | TOKEN_VIRTUALIZE_ALLOWED : t->Flags & ~TOKEN_VIRTUALIZE_ALLOWED;
+        else
+            t->Flags = value ? t->Flags | TOKEN_UIACCESS : t->Flags & ~TOKEN_UIACCESS;
         t->ModifiedId = SepAllocateLuid();
         ExReleaseFastMutex(&SeLock);
         break;
@@ -1380,6 +1613,51 @@ NTSTATUS NTAPI NtSetInformationToken(HANDLE handle, ULONG klass, PVOID info, ULO
 }
 
 /* ------------------------------------------------------------------ privileges and groups */
+
+/*
+ * tells whether a token holds the privileges of a set enabled, all of them with PRIVILEGE_SET_ALL_NECESSARY and any of
+ * them without. measured on windows 11: a primary token is taken as well as an impersonation one, and every privilege
+ * of the set the token has enabled comes back with SE_PRIVILEGE_USED_FOR_ACCESS.
+ */
+NTSTATUS NTAPI NtPrivilegeCheck(HANDLE handle, PVOID set, PBOOLEAN result)
+{
+    ULONG head[2];
+    NTSTATUS status = read_caller(head, set, sizeof(head));
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG count = head[0];
+    if (count > SEP_MAX_GROUPS)
+        return STATUS_INVALID_PARAMETER;
+    PTOKEN t;
+    status = SepReferenceTokenByHandle(handle, TOKEN_QUERY, &t, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (t->Type == TokenImpersonation && t->ImpersonationLevel < SecurityIdentification) {
+        ObDereferenceObject(t);
+        return STATUS_BAD_IMPERSONATION_LEVEL;
+    }
+    ExAcquireFastMutex(&SeLock);
+    ULONG64 enabled = t->Enabled & t->Present;
+    ExReleaseFastMutex(&SeLock);
+    ObDereferenceObject(t);
+    ULONG held = 0;
+    for (ULONG i = 0; i < count && NT_SUCCESS(status); i++) {
+        ULONG entry[3];
+        PUCHAR at = (PUCHAR)set + 8 + 12 * (SIZE_T)i;
+        status = read_caller(entry, at, sizeof(entry));
+        if (!NT_SUCCESS(status))
+            break;
+        if (entry[1] || entry[0] < SEP_PRIVILEGE_FIRST || entry[0] > SEP_PRIVILEGE_LAST || !((enabled >> entry[0]) & 1))
+            continue;
+        held++;
+        entry[2] |= SE_PRIVILEGE_USED_FOR_ACCESS;
+        status = write_caller(at + 8, &entry[2], sizeof(ULONG));
+    }
+    if (!NT_SUCCESS(status))
+        return status;
+    BOOLEAN answer = (head[1] & PRIVILEGE_SET_ALL_NECESSARY) ? held == count : held != 0;
+    return write_caller(result, &answer, sizeof(answer));
+}
 
 NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disable_all, PVOID state, ULONG length, PVOID previous,
                                        PULONG returned)
@@ -1710,6 +1988,21 @@ NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, PTOKEN *out)
     }
     *out = t;
     return STATUS_SUCCESS;
+}
+
+/*
+ * like SeSetVirtualizationToken: virtualization turns on only where it is allowed, and either way the token counts
+ * as modified. NtSetInformationToken and NtSetInformationProcess's ProcessTokenVirtualizationEnabled come here.
+ */
+void SeSetVirtualizationToken(PTOKEN token, BOOLEAN enable)
+{
+    ExAcquireFastMutex(&SeLock);
+    if (!enable)
+        token->Flags &= ~TOKEN_VIRTUALIZE_ENABLED;
+    else if (token->Flags & TOKEN_VIRTUALIZE_ALLOWED)
+        token->Flags |= TOKEN_VIRTUALIZE_ENABLED;
+    token->ModifiedId = SepAllocateLuid();
+    ExReleaseFastMutex(&SeLock);
 }
 
 /* NtSetInformationProcess(ProcessAccessToken): a process that has not started yet takes another primary token. */

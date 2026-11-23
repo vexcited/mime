@@ -116,7 +116,7 @@ static void write_fallback_icon(const char *destination)
     const MimeRomEntry *entry = mime_rom_find("\\Windows\\System32\\imageres.dll");
     void *icon;
     size_t size;
-    if (entry && mime_pe_icon_extract((const uint8_t *)mime_rom + entry->offset, entry->size, 15, &icon, &size)) {
+    if (entry && mime_genuine_icon(entry, 15, &icon, &size)) {
         bool written = mime_write_file(destination, icon, size);
         free(icon);
         if (written)

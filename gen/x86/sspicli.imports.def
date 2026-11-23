@@ -33,6 +33,7 @@ EXPORTS
     InitSecurityInterfaceW@0
     InitializeSecurityContextA@48
     InitializeSecurityContextW@48
+    LogonUserExExW@44
     LsaCallAuthenticationPackage@28
     LsaConnectUntrusted@4
     LsaDeregisterLogonProcess@4
@@ -46,6 +47,8 @@ EXPORTS
     LsaUnregisterPolicyChangeNotification@8
     MakeSignature@16
     QueryContextAttributesA@12
+    QueryContextAttributesExA@16
+    QueryContextAttributesExW@16
     QueryContextAttributesW@12
     QueryCredentialsAttributesA@12
     QueryCredentialsAttributesW@12
@@ -65,6 +68,10 @@ EXPORTS
     SaslInitializeSecurityContextW@48
     SaslSetContextOption@16
     SealMessage@16
+    SeciAllocateAndSetCallFlags@8
+    SeciAllocateAndSetCallTarget@16
+    SeciAllocateAndSetIPAddress@12
+    SeciFreeCallContext@0
     SetContextAttributesA@16
     SetContextAttributesW@16
     SetCredentialsAttributesA@16

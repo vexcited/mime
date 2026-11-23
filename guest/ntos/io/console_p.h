@@ -140,6 +140,9 @@ typedef enum {
     CH_OUTPUT,
     CH_PTY,
     CH_HOST,
+    CH_SERVER,    /* \Server, the console a process asks for, kernelbase's ConsoleAllocate */
+    CH_REFERENCE, /* \Reference, what a child is given to connect to its creator's console */
+    CH_CONNECT,   /* \Connect, a process's connection, the ConsoleHandle of its parameters */
 } CON_HANDLE_KIND;
 
 typedef struct CON_HANDLE {
@@ -148,6 +151,7 @@ typedef struct CON_HANDLE {
     CsBuffer *Buffer; /* an output handle's screen buffer. */
     PFILE_OBJECT File;
     LIST_ENTRY Links;
+    PEPROCESS Process; /* the connected process of a connection, referenced. */
 } CON_HANDLE;
 
 extern FAST_MUTEX g_con_lock;
@@ -193,6 +197,11 @@ ULONG ConTakeRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *out, ULONG room, BOOLE
 NTSTATUS ConWriteRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count, BOOLEAN head, ULONG *written);
 void ConAfterRead(MIME_CONSOLE *c, ULONG acked, BOOLEAN clear);
 void ConFlushInput(MIME_CONSOLE *c);
+
+/* condev.c: the device controls of mime/condrv.h, and the windows client protocol in conserver.c. */
+NTSTATUS ConControl(PFILE_OBJECT file, ULONG code, PUCHAR buf, ULONG in_len, ULONG out_len, ULONG_PTR *out_information);
+BOOLEAN ConIsDriverControl(ULONG code);
+NTSTATUS ConDriverControl(PIRP irp);
 
 /* code pages, in condev.c. */
 ULONG ConBytesToWide(UINT cp, const UCHAR *in, ULONG length, PWCHAR out, ULONG room, UCHAR carry[4], PULONG carry_length,

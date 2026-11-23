@@ -17,7 +17,36 @@ typedef struct FONT_FILE {
     HANDLE OwnerPid;  /* private to this process, NULL when visible to everyone. */
     ULONG FirstFace;
     ULONG FaceCount;
+    ULONG Loads;      /* AddFontResource calls a remove has not answered yet, 0 for a font of the start. */
 } FONT_FILE;
+
+/* the header of a FNT raster font, fontfnt.c. */
+typedef struct FNT_INFO {
+    USHORT Version;
+    USHORT Points;
+    USHORT VertRes;
+    USHORT HorizRes;
+    USHORT Ascent;
+    USHORT InternalLeading;
+    USHORT ExternalLeading;
+    USHORT Weight;
+    USHORT PixWidth; /* 0 for a font of variable pitch. */
+    USHORT PixHeight;
+    USHORT AvgWidth;
+    USHORT MaxWidth;
+    UCHAR Italic;
+    UCHAR Underline;
+    UCHAR StrikeOut;
+    UCHAR CharSet;
+    UCHAR PitchAndFamily;
+    UCHAR FirstChar;
+    UCHAR LastChar;
+    UCHAR DefaultChar; /* from the first character. */
+    UCHAR BreakChar;
+    ULONG Table; /* where the character table starts. */
+    ULONG Size;
+    char Face[LF_FACESIZE];
+} FNT_INFO;
 
 typedef struct FONT_FACE {
     FONT_FILE *File;
@@ -45,6 +74,18 @@ typedef struct FONT_FACE {
     WCRANGE *Ranges; /* GetFontUnicodeRanges cache. */
     ULONG RangeCount;
     ULONG GlyphsSupported;
+    BOOLEAN CharsKnown;
+    WCHAR FirstChar; /* the characters of the text metrics, see face_chars. */
+    WCHAR LastChar;
+    WCHAR DefaultChar;
+    WCHAR BreakChar;
+    UCHAR AnsiChars[4]; /* first, last, default and break, for TEXTMETRICA and the TMDIFF of the services. */
+    BOOLEAN Raster;     /* a FNT font of a .fon file, at DirOffset in it, with no TrueType data. */
+    BOOLEAN Signed;     /* has a DSIG table, which windows takes for an OpenType font. */
+    SHORT XMin, XMax;   /* the bounding box of the head table. */
+    WCHAR CmapFirst, CmapLast; /* the characters the unicode cmap starts and ends with, 0 for none. */
+    SHORT EnumAscent, EnumDescent; /* of the VDMX table at the 32 pixels of an enumeration, -1 without one. */
+    FNT_INFO Fnt;
 } FONT_FACE;
 
 extern const MimeAllocator FontAllocator;
@@ -58,5 +99,20 @@ ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **file
 ULONG FontFaceCount(void);
 FONT_FACE *FontFaceAt(ULONG index);
 BOOLEAN FontFaceVisible(FONT_FACE *f);
+ULONG FontFaceId(FONT_FACE *f);
+const UCHAR *FontAnsiChars(FONT_INSTANCE *fi);
+/* the code page of a charset, CP_SYMBOL for symbol fonts. */
+UINT FontCharSetCodePage(UCHAR charset);
+/* the faces windows lists under FontLink\SystemLink. */
+BOOLEAN FontHasSystemLink(FONT_FACE *f);
+BOOLEAN FontCharsetAlias(PCWSTR family, ULONG index, PCWSTR *name, UCHAR *charset);
+
+/* fontfnt.c. */
+ULONG FntList(const UCHAR *data, SIZE_T size, ULONG *offsets, ULONG *sizes, ULONG max);
+BOOLEAN FntRead(const UCHAR *fnt, ULONG size, FNT_INFO *info);
+BOOLEAN FntGlyph(const UCHAR *fnt, const FNT_INFO *info, ULONG code, ULONG *width, ULONG *bits);
+BOOLEAN FntPixel(const UCHAR *fnt, const FNT_INFO *info, ULONG bits, ULONG x, ULONG y);
+WCHAR FntToUnicode(UINT codepage, UCHAR c);
+int FntFromUnicode(UINT codepage, WCHAR c);
 
 #endif

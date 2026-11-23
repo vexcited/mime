@@ -15,6 +15,13 @@
 #else
 #include <sys/vfs.h>
 #endif
+#ifdef __linux__
+#include <linux/fiemap.h>
+#include <sys/ioctl.h>
+#ifndef FS_IOC_FIEMAP
+#define FS_IOC_FIEMAP _IOWR('f', 11, struct fiemap)
+#endif
+#endif
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
@@ -51,53 +58,6 @@ static uint64_t errno_status(int err)
 uint64_t mime_fs_status_of(int err)
 {
     return errno_status(err);
-}
-
-/*
- * MIME_FS_FAULT=<end>,<skip>,<count>[;...] injects short writes into paths ending in <end>. after <skip>
- * writes, <count> writes return half the requested bytes without error, simulating a filesystem running out
- * of space mid-write.
- */
-#define FAULT_MAX 4
-static struct {
-    char text[256];
-    unsigned skip, count, seen;
-} g_fault[FAULT_MAX];
-static unsigned g_fault_count;
-static pthread_once_t g_fault_once = PTHREAD_ONCE_INIT;
-
-static void fault_init(void)
-{
-    const char *spec = getenv("MIME_FS_FAULT");
-    while (spec && *spec && g_fault_count < FAULT_MAX) {
-        const char *c1 = strchr(spec, ',');
-        const char *c2 = c1 ? strchr(c1 + 1, ',') : nullptr;
-        if (!c2 || (size_t)(c1 - spec) >= sizeof(g_fault[0].text))
-            return;
-        char *end;
-        __typeof__(g_fault[0]) *f = &g_fault[g_fault_count++];
-        memcpy(f->text, spec, (size_t)(c1 - spec));
-        f->skip = (unsigned)strtoul(c1 + 1, nullptr, 10);
-        f->count = (unsigned)strtoul(c2 + 1, &end, 10);
-        mime_warn("fs: writes to files with a path ending in '%s' come back short %u times after %u", f->text, f->count,
-                  f->skip);
-        spec = *end == ';' ? end + 1 : end;
-    }
-}
-
-static bool fault_hits(const char *path)
-{
-    pthread_once(&g_fault_once, fault_init);
-    size_t have = strlen(path);
-    for (unsigned i = 0; i < g_fault_count; i++) {
-        size_t want = strlen(g_fault[i].text);
-        if (have < want || strcmp(path + have - want, g_fault[i].text))
-            continue;
-        unsigned seen = __atomic_fetch_add(&g_fault[i].seen, 1, __ATOMIC_SEQ_CST);
-        if (seen >= g_fault[i].skip && seen - g_fault[i].skip < g_fault[i].count)
-            return true;
-    }
-    return false;
 }
 
 static uint64_t flush_fd(int fd)
@@ -538,6 +498,143 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
     return MIME_HC_STATUS_OK;
 }
 
+/* the zeroes a range of a file gets written as, in pieces of a fixed buffer. */
+static uint64_t write_zeroes(int fd, uint64_t start, uint64_t end)
+{
+    static const uint8_t zeroes[65536];
+    while (start < end) {
+        size_t n = end - start < sizeof(zeroes) ? (size_t)(end - start) : sizeof(zeroes);
+        ssize_t done = pwrite(fd, zeroes, n, (off_t)start);
+        if (done < 0) {
+            if (errno == EINTR)
+                continue;
+            return errno_status(errno);
+        }
+        start += (uint64_t)done;
+    }
+    return MIME_HC_STATUS_OK;
+}
+
+/*
+ * FSCTL_SET_SPARSE, FSCTL_SET_ZERO_DATA and FSCTL_QUERY_ALLOCATED_RANGES on the host file. a file that is not sparse is
+ * whole on windows, so the guest fills the holes the host left when the attribute changes; a sparse file frees the
+ * pieces a zeroed range covers whole and writes zeroes in the rest, which is what allocates a piece there on ntfs.
+ */
+static uint64_t fs_sparse(MimeVm *vm, MimeFsHandle *fh, uint64_t op, uint64_t start, uint64_t end, uint64_t pa,
+                          uint64_t capacity, uint64_t *count)
+{
+    struct stat st;
+    if (fh->is_dir || fh->is_link || fstat(fh->fd, &st) != 0)
+        return MIME_HC_STATUS_INVALID;
+    uint64_t size = (uint64_t)st.st_size;
+    if (op == MIME_FS_SPARSE_FILL) {
+#ifdef __linux__
+        if (size && fallocate(fh->fd, FALLOC_FL_KEEP_SIZE, 0, (off_t)size) != 0 && errno != EOPNOTSUPP)
+            return errno_status(errno);
+#endif
+        return MIME_HC_STATUS_OK;
+    }
+    if (op == MIME_FS_SPARSE_ZERO || op == MIME_FS_SPARSE_PUNCH) {
+        if (end > size)
+            end = size;
+        if (start >= end)
+            return MIME_HC_STATUS_OK;
+        mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        uint64_t first = (start + MIME_FS_SPARSE_UNIT - 1) & ~(MIME_FS_SPARSE_UNIT - 1);
+        uint64_t last = end & ~(MIME_FS_SPARSE_UNIT - 1);
+        uint64_t status = MIME_HC_STATUS_OK;
+#ifdef __linux__
+        if (op == MIME_FS_SPARSE_PUNCH && first < last &&
+            fallocate(fh->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, (off_t)first, (off_t)(last - first)) == 0) {
+            status = write_zeroes(fh->fd, start, first);
+            if (status == MIME_HC_STATUS_OK)
+                status = write_zeroes(fh->fd, last, end);
+        } else
+#endif
+            status = write_zeroes(fh->fd, start, end);
+        mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        return status;
+    }
+    if (op != MIME_FS_SPARSE_RANGES)
+        return MIME_HC_STATUS_INVALID;
+    MimeFsRange *out = capacity ? mime_vm_phys(vm, pa, capacity * sizeof(MimeFsRange)) : nullptr;
+    if (capacity && !out)
+        return MIME_HC_STATUS_INVALID;
+    if (end > size)
+        end = size;
+    uint64_t n = 0, at = start;
+#ifdef __linux__
+    /* the extents the file has on the disk, preallocated ones too, which SEEK_DATA counts as holes. */
+    enum { EXTENTS = 64 };
+    struct {
+        struct fiemap map;
+        struct fiemap_extent extents[EXTENTS];
+    } f;
+    bool mapped = false;
+    while (at < end) {
+        memset(&f, 0, sizeof(f));
+        f.map.fm_start = at;
+        f.map.fm_length = end - at;
+        f.map.fm_flags = FIEMAP_FLAG_SYNC;
+        f.map.fm_extent_count = EXTENTS;
+        if (ioctl(fh->fd, FS_IOC_FIEMAP, &f.map) != 0)
+            break;
+        mapped = true;
+        if (!f.map.fm_mapped_extents)
+            break;
+        uint64_t stop = at;
+        for (uint32_t i = 0; i < f.map.fm_mapped_extents; i++) {
+            const struct fiemap_extent *e = &f.extents[i];
+            uint64_t a = e->fe_logical < at ? at : e->fe_logical, b = e->fe_logical + e->fe_length;
+            if (b > end)
+                b = end;
+            if (a < b) {
+                if (n && n <= capacity && out[n - 1].offset + out[n - 1].length == a)
+                    out[n - 1].length += b - a;
+                else {
+                    if (n < capacity)
+                        out[n] = (MimeFsRange){a, b - a};
+                    n++;
+                }
+            }
+            stop = e->fe_logical + e->fe_length;
+            if (e->fe_flags & FIEMAP_EXTENT_LAST)
+                stop = end;
+        }
+        if (stop <= at)
+            break;
+        at = stop;
+    }
+    if (mapped) {
+        *count = n;
+        return MIME_HC_STATUS_OK;
+    }
+    at = start;
+#endif
+    while (at < end) {
+        off_t data = lseek(fh->fd, (off_t)at, SEEK_DATA);
+        if (data < 0) {
+            if (errno == ENXIO)
+                break;
+            /* a host file system that cannot tell holes: all of it is data. */
+            if (n < capacity)
+                out[n] = (MimeFsRange){at, end - at};
+            n++;
+            break;
+        }
+        if ((uint64_t)data >= end)
+            break;
+        off_t hole = lseek(fh->fd, data, SEEK_HOLE);
+        uint64_t stop = hole < 0 || (uint64_t)hole > end ? end : (uint64_t)hole;
+        if (n < capacity)
+            out[n] = (MimeFsRange){(uint64_t)data, stop - (uint64_t)data};
+        n++;
+        at = stop;
+    }
+    *count = n;
+    return MIME_HC_STATUS_OK;
+}
+
 static void open_fill_sd(MimeVm *vm, MimeFsOpen *req, const char *path);
 
 /* an open by id gives the name back, as the guest keeps names. */
@@ -861,6 +958,38 @@ static void load_dir(MimeFsHandle *fh)
 #define sd_set_attribute(path, buf, size) lsetxattr((path), SD_ATTRIBUTE, (buf), (size), 0)
 #define sd_remove_attribute(path) lremovexattr((path), SD_ATTRIBUTE)
 #endif
+
+/* the object id ntfs keeps with a file, sixteen bytes, kept the same way. */
+#ifdef __APPLE__
+#define OBJECT_ID_ATTRIBUTE "mime.objectid"
+#define object_id_get(path, buf) getxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16, 0, 0)
+#define object_id_set(path, buf) setxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16, 0, 0)
+#else
+#define OBJECT_ID_ATTRIBUTE "user.mime.objectid"
+#define object_id_get(path, buf) lgetxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16)
+#define object_id_set(path, buf) lsetxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16, 0)
+#endif
+
+static uint64_t fs_object_id(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, bool create)
+{
+    uint8_t *id = mime_vm_phys(vm, pa, 16);
+    if (!id || !fh->host_path)
+        return MIME_HC_STATUS_INVALID;
+    uint8_t stored[16];
+    if (object_id_get(fh->host_path, stored) == 16) {
+        memcpy(id, stored, 16);
+        return MIME_HC_STATUS_OK;
+    }
+    if (errno != ENODATA
+#ifdef ENOATTR
+        && errno != ENOATTR
+#endif
+    )
+        return MIME_HC_STATUS_INVALID;
+    if (!create)
+        return MIME_HC_STATUS_NOT_FOUND;
+    return object_id_set(fh->host_path, id) == 0 ? MIME_HC_STATUS_OK : MIME_HC_STATUS_INVALID;
+}
 
 #define SD_MAX_BYTES (64u << 10)
 
@@ -1367,15 +1496,6 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         MimeFsStat before = {};
         MimeFsTimes kept = {};
-        /* like ntfs, a file that is written is one to archive again. */
-        if (nr != MIME_HC_FS_READ && !fh->archived) {
-            fh->archived = true;
-            if (mime_fs_fstat(fh->fd, &before) == 0) {
-                mime_fs_times(fh->host_path, fh->fd, &before, &kept);
-                if (kept.has_attributes && !(kept.attributes & FILE_ATTRIBUTE_ARCHIVE))
-                    mime_fs_attributes_set(fh->host_path, fh->fd, kept.attributes | FILE_ATTRIBUTE_ARCHIVE);
-            }
-        }
         bool keeping = nr != MIME_HC_FS_READ && (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) &&
                        mime_fs_fstat(fh->fd, &before) == 0;
         if (keeping)
@@ -1402,30 +1522,24 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             break;
         } else {
             n = 0;
-            if (a[4] > 1 && fault_hits(fh->host_path)) {
-                n = pwrite(fh->fd, buf, (size_t)(a[4] / 2), (off_t)a[2]);
-                mime_warn("fs: write of %llu bytes at %llu to %s cut to %lld bytes", (unsigned long long)a[4],
-                          (unsigned long long)a[2], fh->host_path, (long long)n);
-            } else {
-                /* a write that comes back short is asked again for the rest: the guest takes a short count for a full disk. */
-                while ((uint64_t)n < a[4]) {
-                    ssize_t part = pwrite(fh->fd, (const char *)buf + n, (size_t)(a[4] - (uint64_t)n),
-                                          (off_t)(a[2] + (uint64_t)n));
-                    if (part < 0 && errno == EINTR)
-                        continue;
-                    if (part == 0)
-                        errno = ENOSPC;
-                    if (part <= 0) {
-                        if (part < 0 && n == 0)
-                            n = -1;
-                        break;
-                    }
-                    n += part;
+            /* a write that comes back short is asked again for the rest: the guest takes a short count for a full disk. */
+            while ((uint64_t)n < a[4]) {
+                ssize_t part = pwrite(fh->fd, (const char *)buf + n, (size_t)(a[4] - (uint64_t)n),
+                                      (off_t)(a[2] + (uint64_t)n));
+                if (part < 0 && errno == EINTR)
+                    continue;
+                if (part == 0)
+                    errno = ENOSPC;
+                if (part <= 0) {
+                    if (part < 0 && n == 0)
+                        n = -1;
+                    break;
                 }
-                if (n >= 0 && (uint64_t)n < a[4])
-                    mime_warn("fs: write of %llu bytes at %llu to %s stopped after %lld bytes: %s", (unsigned long long)a[4],
-                              (unsigned long long)a[2], fh->host_path, (long long)n, strerror(errno));
+                n += part;
             }
+            if (n >= 0 && (uint64_t)n < a[4])
+                mime_warn("fs: write of %llu bytes at %llu to %s stopped after %lld bytes: %s", (unsigned long long)a[4],
+                          (unsigned long long)a[2], fh->host_path, (long long)n, strerror(errno));
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
             if (n > 0) {
                 if (keeping)
@@ -1528,6 +1642,11 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         }
         break;
     }
+    case MIME_HC_FS_SPARSE: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        status = fh ? fs_sparse(vm, fh, a[2], a[3], a[4], a[5], a[6], &regs[1]) : MIME_HC_STATUS_INVALID;
+        break;
+    }
     case MIME_HC_FS_SET_BASIC: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         status = fh ? fs_set_basic(vm, fh, a[2]) : MIME_HC_STATUS_INVALID;
@@ -1612,6 +1731,13 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
                                               : mime_fs_reparse_delete(vm, fh, (uint32_t)a[2]);
         if (status == MIME_HC_STATUS_OK && fh->host_path)
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        break;
+    }
+    case MIME_HC_FS_OBJECT_ID: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        pthread_mutex_lock(&vm->fs_lock);
+        status = fh ? fs_object_id(vm, fh, a[2], a[3] != 0) : MIME_HC_STATUS_INVALID;
+        pthread_mutex_unlock(&vm->fs_lock);
         break;
     }
     case MIME_HC_FS_LINKS: {

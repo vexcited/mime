@@ -215,6 +215,7 @@
 #define OUT_TT_ONLY_PRECIS 7
 #define OUT_OUTLINE_PRECIS 8
 #define CLIP_DEFAULT_PRECIS 0
+#define CLIP_STROKE_PRECIS 2
 #define DEFAULT_QUALITY 0
 #define DRAFT_QUALITY 1
 #define PROOF_QUALITY 2
@@ -2141,6 +2142,14 @@ typedef struct tagRGBTRIPLE {
     BYTE rgbtGreen;
     BYTE rgbtRed;
 } RGBTRIPLE, *PRGBTRIPLE, *LPRGBTRIPLE;
+
+typedef struct tagBITMAPCOREHEADER {
+    DWORD bcSize;
+    WORD bcWidth;
+    WORD bcHeight;
+    WORD bcPlanes;
+    WORD bcBitCount;
+} BITMAPCOREHEADER, *LPBITMAPCOREHEADER, *PBITMAPCOREHEADER;
 
 typedef struct tagCIEXYZ {
     LONG ciexyzX;

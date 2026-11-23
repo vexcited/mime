@@ -1,0 +1,6 @@
+; the exports of Windows.Networking.Connectivity.dll of windows that are served, with their ordinals.
+LIBRARY Windows.Networking.Connectivity.dll
+EXPORTS
+    DllCanUnloadNow @2 PRIVATE
+    DllGetActivationFactory @3 PRIVATE
+    DllGetClassObject @4 PRIVATE

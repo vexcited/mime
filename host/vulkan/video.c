@@ -288,9 +288,6 @@ void mvk_video_device_created(MvkConnection *c, PFN_vkGetDeviceProcAddr gdpa, bo
         if (family == ~0u ||
             !query_caps(c, g_profiles[i].codec, g_profiles[i].profile, g_profiles[i].bit_depth, &caps, &flags, &level))
             continue;
-        mime_debug("video: codec %u profile %u at %u bits decodes %ux%u to %ux%u, %u slots, %u references", g_profiles[i].codec,
-                   g_profiles[i].profile, g_profiles[i].bit_depth, caps.minCodedExtent.width, caps.minCodedExtent.height,
-                   caps.maxCodedExtent.width, caps.maxCodedExtent.height, caps.maxDpbSlots, caps.maxActiveReferencePictures);
         v->supported |= 1u << i;
         v->vk_caps[i] = caps;
         v->decode_flags[i] = flags;

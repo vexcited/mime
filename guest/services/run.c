@@ -9,6 +9,7 @@ ULONGLONG g_stamp;
 DWORD g_control_timeout = 30000;
 DWORD g_handler_timeout = 30000;
 DWORD g_autostart_timeout = 45000;
+BOOL g_split_svchost;
 BOOL g_shutdown;
 BOOL g_autostart_running;
 
@@ -70,6 +71,86 @@ static DWORD channel_read(IMAGE *img, void *data, DWORD size, DWORD timeout)
     return ERROR_SUCCESS;
 }
 
+static void post_free(SCM_CONTROL_POST *post)
+{
+    SvcFree(post->Name);
+    for (DWORD i = 0; i < post->Count; i++)
+        SvcFree(post->Arguments ? post->Arguments[i] : nullptr);
+    SvcFree(post->Arguments);
+    SvcFree(post->EventData);
+    memset(post, 0, sizeof(*post));
+}
+
+/*
+ * a control for a dispatcher of genuine sechost: it waits in the image's mailbox until the dispatcher's call takes it,
+ * and its answer comes with the dispatcher's next call. the quit control has no answer, the waiting call fails with
+ * ERROR_PROCESS_ABORTED instead, which ends the dispatcher's loop.
+ */
+static DWORD post_control(IMAGE *img, DWORD control, const WCHAR *name, DWORD event_type, const void *event_data,
+                          DWORD event_size, UINT64 status_id, DWORD count, const WCHAR *const *arguments, DWORD timeout,
+                          DWORD *result)
+{
+    EnterCriticalSection(&img->MailLock);
+    if (control == SCM_CTRL_QUIT) {
+        img->Quit = TRUE;
+        WakeAllConditionVariable(&img->Mail);
+        LeaveCriticalSection(&img->MailLock);
+        if (result)
+            *result = 0;
+        return ERROR_SUCCESS;
+    }
+    if (img->Broken || img->Quit) {
+        LeaveCriticalSection(&img->MailLock);
+        return ERROR_BROKEN_PIPE;
+    }
+    SCM_CONTROL_POST *post = &img->Post;
+    post_free(post);
+    post->Control = control;
+    post->Reason = event_type;
+    post->StatusId = status_id;
+    post->Name = SvcDup(name ? name : L"");
+    if (count) {
+        post->Arguments = SvcAllocZero(count * sizeof(*post->Arguments));
+        for (DWORD i = 0; post->Arguments && i < count; i++)
+            post->Arguments[i] = SvcDup(arguments[i] ? arguments[i] : L"");
+        post->Count = post->Arguments ? count : 0;
+    }
+    if (event_size && event_data) {
+        post->EventData = SvcAlloc(event_size);
+        if (post->EventData) {
+            memcpy(post->EventData, event_data, event_size);
+            post->EventSize = event_size;
+        }
+    }
+    img->Posted = TRUE;
+    img->Answered = FALSE;
+    WakeAllConditionVariable(&img->Mail);
+    ULONGLONG deadline = GetTickCount64() + timeout;
+    DWORD error = ERROR_SUCCESS;
+    while (!img->Answered && !img->Broken && !img->Exited) {
+        ULONGLONG now = GetTickCount64();
+        if (now >= deadline) {
+            error = ERROR_SERVICE_REQUEST_TIMEOUT;
+            break;
+        }
+        SleepConditionVariableCS(&img->Mail, &img->MailLock, (DWORD)(deadline - now));
+    }
+    if (!error && !img->Answered)
+        error = ERROR_BROKEN_PIPE;
+    if (!error && result)
+        *result = img->Answer;
+    if (error) {
+        if (img->Posted)
+            post_free(post);
+        img->Posted = FALSE;
+        img->Broken = TRUE;
+        WakeAllConditionVariable(&img->Mail);
+    }
+    img->Answered = FALSE;
+    LeaveCriticalSection(&img->MailLock);
+    return error;
+}
+
 /*
  * returns the error the handler returned. called without the lock, the image's control lock serializes controls.
  */
@@ -77,6 +158,13 @@ static DWORD send_control(IMAGE *img, DWORD control, const WCHAR *name, DWORD ev
                           DWORD event_size, UINT64 status_id, DWORD count, const WCHAR *const *arguments, DWORD timeout,
                           DWORD *result)
 {
+    if (img->Rpc) {
+        EnterCriticalSection(&img->ControlLock);
+        DWORD error = post_control(img, control, name, event_type, event_data, event_size, status_id, count, arguments,
+                                   timeout, result);
+        LeaveCriticalSection(&img->ControlLock);
+        return error;
+    }
     SCM_WRITER w;
     ScmWriterInit(&w, control);
     ScmPutString(&w, name);
@@ -138,6 +226,8 @@ static void image_free(IMAGE *img)
     if (img->Process)
         CloseHandle(img->Process);
     DeleteCriticalSection(&img->ControlLock);
+    post_free(&img->Post);
+    DeleteCriticalSection(&img->MailLock);
     SvcFree(img->Key);
     SvcFree(img->Account);
     SvcFree(img);
@@ -373,7 +463,7 @@ static void service_gone(SERVICE *s, IMAGE *img, DWORD exit_code, BOOL crash)
     s->Status.dwWaitHint = 0;
     s->Status.dwWin32ExitCode = exit_code;
     s->Status.dwServiceSpecificExitCode = 0;
-    s->Status.dwServiceType = s->Type;
+    s->Status.dwServiceType = RunStatusType(s);
     s->StatusId = 0;
     s->StopRequested = FALSE;
     s->ShutdownStopping = FALSE;
@@ -401,6 +491,9 @@ void RunProcessExited(IMAGE *img)
         return;
     img->Exited = TRUE;
     img->Broken = TRUE;
+    EnterCriticalSection(&img->MailLock);
+    WakeAllConditionVariable(&img->Mail);
+    LeaveCriticalSection(&img->MailLock);
     for (SERVICE *s = g_services; s; s = s->Next) {
         if (s->Image == img && s->Status.dwCurrentState != SERVICE_STOPPED) {
             SvcLog("the process of %ls ended while it was %s", s->Name, state_name(s->Status.dwCurrentState));
@@ -464,7 +557,7 @@ DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *report)
         return ERROR_INVALID_DATA;
 
     SERVICE_STATUS stored = *report;
-    stored.dwServiceType = s->Type;
+    stored.dwServiceType = RunStatusType(s);
     BOOL ending = stored.dwCurrentState == SERVICE_STOPPED || stored.dwCurrentState == SERVICE_STOP_PENDING;
     if (!ending)
         stored.dwWin32ExitCode = stored.dwServiceSpecificExitCode = 0;
@@ -536,6 +629,68 @@ void RunChannelOpened(HANDLE pipe, DWORD pid, BOOL ok)
         CloseHandle(pipe);
 }
 
+/* the channel of a genuine sechost's dispatcher: like the pipe, only a process the manager started and waits for. */
+DWORD RunRpcOpenChannel(DWORD pid)
+{
+    for (IMAGE *img = g_images; img; img = img->Next) {
+        if (img->Pid == pid && !img->Exited && !img->Connected) {
+            img->Rpc = TRUE;
+            img->Connected = TRUE;
+            WakeAllConditionVariable(&g_changed);
+            return ERROR_SUCCESS;
+        }
+    }
+    return ERROR_FAILED_SERVICE_CONTROLLER_CONNECT;
+}
+
+/* answers the control the dispatcher took last and waits for the next. called without the lock. */
+DWORD RunRpcExchange(DWORD pid, DWORD answer, SCM_CONTROL_POST *post)
+{
+    EnterCriticalSection(&g_lock);
+    IMAGE *img = g_images;
+    while (img && !(img->Pid == pid && img->Rpc && !img->Exited))
+        img = img->Next;
+    if (img)
+        img->Refs++;
+    LeaveCriticalSection(&g_lock);
+    if (!img)
+        return ERROR_PROCESS_ABORTED;
+    EnterCriticalSection(&img->MailLock);
+    if (img->Awaiting) {
+        img->Answer = answer;
+        img->Answered = TRUE;
+        img->Awaiting = FALSE;
+        WakeAllConditionVariable(&img->Mail);
+    }
+    while (!img->Posted && !img->Quit && !img->Broken && !img->Exited)
+        SleepConditionVariableCS(&img->Mail, &img->MailLock, INFINITE);
+    DWORD error = ERROR_PROCESS_ABORTED;
+    if (img->Posted && !img->Broken) {
+        *post = img->Post;
+        memset(&img->Post, 0, sizeof(img->Post));
+        img->Posted = FALSE;
+        img->Awaiting = TRUE;
+        error = ERROR_SUCCESS;
+    }
+    LeaveCriticalSection(&img->MailLock);
+    EnterCriticalSection(&g_lock);
+    image_release(img);
+    LeaveCriticalSection(&g_lock);
+    return error;
+}
+
+void RunRpcChannelClosed(DWORD pid)
+{
+    for (IMAGE *img = g_images; img; img = img->Next) {
+        if (img->Pid == pid && img->Rpc) {
+            EnterCriticalSection(&img->MailLock);
+            img->Broken = TRUE;
+            WakeAllConditionVariable(&img->Mail);
+            LeaveCriticalSection(&img->MailLock);
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ starting */
 
 static BOOL file_exists(const WCHAR *command)
@@ -602,6 +757,127 @@ static WCHAR *image_key(const WCHAR *command)
     return key;
 }
 
+static WCHAR *service_command(SERVICE *s, DWORD *error);
+
+static DWORD sid_type_of(SERVICE *s)
+{
+    DWORD type = SERVICE_SID_TYPE_NONE;
+    HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
+    if (key) {
+        DbReadDword(key, L"ServiceSidType", &type);
+        RegCloseKey(key);
+    }
+    return type;
+}
+
+/*
+ * the services whose sids the token of a new process holds, as ScCreateServiceSids of services.exe picks them: a service
+ * with a process of its own has its own, else every share process service with a sid not split yet whose image path
+ * is the same, in the order of the database. called with the lock held.
+ */
+static WCHAR **sid_services(SERVICE *s, DWORD *count)
+{
+    *count = 0;
+    BOOL own = (RunStatusType(s) & SERVICE_WIN32_OWN_PROCESS) != 0;
+    DWORD error = 0;
+    WCHAR *path = own ? nullptr : service_command(s, &error);
+    DWORD capacity = 0;
+    for (SERVICE *t = g_services; t; t = t->Next)
+        capacity++;
+    WCHAR **names = SvcAllocZero((capacity + 1) * sizeof(WCHAR *));
+    if (!names) {
+        SvcFree(path);
+        return nullptr;
+    }
+    for (SERVICE *t = path ? g_services : s; t && *count < capacity + 1; t = path ? t->Next : nullptr) {
+        if (t != s) {
+            if (!(t->Type & SERVICE_WIN32_SHARE_PROCESS) || (RunStatusType(t) & SERVICE_WIN32_OWN_PROCESS))
+                continue;
+            WCHAR *other = service_command(t, &error);
+            BOOL same = other && !_wcsicmp(other, path);
+            SvcFree(other);
+            if (!same)
+                continue;
+        }
+        if (sid_type_of(t) != SERVICE_SID_TYPE_NONE)
+            names[(*count)++] = SvcDup(t->Name);
+    }
+    SvcFree(path);
+    return names;
+}
+
+/* the RequiredPrivileges of a service, nullptr when it has none. a list naming an unknown privilege is no list. */
+static WCHAR *required_privileges(SERVICE *t, BOOL *present)
+{
+    *present = FALSE;
+    HKEY key = DbOpenKey(t->Name, KEY_READ, FALSE);
+    WCHAR *list = key ? DbReadString(key, L"RequiredPrivileges", nullptr) : nullptr;
+    if (key)
+        RegCloseKey(key);
+    if (!list || !*list) {
+        SvcFree(list);
+        return nullptr;
+    }
+    *present = TRUE;
+    if (!AccessValidPrivileges(list)) {
+        SvcFree(list);
+        return nullptr;
+    }
+    return list;
+}
+
+/*
+ * what ScRemovePrivileges reads for a new process: the list of the starting service first, then those of the other
+ * services the process can host, which share its image path. privileges are only removed when each of them has a list.
+ * called with the lock held.
+ */
+static DWORD privilege_lists(SERVICE *s, WCHAR ***out, DWORD *count, BOOL *strip)
+{
+    *out = nullptr;
+    *count = 0;
+    *strip = TRUE;
+    BOOL present;
+    WCHAR *own = required_privileges(s, &present);
+    if (!own)
+        return present ? ERROR_INVALID_DATA : 0;
+    DWORD capacity = 1;
+    for (SERVICE *t = g_services; t; t = t->Next)
+        capacity++;
+    WCHAR **lists = SvcAllocZero(capacity * sizeof(WCHAR *));
+    if (!lists) {
+        SvcFree(own);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    lists[(*count)++] = own;
+    BOOL shared = !(RunStatusType(s) & SERVICE_WIN32_OWN_PROCESS);
+    DWORD error = 0;
+    WCHAR *path = shared ? service_command(s, &error) : nullptr;
+    for (SERVICE *t = path ? g_services : nullptr; t && *count < capacity; t = t->Next) {
+        if (t == s || !(t->Type & SERVICE_WIN32_SHARE_PROCESS) || (RunStatusType(t) & SERVICE_WIN32_OWN_PROCESS))
+            continue;
+        WCHAR *other = service_command(t, &error);
+        BOOL same = other && !_wcsicmp(other, path);
+        SvcFree(other);
+        if (!same)
+            continue;
+        WCHAR *list = required_privileges(t, &present);
+        if (list)
+            lists[(*count)++] = list;
+        else if (!present)
+            *strip = FALSE;
+    }
+    SvcFree(path);
+    *out = lists;
+    return 0;
+}
+
+static void free_lists(WCHAR **lists, DWORD count)
+{
+    for (DWORD i = 0; i < count; i++)
+        SvcFree(lists[i]);
+    SvcFree(lists);
+}
+
 /*
  * nothing is held while the process is created, the lock is taken again after.
  */
@@ -611,6 +887,8 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
     if (!img)
         return ERROR_NOT_ENOUGH_MEMORY;
     InitializeCriticalSection(&img->ControlLock);
+    InitializeCriticalSection(&img->MailLock);
+    InitializeConditionVariable(&img->Mail);
     img->Key = image_key(command);
     img->Account = account_of(s);
     img->Type = s->Type;
@@ -621,8 +899,25 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
 
     WCHAR *line = SvcDup(command);
     DWORD token_error = 0;
+    DWORD sid_count = 0;
+    WCHAR **sid_names = sid_services(s, &sid_count);
+    WCHAR **privileges = nullptr;
+    DWORD privilege_count = 0;
+    BOOL strip = FALSE;
+    token_error = privilege_lists(s, &privileges, &privilege_count, &strip);
     LeaveCriticalSection(&g_lock);
-    HANDLE token = AccessServiceToken(s, &token_error);
+    PSECURITY_DESCRIPTOR process_sd = nullptr;
+    HANDLE token = nullptr;
+    if (!token_error)
+        token = AccessServiceToken(s, (const WCHAR *const *)sid_names, sid_count, &process_sd, &token_error);
+    if (!token_error && !token)
+        token = AccessManagerToken(&token_error);
+    for (DWORD i = 0; i < sid_count; i++)
+        SvcFree(sid_names[i]);
+    SvcFree(sid_names);
+    if (token && privilege_count)
+        token_error = AccessRemovePrivileges(token, (const WCHAR *const *)privileges, privilege_count, strip);
+    SECURITY_ATTRIBUTES process_attributes = {sizeof(process_attributes), process_sd, FALSE};
     STARTUPINFOW si = {sizeof(si)};
     si.lpDesktop = L"";
     PROCESS_INFORMATION pi = {};
@@ -642,29 +937,20 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
             create_environment = (BOOL(WINAPI *)(LPVOID *, HANDLE, BOOL))GetProcAddress(userenv, "CreateEnvironmentBlock");
             destroy_environment = (BOOL(WINAPI *)(LPVOID))GetProcAddress(userenv, "DestroyEnvironmentBlock");
         }
-        if (create_environment && destroy_environment) {
-            /* the local system account has no token of its own here, the manager's is the system's. */
-            HANDLE own = nullptr;
-            HANDLE source = token;
-            if (!source && OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &own))
-                source = own;
-            made = source && create_environment(&environment, source, FALSE);
-            if (own)
-                CloseHandle(own);
-        }
+        if (create_environment && destroy_environment)
+            made = create_environment(&environment, token, FALSE);
     }
     if (token_error) {
         ok = FALSE;
         SetLastError(token_error);
-    } else if (token) {
+    } else {
         AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
         AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
-        ok = CreateProcessAsUserW(token, nullptr, line, nullptr, nullptr, FALSE, flags, made ? environment : nullptr,
+        ok = CreateProcessAsUserW(token, nullptr, line, process_sd ? &process_attributes : nullptr, nullptr, FALSE, flags,
+                                  made ? environment : nullptr,
                                   n ? directory : nullptr, &si, &pi);
-    } else {
-        ok = CreateProcessW(nullptr, line, nullptr, nullptr, FALSE, flags, made ? environment : nullptr,
-                            n ? directory : nullptr, &si, &pi);
     }
+    free_lists(privileges, privilege_count);
     if (made)
         destroy_environment(environment);
     if (userenv)
@@ -672,6 +958,8 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
     DWORD error = ok ? 0 : GetLastError();
     if (token)
         CloseHandle(token);
+    if (process_sd)
+        LocalFree(process_sd);
     SvcFree(line);
     EnterCriticalSection(&g_lock);
     if (!ok) {
@@ -714,7 +1002,7 @@ static void start_failed(SERVICE *s, DWORD error)
     s->Status.dwWaitHint = 0;
     if (s->Status.dwWin32ExitCode == ERROR_SERVICE_NEVER_STARTED || !s->Status.dwWin32ExitCode)
         s->Status.dwWin32ExitCode = error;
-    s->Status.dwServiceType = s->Type;
+    s->Status.dwServiceType = RunStatusType(s);
     s->StartError = error;
     state_changed(s, old);
 }
@@ -841,6 +1129,54 @@ static DWORD driver_request(SERVICE *s, BOOL unload)
     }
 }
 
+static BOOL contains_no_case(const WCHAR *text, const WCHAR *part)
+{
+    SIZE_T n = wcslen(part);
+    for (; *text; text++)
+        if (!_wcsnicmp(text, part, n))
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * CWin32ServiceRecord::CheckForSvchostSplitAllowed of services.exe, asked at each start of a share process service
+ * that is not split yet. With splitting on, a service of svchost gets a process of its own and the own process bit in
+ * its record, which stays for the life of the manager: the status says 0x30 from then on, also once stopped, while
+ * the configuration keeps the registered 0x20. Not split: a service whose next recovery action restarts the machine,
+ * a name that starts with Rpc, and a key with SvcHostSplitDisable.
+ */
+static BOOL split_allowed(SERVICE *s, const WCHAR *command)
+{
+    if (!g_split_svchost)
+        return FALSE;
+    SERVICE_FAILURE_ACTIONSW actions;
+    SC_ACTION buffer[SVC_MAX_FAILURE_ACTIONS];
+    WCHAR *reboot, *run;
+    if (!DbReadFailureActions(s, &actions, buffer, &reboot, &run)) {
+        BOOL restarts = FALSE;
+        if (actions.cActions) {
+            DWORD index = s->FailureCount < actions.cActions ? s->FailureCount : actions.cActions - 1;
+            restarts = actions.lpsaActions[index].Type == SC_ACTION_REBOOT;
+        }
+        SvcFree(reboot);
+        SvcFree(run);
+        if (restarts)
+            return FALSE;
+    }
+    if (!contains_no_case(command, L"svchost.exe -k") && !contains_no_case(command, L"svchost -k"))
+        return FALSE;
+    if (!_wcsnicmp(s->Name, L"Rpc", 3))
+        return FALSE;
+    DWORD disabled = 0;
+    HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
+    if (key) {
+        if (!DbReadDword(key, L"SvcHostSplitDisable", &disabled))
+            disabled = 0;
+        RegCloseKey(key);
+    }
+    return !disabled;
+}
+
 static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD reason)
 {
     DWORD error = 0;
@@ -859,8 +1195,25 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
             return ERROR_NOT_SUPPORTED;
         return driver_request(s, FALSE);
     }
+    if ((s->Type & SERVICE_WIN32_SHARE_PROCESS) && !(s->Type & SERVICE_WIN32_OWN_PROCESS) && !s->Split &&
+        split_allowed(s, command))
+        s->Split = TRUE;
+    /* the process of a split service is told which service of the group it hosts. */
+    if (s->Split) {
+        SIZE_T chars = wcslen(command) + 4 + wcslen(s->Name) + 1;
+        WCHAR *single = SvcAllocZero(chars * sizeof(WCHAR));
+        if (!single) {
+            SvcFree(command);
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        wcscpy(single, command);
+        wcscat(single, L" -s ");
+        wcscat(single, s->Name);
+        SvcFree(command);
+        command = single;
+    }
     WCHAR *key = image_key(command);
-    BOOL own = (s->Type & SERVICE_WIN32_OWN_PROCESS) != 0;
+    BOOL own = (RunStatusType(s) & SERVICE_WIN32_OWN_PROCESS) != 0;
     IMAGE *img = own ? nullptr : find_image(key);
     SvcFree(key);
     /* services of one process share one account, a service wanting another does not join it. */
@@ -872,6 +1225,19 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
             SvcFree(command);
             return ERROR_DIFFERENT_SERVICE_ACCOUNT;
         }
+        /* the privileges a joining service requires must be in the token of the process, ScCheckPrivilegesInToken. */
+        BOOL present;
+        WCHAR *list = required_privileges(s, &present);
+        HANDLE token = nullptr;
+        if (list && img->Process && OpenProcessToken(img->Process, TOKEN_QUERY, &token)) {
+            error = AccessRemovePrivileges(token, (const WCHAR *const *)&list, 1, FALSE);
+            CloseHandle(token);
+        }
+        SvcFree(list);
+        if (error) {
+            SvcFree(command);
+            return error;
+        }
     }
 
     DWORD old = s->Status.dwCurrentState;
@@ -879,7 +1245,7 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
     s->Status.dwControlsAccepted = 0;
     s->Status.dwCheckPoint = 0;
     s->Status.dwWaitHint = 0;
-    s->Status.dwServiceType = s->Type;
+    s->Status.dwServiceType = RunStatusType(s);
     s->Status.dwWin32ExitCode = 0;
     s->Status.dwServiceSpecificExitCode = 0;
     s->StartError = 0;

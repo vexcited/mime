@@ -1,0 +1,144 @@
+#ifndef NDRGEN_CRYPTSVC_H
+#define NDRGEN_CRYPTSVC_H
+
+#include <mime/win32/rpcndr.h>
+
+#define NDRGEN_UNUSED __attribute__((unused))
+
+
+
+#ifdef _WIN64
+#else
+#endif
+
+/* ------------------------------------------------------------------ interface keysvc */
+
+#ifndef KEYSVC_CLIENT_ONLY
+extern unsigned long WINAPI keysvc_SSCertProtectFunction_s(handle_t h, unsigned long dwFuncId, unsigned long dwFlags, unsigned short *pwszIn, byte *pbIn, unsigned long cbIn, byte **ppbOut, unsigned long *pcbOut);
+#endif
+void *WINAPI MIDL_user_allocate(size_t);
+void WINAPI MIDL_user_free(void *);
+
+static const unsigned char keysvc_TypeFormat[] = {
+#ifdef _WIN64
+    0x00, 0x00, /* 0: pad */
+    0x11, 0x08, 0x25, 0x5c, /* 2: pointer */
+    0x11, 0x00, 0x02, 0x00, /* 6: pointer */
+    0x1b, 0x00, 0x01, 0x00, 0x28, 0x00, 0x28, 0x00, 0x00, 0x00, 0x01, 0x5b, /* 10: array */
+    0x11, 0x14, 0x02, 0x00, /* 22: pointer */
+    0x12, 0x00, 0x02, 0x00, /* 26: pointer */
+    0x1b, 0x00, 0x01, 0x00, 0x28, 0x54, 0x38, 0x00, 0x00, 0x00, 0x01, 0x5b, /* 30: array */
+#else
+    0x00, 0x00, /* 0: pad */
+    0x11, 0x08, 0x25, 0x5c, /* 2: pointer */
+    0x11, 0x00, 0x02, 0x00, /* 6: pointer */
+    0x1b, 0x00, 0x01, 0x00, 0x28, 0x00, 0x14, 0x00, 0x00, 0x00, 0x01, 0x5b, /* 10: array */
+    0x11, 0x14, 0x02, 0x00, /* 22: pointer */
+    0x12, 0x00, 0x02, 0x00, /* 26: pointer */
+    0x1b, 0x00, 0x01, 0x00, 0x28, 0x54, 0x1c, 0x00, 0x00, 0x00, 0x01, 0x5b, /* 30: array */
+#endif
+};
+
+static const unsigned char keysvc_ProcFormat[] = {
+#ifdef _WIN64
+    0x00, 0x00, /* 0: pad */
+    0x00, 0x40, 0x00, 0x00, 0x48, 0x00, 0x32, 0x00, 0x00, 0x00, 0x17, 0x00, /* 2: keysvc.SSCertProtectFunction */
+    0x0f, 0x00, 0x47, 0x08, 0x0a, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x48, 0x00, 0x08, 0x00, 0x08, 0x5c, 0x48, 0x00, 0x10, 0x00,
+    0x08, 0x5c, 0x0b, 0x00, 0x18, 0x00, 0x02, 0x00, 0x0b, 0x00, 0x20, 0x00,
+    0x06, 0x00, 0x48, 0x00, 0x28, 0x00, 0x08, 0x5c, 0x13, 0x20, 0x30, 0x00,
+    0x16, 0x00, 0x50, 0x21, 0x38, 0x00, 0x08, 0x5c, 0x70, 0x00, 0x40, 0x00,
+    0x08, 0x5c,
+#else
+    0x00, 0x00, /* 0: pad */
+    0x00, 0x40, 0x00, 0x00, 0x24, 0x00, 0x32, 0x00, 0x00, 0x00, 0x17, 0x00, /* 2: keysvc.SSCertProtectFunction */
+    0x0f, 0x00, 0x47, 0x08, 0x08, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x48, 0x00, 0x04, 0x00, 0x08, 0x5c, 0x48, 0x00, 0x08, 0x00, 0x08, 0x5c,
+    0x0b, 0x00, 0x0c, 0x00, 0x02, 0x00, 0x0b, 0x00, 0x10, 0x00, 0x06, 0x00,
+    0x48, 0x00, 0x14, 0x00, 0x08, 0x5c, 0x13, 0x20, 0x18, 0x00, 0x16, 0x00,
+    0x50, 0x21, 0x1c, 0x00, 0x08, 0x5c, 0x70, 0x00, 0x20, 0x00, 0x08, 0x5c,
+#endif
+};
+
+#ifdef _WIN64
+#else
+#endif
+
+static const unsigned short keysvc_FormatStringOffsetTable[] = {
+#ifdef _WIN64
+    2
+#else
+    2
+#endif
+};
+
+static RPC_CLIENT_INTERFACE keysvc_c_ifspec_data = { sizeof(RPC_CLIENT_INTERFACE),
+    {{0x0d72a7d4, 0x6148, 0x11d1, {0xb4, 0xaa, 0x00, 0xc0, 0x4f, 0xb6, 0x6e, 0xa0}}, {1, 0}},
+    {{0x8A885D04, 0x1CEB, 0x11C9, {0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60}}, {2, 0}},
+    0, 0, 0, 0, 0, 0 };
+RPC_IF_HANDLE keysvc_c_ifspec = (RPC_IF_HANDLE)&keysvc_c_ifspec_data;
+
+static MIDL_STUB_DESC keysvc_StubDesc = {
+    .RpcInterfaceInformation = &keysvc_c_ifspec_data,
+    .pfnAllocate = MIDL_user_allocate,
+    .pfnFree = MIDL_user_free,
+    .pFormatTypes = keysvc_TypeFormat,
+    .fCheckBounds = 1,
+    .Version = 0x60001,
+    .MIDLVersion = 0x8000253,
+    .mFlags = 1,
+};
+
+#ifndef KEYSVC_CLIENT_ONLY
+static const SERVER_ROUTINE keysvc_ServerRoutineTable[] = {
+    (SERVER_ROUTINE)(void *)keysvc_SSCertProtectFunction_s
+};
+
+int (*keysvc_hook)(PRPC_MESSAGE);
+
+static void __RPC_STUB keysvc_dispatch_0(PRPC_MESSAGE m)
+{
+    if (keysvc_hook && keysvc_hook(m))
+        return;
+    NdrServerCall2(m);
+}
+static RPC_DISPATCH_FUNCTION keysvc_DispatchFunctions[] = {
+keysvc_dispatch_0
+};
+static RPC_DISPATCH_TABLE keysvc_DispatchTable = { 1, keysvc_DispatchFunctions, 0 };
+static MIDL_SERVER_INFO keysvc_ServerInfo = {
+    .pStubDesc = &keysvc_StubDesc,
+    .DispatchTable = keysvc_ServerRoutineTable,
+    .ProcString = keysvc_ProcFormat,
+    .FmtStringOffset = keysvc_FormatStringOffsetTable,
+    .nCount = 0,
+};
+static RPC_SERVER_INTERFACE keysvc_s_ifspec_data = { sizeof(RPC_SERVER_INTERFACE),
+    {{0x0d72a7d4, 0x6148, 0x11d1, {0xb4, 0xaa, 0x00, 0xc0, 0x4f, 0xb6, 0x6e, 0xa0}}, {1, 0}},
+    {{0x8A885D04, 0x1CEB, 0x11C9, {0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48, 0x60}}, {2, 0}},
+    &keysvc_DispatchTable, 0, 0, 0, &keysvc_ServerInfo, 0 };
+RPC_IF_HANDLE keysvc_s_ifspec = (RPC_IF_HANDLE)&keysvc_s_ifspec_data;
+#endif
+
+static NDRGEN_UNUSED unsigned long WINAPI keysvc_SSCertProtectFunction(handle_t h, unsigned long dwFuncId, unsigned long dwFlags, unsigned short *pwszIn, byte *pbIn, unsigned long cbIn, byte **ppbOut, unsigned long *pcbOut)
+{
+#ifdef _WIN64
+    return (unsigned long)NdrClientCall2(&keysvc_StubDesc, keysvc_ProcFormat + keysvc_FormatStringOffsetTable[0], h, dwFuncId, dwFlags, pwszIn, pbIn, cbIn, ppbOut, pcbOut).Simple;
+#else
+#pragma pack(push, 4)
+    struct {
+        handle_t h;
+        unsigned long dwFuncId;
+        unsigned long dwFlags;
+        unsigned short *pwszIn;
+        byte *pbIn;
+        unsigned long cbIn;
+        byte **ppbOut;
+        unsigned long *pcbOut;
+    } frame = { h, dwFuncId, dwFlags, pwszIn, pbIn, cbIn, ppbOut, pcbOut };
+#pragma pack(pop)
+    return (unsigned long)NdrClientCall2(&keysvc_StubDesc, keysvc_ProcFormat + keysvc_FormatStringOffsetTable[0], (unsigned char *)&frame).Simple;
+#endif
+}
+
+#endif

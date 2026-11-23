@@ -4,6 +4,7 @@
  * rate, as a panel's scaler takes them, so games can list them.
  */
 #include "dxgi_private.h"
+#include <mime/vblank.h>
 #include <mime/display_modes.h>
 #include <mime/ntuser.h>
 
@@ -319,10 +320,7 @@ static HRESULT STDMETHODCALLTYPE output_wait_for_vblank(IDXGIOutput6 *iface)
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&frequency);
     LONGLONG period = frequency.QuadPart / rate;
-    LONGLONG left = period - now.QuadPart % period;
-    DWORD ms = (DWORD)(left * 1000 / frequency.QuadPart);
-    if (ms)
-        Sleep(ms);
+    MimeSleepUntil((UINT64)(now.QuadPart - now.QuadPart % period + period));
     return S_OK;
 }
 

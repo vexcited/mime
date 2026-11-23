@@ -24,19 +24,16 @@
 
 /* log.c */
 typedef enum MimeLogLevel {
-    MIME_LOG_DEBUG,
     MIME_LOG_INFO,
     MIME_LOG_WARN,
     MIME_LOG_ERROR,
 } MimeLogLevel;
 
-void mime_log_set_level(MimeLogLevel level);
 void mime_log_set_prefix(const char *prefix);
 [[gnu::format(printf, 2, 3)]] void mime_log(MimeLogLevel level, const char *fmt, ...);
 void mime_logv(MimeLogLevel level, const char *fmt, va_list ap);
 [[noreturn, gnu::format(printf, 1, 2)]] void mime_fatal(const char *fmt, ...);
 
-#define mime_debug(...) mime_log(MIME_LOG_DEBUG, __VA_ARGS__)
 #define mime_info(...) mime_log(MIME_LOG_INFO, __VA_ARGS__)
 #define mime_warn(...) mime_log(MIME_LOG_WARN, __VA_ARGS__)
 #define mime_error(...) mime_log(MIME_LOG_ERROR, __VA_ARGS__)
@@ -51,7 +48,7 @@ typedef struct MimePaths {
     char drive_c[MIME_PATH_MAX]; /* data/drive_c */
     char socket[MIME_PATH_MAX];  /* runtime/mime.sock */
     char pidfile[MIME_PATH_MAX]; /* runtime/mime.pid */
-    char lockfile[MIME_PATH_MAX]; /* per user, outside the XDG dirs. */
+    char lockfile[MIME_PATH_MAX]; /* runtime/mime.lock; other XDG directories give another machine. */
     char logfile[MIME_PATH_MAX]; /* state/vmm.log */
     char exe_dir[MIME_PATH_MAX];  /* directory of the running mime binary. */
 } MimePaths;

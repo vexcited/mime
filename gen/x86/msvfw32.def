@@ -28,4 +28,7 @@ EXPORTS
     ICOpen=_ICOpen@12 @37
     ICOpenFunction=_ICOpenFunction@16 @38
     ICSendMessage=_ICSendMessage@16 @40
+    ICSeqCompressFrame=ICSeqCompressFrame @41
+    ICSeqCompressFrameEnd=_ICSeqCompressFrameEnd@4 @42
+    ICSeqCompressFrameStart=_ICSeqCompressFrameStart@8 @43
     VideoForWindowsVersion=_VideoForWindowsVersion@0 @2

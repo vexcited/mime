@@ -7,9 +7,34 @@ POBJECT_TYPE ObDirectoryType;
 POBJECT_TYPE ObSymbolicLinkType;
 POBJECT_DIRECTORY ObRootDirectory;
 
-static POBJECT_TYPE g_types[64];
-static ULONG g_type_count;
+/* a type as windows has it: its index and what NtQueryObject tells of it beside its counts. */
+typedef struct OB_TYPE_REFERENCE {
+    PCWSTR Name;
+    UCHAR Index;
+    ULONG InvalidAttributes;
+    GENERIC_MAPPING GenericMapping;
+    ULONG ValidAccessMask;
+    BOOLEAN SecurityRequired, MaintainHandleCount;
+    ULONG PoolType, DefaultPagedPoolCharge, DefaultNonPagedPoolCharge;
+} OB_TYPE_REFERENCE;
+
+#include "obtypes.inc"
+
+#define OB_TYPE_FIRST_INDEX 2
+#define OB_TYPE_SLOTS 96
+
+/* by index, less the two windows keeps: a type windows has sits where windows has it, the others come after them. */
+static POBJECT_TYPE g_types[OB_TYPE_SLOTS];
+static ULONG g_type_extra = RTL_NUMBER_OF(ObpTypeReference);
 static KSPIN_LOCK g_namespace_lock;
+
+static const OB_TYPE_REFERENCE *type_reference(PCWSTR name)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(ObpTypeReference); i++)
+        if (!wcscmp(ObpTypeReference[i].Name, name))
+            return &ObpTypeReference[i];
+    return nullptr;
+}
 
 POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init)
 {
@@ -23,9 +48,12 @@ POBJECT_TYPE ObCreateObjectType(PCWSTR name, const OBJECT_TYPE_INITIALIZER *init
     type->NameBuffer[len] = 0;
     RtlInitUnicodeString(&type->Name, type->NameBuffer);
     type->Init = *init;
-    type->Index = g_type_count;
-    if (g_type_count < RTL_NUMBER_OF(g_types))
-        g_types[g_type_count++] = type;
+    const OB_TYPE_REFERENCE *reference = type_reference(type->NameBuffer);
+    if (reference && g_types[reference->Index - OB_TYPE_FIRST_INDEX])
+        reference = nullptr;
+    type->Index = reference ? (ULONG)reference->Index - OB_TYPE_FIRST_INDEX : g_type_extra++;
+    if (type->Index < OB_TYPE_SLOTS)
+        g_types[type->Index] = type;
     return type;
 }
 
@@ -80,57 +108,110 @@ ACCESS_MASK ObMapGenericAccess(POBJECT_TYPE type, ACCESS_MASK mask)
     return mask;
 }
 
-/* the type information with its name after it, padded to eight bytes. */
-static ULONG type_information_size(POBJECT_TYPE type)
+/* the name as the block carries it: its characters and their nul, padded to eight bytes. */
+static ULONG type_name_room(USHORT name_bytes)
 {
-    return (ULONG)(sizeof(OB_TYPE_INFORMATION) + ((type->Name.Length + sizeof(WCHAR) + 7) & ~7u));
+    return (name_bytes + sizeof(WCHAR) + 7) & ~7u;
 }
 
-/* out will be copied to user_base in the caller, so the name pointer is relative to that. */
-static void build_type_information(POBJECT_TYPE type, PUCHAR out, PUCHAR user_base)
+/*
+ * the information of a type, its name after it. a type windows has tells what windows tells of it, whether this
+ * kernel made it or not; the counts are this kernel's. out will be copied to user_base in the caller, so the name
+ * pointer is relative to that. the bytes after the nul are left to the caller.
+ */
+static ULONG build_type_information(POBJECT_TYPE type, const OB_TYPE_REFERENCE *reference, PUCHAR out, PUCHAR user_base)
 {
     OB_TYPE_INFORMATION *info = (OB_TYPE_INFORMATION *)out;
-    memset(out, 0, type_information_size(type));
-    memcpy(out + sizeof(*info), type->Name.Buffer, type->Name.Length);
-    info->TypeName.Length = type->Name.Length;
-    info->TypeName.MaximumLength = (USHORT)(type->Name.Length + sizeof(WCHAR));
+    PCWSTR name = reference ? reference->Name : type->Name.Buffer;
+    USHORT bytes = (USHORT)(wcslen(name) * sizeof(WCHAR));
+    memset(out, 0, sizeof(*info) + type_name_room(bytes));
+    memcpy(out + sizeof(*info), name, bytes);
+    info->TypeName.Length = bytes;
+    info->TypeName.MaximumLength = (USHORT)(bytes + sizeof(WCHAR));
     info->TypeName.Buffer = (PWSTR)(user_base + sizeof(*info));
-    info->TotalNumberOfObjects = info->HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
-    info->TotalNumberOfHandles = info->HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
-    info->GenericMapping = mapping_of(type->Name.Buffer, type->Init.ValidAccessMask);
-    info->ValidAccessMask = type->Init.ValidAccessMask;
-    info->SecurityRequired = TRUE;
-    info->TypeIndex = (UCHAR)(type->Index + 2);
-    info->PoolType = type->Init.PoolType;
-    info->DefaultNonPagedPoolCharge = type->Init.DefaultObjectSize;
+    if (type) {
+        info->TotalNumberOfObjects = info->HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
+        info->TotalNumberOfHandles = info->HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
+    }
+    if (reference) {
+        info->InvalidAttributes = reference->InvalidAttributes;
+        info->GenericMapping = reference->GenericMapping;
+        info->ValidAccessMask = reference->ValidAccessMask;
+        info->SecurityRequired = reference->SecurityRequired;
+        info->MaintainHandleCount = reference->MaintainHandleCount;
+        info->TypeIndex = reference->Index;
+        info->PoolType = reference->PoolType;
+        info->DefaultPagedPoolCharge = reference->DefaultPagedPoolCharge;
+        info->DefaultNonPagedPoolCharge = reference->DefaultNonPagedPoolCharge;
+    } else {
+        info->GenericMapping = mapping_of(name, type->Init.ValidAccessMask);
+        info->ValidAccessMask = type->Init.ValidAccessMask;
+        info->SecurityRequired = TRUE;
+        info->TypeIndex = (UCHAR)(type->Index + OB_TYPE_FIRST_INDEX);
+        info->PoolType = 0x200;
+        info->DefaultNonPagedPoolCharge = type->Init.DefaultObjectSize;
+    }
+    return (ULONG)sizeof(*info) + bytes + sizeof(WCHAR);
 }
 
-static NTSTATUS return_answer(const void *answer, ULONG need, PVOID info, ULONG length, PULONG returned)
+/*
+ * ObjectTypeInformation, measured on windows 11 26300: the block and the name with its nul, in a room rounded up to
+ * eight bytes that the returned length always tells; the bytes of the rounding are not written.
+ */
+NTSTATUS ObQueryTypeInformation(POBJECT_TYPE type, PVOID info, ULONG length, PULONG returned)
 {
+    UCHAR answer[sizeof(OB_TYPE_INFORMATION) + sizeof(type->NameBuffer) + 8];
+    const OB_TYPE_REFERENCE *reference = type->Index < RTL_NUMBER_OF(ObpTypeReference) ? &ObpTypeReference[type->Index] : nullptr;
+    ULONG written = build_type_information(type, reference, answer, info), need = (written + 7) & ~7u;
     if (returned)
         KiCopyToUser(returned, &need, sizeof(need));
     if (length < need)
         return STATUS_INFO_LENGTH_MISMATCH;
-    return KiCopyToUser(info, answer, need);
+    /* the four bytes that pad the lengths of the name are not written either. */
+    NTSTATUS status = KiCopyToUser(info, answer, 2 * sizeof(USHORT));
+    return NT_SUCCESS(status) ? KiCopyToUser((PUCHAR)info + 8, answer + 8, written - 8) : status;
 }
 
-/* ObjectTypesInformation: the count, then each type's information, each aligned to eight bytes. */
+/*
+ * ObjectTypesInformation: the count, then each type's information, each aligned to eight bytes. measured on windows
+ * 11 26300: less than the count's room is told eight bytes, and a room too short still gets the count and the types
+ * that fit whole.
+ */
 NTSTATUS ObQueryAllTypesInformation(PVOID info, ULONG length, PULONG returned)
 {
-    ULONG need = 8;
-    for (ULONG i = 0; i < g_type_count; i++)
-        need += type_information_size(g_types[i]);
-    PUCHAR answer = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('O', 'b', 'Q', 't'));
+    ULONG need = 8, count = 0;
+    if (length < need) {
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
+    PUCHAR answer = ExAllocatePool2(POOL_FLAG_NON_PAGED, 8 + OB_TYPE_SLOTS * (sizeof(OB_TYPE_INFORMATION) + 0x48),
+                                    KI_TAG('O', 'b', 'Q', 't'));
     if (!answer)
         return STATUS_INSUFFICIENT_RESOURCES;
-    memset(answer, 0, 8);
-    *(PULONG)answer = g_type_count;
-    ULONG offset = 8;
-    for (ULONG i = 0; i < g_type_count; i++) {
-        build_type_information(g_types[i], answer + offset, (PUCHAR)info + offset);
-        offset += type_information_size(g_types[i]);
+    ULONG fit = sizeof(ULONG);
+    for (ULONG i = 0; i < OB_TYPE_SLOTS; i++) {
+        const OB_TYPE_REFERENCE *reference = i < RTL_NUMBER_OF(ObpTypeReference) ? &ObpTypeReference[i] : nullptr;
+        if (!reference && !g_types[i])
+            continue;
+        ULONG written = build_type_information(g_types[i], reference, answer + need, (PUCHAR)info + need);
+        if (need + written <= length)
+            fit = need + written;
+        need += (written + 7) & ~7u;
+        count++;
     }
-    NTSTATUS status = return_answer(answer, need, info, length, returned);
+    *(PULONG)answer = count;
+    *(PULONG)(answer + sizeof(ULONG)) = 0;
+    /* the type of types counts every type. */
+    if (g_types[0]) {
+        OB_TYPE_INFORMATION *first = (OB_TYPE_INFORMATION *)(answer + 8);
+        first->TotalNumberOfObjects = first->HighWaterNumberOfObjects = count;
+    }
+    if (returned)
+        KiCopyToUser(returned, &need, sizeof(need));
+    NTSTATUS status = KiCopyToUser(info, answer, length < need ? fit : need);
+    if (NT_SUCCESS(status) && length < need)
+        status = STATUS_INFO_LENGTH_MISMATCH;
     ExFreePool(answer);
     return status;
 }
@@ -150,7 +231,11 @@ NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCE
     h->HandleCount = 0;
     h->Type = type;
     h->Directory = nullptr;
+    h->Name = (UNICODE_STRING){};
     h->Flags = OB_FLAG_SD_PENDING;
+    h->Pad = 0;
+    /* no descriptor yet: one that is never assigned must not be read out of what the pool held before. */
+    h->Reserved = 0;
     if (attributes) {
         if (attributes->Attributes & OBJ_PERMANENT)
             h->Flags |= OB_FLAG_PERMANENT;
@@ -165,6 +250,17 @@ NTSTATUS ObCreateObject(POBJECT_TYPE type, POBJECT_ATTRIBUTES attributes, KPROCE
 LONG_PTR FASTCALL ObfReferenceObject(PVOID object)
 {
     return __atomic_add_fetch(&OBJECT_TO_HEADER(object)->PointerCount, 1, __ATOMIC_RELAXED);
+}
+
+/* a reference to an object that may already be on its way out, as an entry of a list kept until deletion. */
+BOOLEAN ObReferenceObjectSafe(PVOID object)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    LONG_PTR count = __atomic_load_n(&h->PointerCount, __ATOMIC_RELAXED);
+    while (count > 0)
+        if (__atomic_compare_exchange_n(&h->PointerCount, &count, count + 1, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+            return TRUE;
+    return FALSE;
 }
 
 static void remove_from_directory(OBJECT_HEADER *h);
@@ -312,6 +408,17 @@ static void remove_from_directory(OBJECT_HEADER *h)
 }
 
 /*
+ * ObpDeleteNameCheck: a named object that is not permanent leaves the namespace with its last handle, while references
+ * may keep it alive, so the name is free for a new object.
+ */
+void ObpDeleteNameCheck(PVOID object)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    if (h->Directory && !(h->Flags & OB_FLAG_PERMANENT) && !__atomic_load_n(&h->HandleCount, __ATOMIC_ACQUIRE))
+        remove_from_directory(h);
+}
+
+/*
  * symbolic links are followed. when a component has a parse procedure, as devices do, the rest of the
  * path is handed to it, which is how file opens reach file system drivers.
  */
@@ -394,6 +501,12 @@ static NTSTATUS lookup_name(PUNICODE_STRING name, HANDLE root, ULONG attributes,
             ExFreePool(path);
             return st;
         }
+        /* measured on windows 11 26300: a name under a directory does not begin with a backslash. */
+        if (name->Length >= sizeof(WCHAR) && name->Buffer[0] == '\\') {
+            ObDereferenceObject(current);
+            ExFreePool(path);
+            return STATUS_OBJECT_PATH_SYNTAX_BAD;
+        }
     } else {
         if (name->Length < sizeof(WCHAR) || name->Buffer[0] != '\\') {
             ExFreePool(path);
@@ -453,7 +566,7 @@ static NTSTATUS lookup_name(PUNICODE_STRING name, HANDLE root, ULONG attributes,
         while (pos < len && path[pos] != '\\')
             pos++;
         /* without the bypass traverse privilege, a program needs traverse access on each directory. */
-        if (mode == UserMode && SeAccessEnforced) {
+        if (mode == UserMode) {
             if (bypass < 0)
                 bypass = SeThreadBypassesTraverse();
             ACCESS_MASK passed;
@@ -495,6 +608,11 @@ static NTSTATUS lookup_name(PUNICODE_STRING name, HANDLE root, ULONG attributes,
             path[len] = 0;
             pos = 0;
             ObDereferenceObject(current);
+            /* a target that is no name of the namespace, as the dos path of KnownDllPath, cannot be followed. */
+            if (len && path[0] != '\\') {
+                status = STATUS_OBJECT_NAME_INVALID;
+                break;
+            }
             current = ObRootDirectory;
             ObReferenceObject(current);
         }
@@ -742,6 +860,11 @@ static void symlink_delete(PVOID object)
         ExFreePool(link->Target.Buffer);
 }
 
+static void directory_delete(PVOID object)
+{
+    ObpForgetNamespace(object);
+}
+
 void ObInitialize(void)
 {
     ObpInitializeSecurity();
@@ -750,6 +873,7 @@ void ObInitialize(void)
     ObSetGenericMapping(&init, 0x20000, 0x20000, 0x20000, 0xF0001);
     ObTypeType = ObCreateObjectType(L"Type", &init);
     ObSetGenericMapping(&init, 0x20003, 0x2000C, 0x20003, 0xF000F);
+    init.DeleteProcedure = directory_delete;
     ObDirectoryType = ObCreateObjectType(L"Directory", &init);
     init.ValidAccessMask = SYMBOLIC_LINK_ALL_ACCESS;
     init.DeleteProcedure = symlink_delete;

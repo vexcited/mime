@@ -15,6 +15,8 @@ NTSTATUS ObInitializeHandleTable(PHANDLE_TABLE table)
     table->Count = 0;
     table->FirstFree = 0;
     table->Lock = 0;
+    /* ExpAllocateHandleTable of ntoskrnl 26300 sets the flag in every new table: a child never inherits it. */
+    table->RaiseOnInvalidClose = TRUE;
     table->Entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, table->Capacity * sizeof(HANDLE_TABLE_ENTRY),
                                      KI_TAG('O', 'b', 'H', 't'));
     return table->Entries ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
@@ -366,45 +368,13 @@ static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
     return STATUS_INVALID_HANDLE;
 }
 
-BOOLEAN ObAuditHandleAccess;
-
-/* each service and type is reported once. a report lost or doubled between two processors does not matter. */
-static void report_missing_rights(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, PCSTR service, BOOLEAN denied)
-{
-    static struct {
-        PCSTR service;
-        const OBJECT_TYPE *type;
-        ACCESS_MASK missing;
-    } seen[128];
-    static ULONG count;
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    ACCESS_MASK missing = desired & ~granted;
-    ULONG n = count < 128 ? count : 128;
-    for (ULONG i = 0; i < n; i++) {
-        if (seen[i].service == service && seen[i].type == h->Type && seen[i].missing == missing)
-            return;
-    }
-    if (n < 128) {
-        seen[n].service = service, seen[n].type = h->Type, seen[n].missing = missing;
-        count = n + 1;
-    }
-    char type[24];
-    ULONG chars = 0;
-    for (; chars < sizeof(type) - 1 && chars < h->Type->Name.Length / sizeof(WCHAR); chars++)
-        type[chars] = (char)h->Type->Name.Buffer[chars];
-    type[chars] = 0;
-    KiLogPrintf("handle access %s: %s needs %08x of a %s handle that has %08x, %s pid %u", denied ? "denied" : "missing",
-                service, desired, type, granted, PsCurrentProcess()->ImageFileName,
-                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId);
-}
-
 /*
  * a service a program calls needs its rights in the handle the object came from. kernel mode callers are not
- * checked. the kernel option audit-handle-access reports a handle with too few rights and lets it pass.
+ * checked.
  */
 BOOLEAN ObHandleAllows(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, KPROCESSOR_MODE mode, PCSTR service)
 {
-    if (mode != UserMode || !SeAccessEnforced || (granted & desired) == desired)
+    if (mode != UserMode || (granted & desired) == desired)
         return TRUE;
     const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
     if ((granted | desired) & GENERIC_RIGHTS) {
@@ -416,9 +386,7 @@ BOOLEAN ObHandleAllows(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, K
         if ((granted & desired) == desired)
             return TRUE;
     }
-    if (ObAuditHandleAccess || SeTraceAccess)
-        report_missing_rights(object, granted, desired, service, !ObAuditHandleAccess);
-    return ObAuditHandleAccess;
+    return FALSE;
 }
 
 /* the rights of a handle as its type names them. a type that names none for the generic ones gives them all. */
@@ -528,6 +496,8 @@ static void close_object_handle(PEPROCESS process, PVOID object)
     __atomic_sub_fetch(&header->Type->TotalHandles, 1, __ATOMIC_RELAXED);
     if (header->Type->Init.CloseProcedure)
         header->Type->Init.CloseProcedure(process, object, (ULONG)remaining + 1);
+    if (!remaining)
+        ObpDeleteNameCheck(object);
     ObDereferenceObject(object);
 }
 
@@ -549,9 +519,22 @@ static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR
     return STATUS_SUCCESS;
 }
 
+/*
+ * NtClose of ntoskrnl 26300 raises for an invalid handle under strict handle checks only while the table has the
+ * flag of class 71, which NtSetInformationProcess clears and sets. every other service raises whatever the flag.
+ * measured on windows 11: the null handle fails and never raises.
+ */
+static NTSTATUS invalid_close(PHANDLE_TABLE table, HANDLE handle, KPROCESSOR_MODE mode)
+{
+    return table->RaiseOnInvalidClose ? invalid_handle(handle, mode) : STATUS_INVALID_HANDLE;
+}
+
 NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
 {
     if (handle == NtCurrentProcess() || handle == NtCurrentThread())
+        return STATUS_SUCCESS;
+    /* measured on windows 11: the values -3 to -6 of a program close with success too, there is nothing behind them. */
+    if (mode == UserMode && (LONG_PTR)handle < 0 && (LONG_PTR)handle >= -6)
         return STATUS_SUCCESS;
     PEPROCESS owner;
     PHANDLE_TABLE table = table_for(handle, mode, &owner);
@@ -564,7 +547,7 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
     if (protected)
         return STATUS_HANDLE_NOT_CLOSABLE;
     NTSTATUS status = close_in_table(owner, table, index);
-    return status == STATUS_INVALID_HANDLE ? invalid_handle(handle, mode) : status;
+    return status == STATUS_INVALID_HANDLE ? invalid_close(table, handle, mode) : status;
 }
 
 typedef struct OBJECT_HANDLE_FLAGS {
@@ -835,6 +818,222 @@ NTSTATUS NTAPI NtCreateDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJE
     return status;
 }
 
+/*
+ * a private namespace is a directory with no name, found by its boundary: the name and the sids of a boundary
+ * descriptor. one namespace has a boundary while it lives and nobody deleted it.
+ */
+typedef struct OB_NAMESPACE {
+    LIST_ENTRY Links;
+    POBJECT_DIRECTORY Directory;
+    ULONG Size;
+    UCHAR Boundary[]; /* the entries of the descriptor, after its header. */
+} OB_NAMESPACE;
+
+#define BOUNDARY_HEADER 16
+#define BOUNDARY_MAX 0x10000
+#define BOUNDARY_NAME 1
+#define BOUNDARY_SID 2
+#define BOUNDARY_IL 3
+
+static LIST_ENTRY g_namespaces = {&g_namespaces, &g_namespaces};
+static KSPIN_LOCK g_namespaces_lock;
+
+/* the entries of a boundary descriptor from the caller, checked: one name, sids and at most one level. */
+static NTSTATUS capture_boundary(PVOID user, PUCHAR *out, ULONG *size)
+{
+    ULONG head[4];
+    if (!user)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = KeGetPreviousMode() == UserMode ? KiCopyFromUser(head, user, sizeof(head))
+                                                      : (memcpy(head, user, sizeof(head)), STATUS_SUCCESS);
+    if (!NT_SUCCESS(status))
+        return STATUS_ACCESS_VIOLATION;
+    if (head[0] != 1 || head[2] < BOUNDARY_HEADER || head[2] > BOUNDARY_MAX)
+        return STATUS_INVALID_PARAMETER;
+    ULONG n = head[2] - BOUNDARY_HEADER;
+    PUCHAR copy = ExAllocatePool2(POOL_FLAG_PAGED, n ? n : 1, 'sNbO');
+    if (!copy)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    status = KeGetPreviousMode() == UserMode ? KiCopyFromUser(copy, (PUCHAR)user + BOUNDARY_HEADER, n)
+                                             : (memcpy(copy, (PUCHAR)user + BOUNDARY_HEADER, n), STATUS_SUCCESS);
+    ULONG names = 0, levels = 0, offset = 0, items = 0;
+    while (NT_SUCCESS(status) && items < head[1]) {
+        ULONG type, length;
+        if (offset + 8 > n) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        memcpy(&type, copy + offset, 4);
+        memcpy(&length, copy + offset + 4, 4);
+        if (length < 8 || length > n - offset || type < BOUNDARY_NAME || type > BOUNDARY_IL) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+        names += type == BOUNDARY_NAME;
+        levels += type == BOUNDARY_IL;
+        offset += (length + 7) & ~7u;
+        items++;
+    }
+    if (NT_SUCCESS(status) && (names != 1 || levels > 1))
+        status = STATUS_INVALID_PARAMETER;
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(copy);
+        return KeGetPreviousMode() == UserMode && status == STATUS_ACCESS_VIOLATION ? status : STATUS_INVALID_PARAMETER;
+    }
+    *out = copy;
+    *size = offset > n ? n : offset;
+    return STATUS_SUCCESS;
+}
+
+static OB_NAMESPACE *find_namespace(const UCHAR *boundary, ULONG size)
+{
+    for (LIST_ENTRY *e = g_namespaces.Flink; e != &g_namespaces; e = e->Flink) {
+        OB_NAMESPACE *ns = CONTAINING_RECORD(e, OB_NAMESPACE, Links);
+        if (ns->Size == size && !memcmp(ns->Boundary, boundary, size))
+            return ns;
+    }
+    return nullptr;
+}
+
+void ObpForgetNamespace(POBJECT_DIRECTORY directory)
+{
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+    OB_NAMESPACE *ns = directory->Namespace;
+    directory->Namespace = nullptr;
+    if (ns && ns->Links.Flink)
+        RemoveEntryList(&ns->Links);
+    KeReleaseSpinLock(&g_namespaces_lock, irql);
+    if (ns)
+        ExFreePool(ns);
+}
+
+NTSTATUS NTAPI NtCreatePrivateNamespace(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                        PVOID boundary_descriptor)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = capture_attributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR boundary = nullptr;
+    ULONG size = 0;
+    if (oa.ObjectName || oa.RootDirectory)
+        status = STATUS_INVALID_PARAMETER;
+    if (NT_SUCCESS(status))
+        status = capture_boundary(boundary_descriptor, &boundary, &size);
+    OB_NAMESPACE *ns = nullptr;
+    if (NT_SUCCESS(status)) {
+        ns = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*ns) + size, 'sNbO');
+        status = ns ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+    }
+    POBJECT_DIRECTORY dir = nullptr;
+    if (NT_SUCCESS(status)) {
+        memset(ns, 0, sizeof(*ns));
+        ns->Size = size;
+        memcpy(ns->Boundary, boundary, size);
+        status = ObCreateObject(ObDirectoryType, &oa, KeGetPreviousMode(), sizeof(OBJECT_DIRECTORY), (PVOID *)&dir);
+    }
+    if (NT_SUCCESS(status)) {
+        memset(dir, 0, sizeof(*dir));
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+        if (find_namespace(ns->Boundary, size)) {
+            status = STATUS_OBJECT_NAME_COLLISION;
+        } else {
+            ns->Directory = dir;
+            dir->Namespace = ns;
+            InsertTailList(&g_namespaces, &ns->Links);
+            ns = nullptr;
+        }
+        KeReleaseSpinLock(&g_namespaces_lock, irql);
+        HANDLE h;
+        if (NT_SUCCESS(status))
+            status = ObInsertObjectNamed(dir, &oa, access, KeGetPreviousMode(), &h);
+        else
+            ObDereferenceObject(dir);
+        if (NT_SUCCESS(status))
+            status = ObStoreHandle(handle, h);
+    }
+    if (ns)
+        ExFreePool(ns);
+    if (boundary)
+        ExFreePool(boundary);
+    KiFreeCapturedString(&name);
+    return status;
+}
+
+NTSTATUS NTAPI NtOpenPrivateNamespace(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+                                      PVOID boundary_descriptor)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = capture_attributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    PUCHAR boundary = nullptr;
+    ULONG size = 0;
+    status = capture_boundary(boundary_descriptor, &boundary, &size);
+    POBJECT_DIRECTORY dir = nullptr;
+    if (NT_SUCCESS(status)) {
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+        OB_NAMESPACE *ns = find_namespace(boundary, size);
+        if (ns) {
+            dir = ns->Directory;
+            ObReferenceObject(dir);
+        }
+        KeReleaseSpinLock(&g_namespaces_lock, irql);
+        status = dir ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+    HANDLE h;
+    if (NT_SUCCESS(status)) {
+        /* the handle takes the reference. */
+        status = ObCreateHandle(PsCurrentProcess(), dir, access, oa.Attributes & OBJ_INHERIT, &h);
+        if (!NT_SUCCESS(status))
+            ObDereferenceObject(dir);
+    }
+    if (NT_SUCCESS(status))
+        status = ObStoreHandle(handle, h);
+    if (boundary)
+        ExFreePool(boundary);
+    KiFreeCapturedString(&name);
+    return status;
+}
+
+/* the namespace is no longer found by its boundary; what it holds lives on with its handles. */
+NTSTATUS NTAPI NtDeletePrivateNamespace(HANDLE handle)
+{
+    POBJECT_DIRECTORY dir;
+    ACCESS_MASK granted = 0;
+    NTSTATUS status = ObReferenceHandle(handle, ObDirectoryType, KeGetPreviousMode(), (PVOID *)&dir, &granted);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (!(granted & 0x10000 /* DELETE */)) {
+        ObDereferenceObject(dir);
+        return STATUS_ACCESS_DENIED;
+    }
+    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_namespaces_lock);
+    OB_NAMESPACE *ns = dir->Namespace;
+    if (ns && ns->Links.Flink) {
+        RemoveEntryList(&ns->Links);
+        ns->Links.Flink = ns->Links.Blink = nullptr;
+    }
+    KeReleaseSpinLock(&g_namespaces_lock, irql);
+    ObDereferenceObject(dir);
+    return ns ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+}
+
+/*
+ * measured on windows 11 26300: directories, links and sections do not take OBJ_OPENLINK, which is of the registry.
+ * the name is looked up without it first, so a name that is not found or cannot be followed tells that, and a
+ * name that is found tells c000000d. the attribute is taken off here and the caller refuses what it opened.
+ */
+BOOLEAN ObRefuseOpenLink(POBJECT_ATTRIBUTES attributes)
+{
+    if (KeGetPreviousMode() != UserMode || !(attributes->Attributes & OBJ_OPENLINK))
+        return FALSE;
+    attributes->Attributes &= ~(ULONG)OBJ_OPENLINK;
+    return TRUE;
+}
+
 NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
 {
     OBJECT_ATTRIBUTES oa;
@@ -842,8 +1041,13 @@ NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT
     NTSTATUS status = capture_attributes(attributes, &oa, &name);
     if (!NT_SUCCESS(status))
         return status;
+    BOOLEAN refused = ObRefuseOpenLink(&oa);
     HANDLE h;
     status = ObOpenObjectByName(&oa, ObDirectoryType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
+    if (NT_SUCCESS(status) && refused) {
+        NtClose(h);
+        status = STATUS_INVALID_PARAMETER;
+    }
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -857,9 +1061,15 @@ NTSTATUS NTAPI NtOpenSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJ
     NTSTATUS status = capture_attributes(attributes, &oa, &name);
     if (!NT_SUCCESS(status))
         return status;
+    /* the type opens a link itself rather than what it names. a program may not ask for that, see ObRefuseOpenLink. */
+    BOOLEAN refused = ObRefuseOpenLink(&oa);
     oa.Attributes |= OBJ_OPENLINK;
     HANDLE h;
     status = ObOpenObjectByName(&oa, ObSymbolicLinkType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
+    if (NT_SUCCESS(status) && refused) {
+        NtClose(h);
+        status = STATUS_INVALID_PARAMETER;
+    }
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -930,19 +1140,42 @@ NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, 
     UNICODE_STRING out;
     status = KiCopyFromUser(&out, target, sizeof(out));
     if (NT_SUCCESS(status)) {
-        ULONG need = link->Target.Length;
+        /*
+         * measured on windows 11 26300: a caller that takes the length is told the target with its nul, needs the room
+         * of both and gets both. one that does not needs the room of the characters only.
+         */
+        ULONG need = returned ? link->Target.MaximumLength : link->Target.Length;
         if (returned)
             KiCopyToUser(returned, &need, sizeof(need));
         if (need > out.MaximumLength) {
             status = STATUS_BUFFER_TOO_SMALL;
         } else {
             status = KiCopyToUser(out.Buffer, link->Target.Buffer, need);
-            out.Length = (USHORT)need;
+            out.Length = link->Target.Length;
             if (NT_SUCCESS(status))
                 status = KiCopyToUser(target, &out, sizeof(out));
         }
     }
     ObDereferenceObject(link);
+    return status;
+}
+
+/* measured on windows 11 26300: no right is needed, a pseudo handle is the object it stands for. */
+NTSTATUS NTAPI NtCompareObjects(HANDLE first, HANDLE second)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    PVOID a, b;
+    NTSTATUS status = ObReferenceHandle(first, nullptr, mode, &a, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandle(second, nullptr, mode, &b, nullptr);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(a);
+        return status;
+    }
+    status = a == b ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+    ObDereferenceObject(b);
+    ObDereferenceObject(a);
     return status;
 }
 
@@ -1000,6 +1233,15 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             LARGE_INTEGER CreationTime;
         } basic = {};
         basic.Attributes = (flags.Inherit ? OBJ_INHERIT : 0) | (flags.ProtectFromClose ? OBJ_PROTECT_CLOSE : 0);
+        /* measured on windows 11 26300: a permanent object says so, and one a directory names tells the room of its name. */
+        if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_PERMANENT)
+            basic.Attributes |= OBJ_PERMANENT;
+        if (OBJECT_TO_HEADER(object)->Directory) {
+            WCHAR text[512];
+            UNICODE_STRING name;
+            if (NT_SUCCESS(ObpQueryNameString(object, &name, text, RTL_NUMBER_OF(text))))
+                basic.NameInfoSize = (ULONG)sizeof(UNICODE_STRING) + name.Length + sizeof(WCHAR);
+        }
         basic.GrantedAccess = granted;
         basic.HandleCount = (ULONG)OBJECT_TO_HEADER(object)->HandleCount;
         basic.PointerCount = (ULONG)OBJECT_TO_HEADER(object)->PointerCount;
@@ -1015,39 +1257,7 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
         if (returned && (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH))
             KiCopyToUser(returned, &need, sizeof(need));
     } else if (klass == ObjectTypeInformation) {
-        POBJECT_TYPE type = OBJECT_TO_HEADER(object)->Type;
-        struct {
-            UNICODE_STRING TypeName;
-            ULONG TotalNumberOfObjects, TotalNumberOfHandles, TotalPagedPoolUsage, TotalNonPagedPoolUsage;
-            ULONG TotalNamePoolUsage, TotalHandleTableUsage, HighWaterNumberOfObjects, HighWaterNumberOfHandles;
-            ULONG HighWaterPagedPoolUsage, HighWaterNonPagedPoolUsage, HighWaterNamePoolUsage;
-            ULONG HighWaterHandleTableUsage, InvalidAttributes;
-            ULONG GenericMapping[4];
-            ULONG ValidAccessMask;
-            BOOLEAN SecurityRequired, MaintainHandleCount;
-            UCHAR TypeIndex;
-            CHAR ReservedByte;
-            ULONG PoolType, DefaultPagedPoolCharge, DefaultNonPagedPoolCharge;
-        } t = {};
-        ULONG need = sizeof(t) + type->Name.Length + sizeof(WCHAR);
-        t.TypeName.Length = type->Name.Length;
-        t.TypeName.MaximumLength = (USHORT)(type->Name.Length + sizeof(WCHAR));
-        t.TypeName.Buffer = (PWSTR)((PUCHAR)info + sizeof(t));
-        t.TotalNumberOfObjects = t.HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
-        t.TotalNumberOfHandles = t.HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
-        t.InvalidAttributes = 0xB0;
-        t.ValidAccessMask = type->Init.ValidAccessMask;
-        t.TypeIndex = (UCHAR)(type->Index + 2);
-        t.PoolType = 0x200;
-        if (length < need) {
-            status = STATUS_INFO_LENGTH_MISMATCH;
-        } else {
-            status = KiCopyToUser(info, &t, sizeof(t));
-            if (NT_SUCCESS(status))
-                status = KiCopyToUser(t.TypeName.Buffer, type->Name.Buffer, type->Name.Length + sizeof(WCHAR));
-        }
-        if (returned)
-            KiCopyToUser(returned, &need, sizeof(need));
+        status = ObQueryTypeInformation(OBJECT_TO_HEADER(object)->Type, info, length, returned);
     } else {
         status = STATUS_INVALID_INFO_CLASS;
     }

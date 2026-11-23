@@ -3,26 +3,35 @@
 
 #define TLS_TOTAL (TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
 
-/* every thread's teb is linked through TlsLinks so freed slots can be cleared everywhere. */
-static LIST_ENTRY g_tls_threads = {&g_tls_threads, &g_tls_threads};
+/*
+ * a freed slot is cleared in every thread. like windows, a 64-bit process asks the kernel, ThreadZeroTlsCell, and
+ * TlsLinks stays empty. a 32-bit one links every teb through TlsLinks.
+ */
 static RTL_CRITICAL_SECTION g_tls_lock = RTL_CRITICAL_SECTION_INIT;
+#ifndef _WIN64
+static LIST_ENTRY g_tls_threads = {&g_tls_threads, &g_tls_threads};
+#endif
 
 void KbThreadAttach(void)
 {
+#ifndef _WIN64
     PTEB teb = NtCurrentTeb();
     RtlEnterCriticalSection(&g_tls_lock);
     InsertTailList(&g_tls_threads, &teb->TlsLinks);
     RtlLeaveCriticalSection(&g_tls_lock);
+#endif
 }
 
 static void unlink_thread(void)
 {
     PTEB teb = NtCurrentTeb();
     RtlEnterCriticalSection(&g_tls_lock);
+#ifndef _WIN64
     if (teb->TlsLinks.Flink && teb->TlsLinks.Flink != &teb->TlsLinks) {
         RemoveEntryList(&teb->TlsLinks);
         InitializeListHead(&teb->TlsLinks);
     }
+#endif
     PVOID *expansion = teb->TlsExpansionSlots;
     teb->TlsExpansionSlots = nullptr;
     RtlLeaveCriticalSection(&g_tls_lock);
@@ -97,6 +106,9 @@ BOOL WINAPI TlsFree(DWORD index)
         return FALSE;
     }
     RtlEnterCriticalSection(&g_tls_lock);
+#ifdef _WIN64
+    NtSetInformationThread(NtCurrentThread(), ThreadZeroTlsCell, &index, sizeof(index));
+#else
     for (PLIST_ENTRY e = g_tls_threads.Flink; e != &g_tls_threads; e = e->Flink) {
         PTEB teb = CONTAINING_RECORD(e, TEB, TlsLinks);
         if (index < TLS_MINIMUM_AVAILABLE)
@@ -104,6 +116,7 @@ BOOL WINAPI TlsFree(DWORD index)
         else if (teb->TlsExpansionSlots)
             teb->TlsExpansionSlots[index - TLS_MINIMUM_AVAILABLE] = nullptr;
     }
+#endif
     RtlLeaveCriticalSection(&g_tls_lock);
     if (index < TLS_MINIMUM_AVAILABLE)
         bit_clear(peb->TlsBitmapBits, index);

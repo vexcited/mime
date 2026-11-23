@@ -94,12 +94,42 @@ BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
 
 HANDLE NTAPI NtUserGetProp(HWND hwnd, ATOM atom)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     WND_PROP *p = w ? find_prop(w, atom) : nullptr;
     HANDLE data = p ? p->Data : nullptr;
     UserLeave();
     return data;
+}
+
+/*
+ * SetPropW and GetPropW of user32 26300 pass a name as it is, and the kernel finds or makes its global atom: the
+ * same one GlobalFindAtom gives RemoveProp.
+ */
+BOOL NTAPI NtUserSetProp2(HWND hwnd, PUNICODE_STRING user_name, HANDLE data)
+{
+    PWSTR name = nullptr;
+    if (!NT_SUCCESS(W32CaptureString(user_name, &name, nullptr)) || !name) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    ATOM atom = MimeAddGlobalAtom(name);
+    W32Free(name);
+    if (!atom) {
+        W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    return NtUserSetProp(hwnd, atom, data);
+}
+
+HANDLE NTAPI NtUserGetProp2(HWND hwnd, PUNICODE_STRING user_name)
+{
+    PWSTR name = nullptr;
+    if (!NT_SUCCESS(W32CaptureString(user_name, &name, nullptr)) || !name)
+        return nullptr;
+    ATOM atom = MimeFindGlobalAtom(name);
+    W32Free(name);
+    return atom ? NtUserGetProp(hwnd, atom) : nullptr;
 }
 
 HANDLE NTAPI NtUserRemoveProp(HWND hwnd, ATOM atom)

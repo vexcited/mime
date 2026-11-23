@@ -32,38 +32,39 @@ HRESULT WINAPI GetProcessDpiAwareness(HANDLE process, PROCESS_DPI_AWARENESS *val
     return S_OK;
 }
 
-/* 0 for an invalid handle. */
+typedef BOOL(WINAPI *DPI_FOR_MONITOR)(HMONITOR monitor, MONITOR_DPI_TYPE type, UINT *x, UINT *y);
+
+/* user32 exports what NtUserGetDpiForMonitor answers, with the type checked, as GetDpiForMonitorInternal. */
+static DPI_FOR_MONITOR dpi_for_monitor(void)
+{
+    static DPI_FOR_MONITOR f;
+    if (!f)
+        f = (DPI_FOR_MONITOR)GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForMonitorInternal");
+    return f;
+}
+
+/* the dpi of the monitor itself, as a per monitor aware thread sees it. 0 for an invalid handle. */
 static UINT monitor_dpi(HMONITOR monitor)
 {
-    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
-    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
-    ULONG_PTR index = (ULONG_PTR)monitor - 0x00010001;
-    if (!monitor || count > MIME_USER_MAX_MONITORS || (ULONG_PTR)monitor < 0x00010001 || index >= count)
+    DPI_FOR_MONITOR f = dpi_for_monitor();
+    UINT x = 0, y = 0;
+    if (!f)
         return 0;
-    return list[index].Dpi ? list[index].Dpi : 96;
+    DPI_AWARENESS_CONTEXT old = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    BOOL ok = f(monitor, MDT_EFFECTIVE_DPI, &x, &y);
+    if (old)
+        SetThreadDpiAwarenessContext(old);
+    return ok ? x : 0;
 }
 
-/* unaware processes see 96, system aware ones the system dpi, per monitor aware ones the monitor's. */
-static UINT process_dpi(UINT display)
-{
-    PROCESS_DPI_AWARENESS awareness;
-    if (SUCCEEDED(GetProcessDpiAwareness(nullptr, &awareness))) {
-        if (awareness == PROCESS_DPI_UNAWARE)
-            return 96;
-        if (awareness == PROCESS_PER_MONITOR_DPI_AWARE)
-            return display;
-    }
-    return GetDpiForSystem();
-}
-
+/* the error user32 and win32k leave, measured on windows 11 26100: 160 for a bad type, 6 for a bad monitor. */
 HRESULT WINAPI GetDpiForMonitor(HMONITOR monitor, MONITOR_DPI_TYPE type, UINT *x, UINT *y)
 {
-    if (type != MDT_EFFECTIVE_DPI && type != MDT_ANGULAR_DPI && type != MDT_RAW_DPI)
-        return HRESULT_FROM_WIN32(ERROR_BAD_ARGUMENTS);
-    UINT dpi = x && y ? monitor_dpi(monitor) : 0;
-    if (!dpi)
-        return E_INVALIDARG;
-    *x = *y = type == MDT_EFFECTIVE_DPI ? process_dpi(dpi) : dpi;
+    DPI_FOR_MONITOR f = dpi_for_monitor();
+    if (!f)
+        return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+    if (!f(monitor, type, x, y))
+        return HRESULT_FROM_WIN32(GetLastError());
     return S_OK;
 }
 

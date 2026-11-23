@@ -235,14 +235,31 @@ LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
 {
     static const GUID generic = WINTRUST_ACTION_GENERIC_VERIFY_V2;
     static const GUID driver = DRIVER_ACTION_VERIFY;
+    static const GUID https = HTTPSPROV_ACTION;
     WINTRUST_DATA *data = input;
     if (!action || !data || (data->cbStruct != offsetof(WINTRUST_DATA, pSignatureSettings) &&
         data->cbStruct != sizeof(*data)))
         return E_INVALIDARG;
-    if (memcmp(action, &generic, sizeof(generic)) && memcmp(action, &driver, sizeof(driver)))
+    BOOL secure = !memcmp(action, &https, sizeof(https));
+    if (!secure && memcmp(action, &generic, sizeof(generic)) && memcmp(action, &driver, sizeof(driver)))
         return TRUST_E_ACTION_UNKNOWN;
     if (data->dwStateAction == WTD_STATEACTION_CLOSE)
         return state_close(data);
+    if (secure) {
+        /* the certificate of a server: only a certificate can be its subject, and the state keeps its chain. */
+        if (data->dwUnionChoice != WTD_CHOICE_CERT)
+            return ERROR_INVALID_PARAMETER;
+        if (data->dwStateAction == WTD_STATEACTION_VERIFY && data->hWVTStateData)
+            return E_INVALIDARG;
+        PCCERT_CHAIN_CONTEXT chain = nullptr;
+        LONG result = WtVerifyHttps(data, &chain);
+        if (data->dwStateAction != WTD_STATEACTION_VERIFY || !state_open(data, chain, result)) {
+            if (chain)
+                CertFreeCertificateChain(chain);
+            return data->dwStateAction != WTD_STATEACTION_VERIFY ? result : E_OUTOFMEMORY;
+        }
+        return result;
+    }
     if (data->dwStateAction > WTD_STATEACTION_VERIFY || data->pPolicyCallbackData || data->pSIPClientData ||
         data->dwUIChoice < WTD_UI_ALL || data->dwUIChoice > WTD_UI_NOGOOD || data->fdwRevocationChecks > 1 ||
         (data->cbStruct == sizeof(*data) && data->pSignatureSettings))

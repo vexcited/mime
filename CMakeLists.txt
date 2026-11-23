@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.30)
 
+# cmake 4.5 imports the C++23 std module into every target whose scanning is on. nothing here uses modules, and the
+# windows targets have no libstdc++ include path, so the scanner's std module cannot be built for them.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED ENV{CC})
     set(CMAKE_C_COMPILER clang)
 endif()
@@ -63,61 +67,12 @@ file(MAKE_DIRECTORY ${MIME_BUILD_GEN}/res ${MIME_SYSTEM32} ${MIME_SYSX64} ${MIME
 
 # ===================================== assets =====================================
 
-# The drawings and sounds that live in their own repositories, mime-icons and mime-audio, and the files of Windows the
-# build makes from them and from data/messages. A checkout of a repository next to Mime's is used as it is, so it can be
-# edited and built without a commit; otherwise the commit pinned here is fetched. MIME_ICONS_DIR and MIME_AUDIO_DIR
-# name another checkout.
-include(FetchContent)
-
-set(MIME_ICONS_REPOSITORY https://code.vexcited.com/mime/icons.git)
-set(MIME_ICONS_COMMIT ed99f1c9de2bc1b42f7c899b7355503be96cab5f)
-set(MIME_AUDIO_REPOSITORY https://code.vexcited.com/mime/audio.git)
-set(MIME_AUDIO_COMMIT 86c3138fcab689175f18847b72b06820c7dd0bd6)
-set(MIME_ICONS_DIR "" CACHE PATH "A checkout of mime-icons to build from instead of the pinned commit")
-set(MIME_AUDIO_DIR "" CACHE PATH "A checkout of mime-audio to build from instead of the pinned commit")
-
+# The files of Windows the build makes: the icons of Mime's own programs, drawn in guest/<program>/icons, and the
+# message tables of data/messages. The icons, cursors and sounds of Windows are Microsoft's, see the genuine section.
 set(MIME_ASSETS ${MIME_BUILD_GEN}/assets)
 set(MIME_ASSET_SCRIPTS ${CMAKE_SOURCE_DIR}/scripts/asset/binary.cmake ${CMAKE_SOURCE_DIR}/scripts/asset/raster.cmake
     ${CMAKE_SOURCE_DIR}/scripts/asset/png.cmake)
 
-function(mime_asset_repository out name url commit)
-    string(TOUPPER "${name}" upper)
-    set(dir "${MIME_${upper}_DIR}")
-    if(NOT dir)
-        # next to the checkout, or next to the main checkout of a worktree.
-        set(roots ${CMAKE_SOURCE_DIR})
-        execute_process(COMMAND git rev-parse --path-format=absolute --git-common-dir
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE common OUTPUT_STRIP_TRAILING_WHITESPACE
-            RESULT_VARIABLE failed ERROR_QUIET)
-        if(NOT failed)
-            get_filename_component(main "${common}" DIRECTORY)
-            list(APPEND roots "${main}")
-        endif()
-        foreach(root IN LISTS roots)
-            get_filename_component(candidate "${root}/../mime-${name}" ABSOLUTE)
-            if(IS_DIRECTORY "${candidate}")
-                set(dir "${candidate}")
-                break()
-            endif()
-        endforeach()
-    endif()
-    if(dir)
-        message(STATUS "mime-${name}: ${dir}")
-    else()
-        FetchContent_Declare(mime_${name} GIT_REPOSITORY ${url} GIT_TAG ${commit} GIT_PROGRESS TRUE)
-        FetchContent_MakeAvailable(mime_${name})
-        set(dir "${mime_${name}_SOURCE_DIR}")
-        message(STATUS "mime-${name}: ${commit}")
-    endif()
-    set(${out} "${dir}" PARENT_SCOPE)
-endfunction()
-
-mime_asset_repository(MIME_ICONS icons ${MIME_ICONS_REPOSITORY} ${MIME_ICONS_COMMIT})
-mime_asset_repository(MIME_AUDIO audio ${MIME_AUDIO_REPOSITORY} ${MIME_AUDIO_COMMIT})
-
-set(mime_icon_sizes 16 20 24 32 48 256)
-set(mime_system_icon_sizes 16 20 24 32 40 48 64 256)
-set(mime_cursor_sizes 32 48 64 96 128)
 set(mime_messages_kernelbase win32 hresult)
 set(mime_messages_ntdll ntstatus)
 
@@ -128,46 +83,6 @@ function(_mime_icon_command output kind images depends)
         DEPENDS ${depends} ${CMAKE_SOURCE_DIR}/scripts/asset/icon.cmake ${MIME_ASSET_SCRIPTS} VERBATIM)
 endfunction()
 
-function(_mime_sized out svg sizes)
-    set(images)
-    foreach(size IN LISTS sizes)
-        list(APPEND images "${svg}@${size}")
-    endforeach()
-    set(${out} "${images}" PARENT_SCOPE)
-endfunction()
-
-# An icon of Windows has its own drawings at small sizes: <name>_<N>.svg draws the sizes up to N above the next
-# smaller drawing, <name>.svg the sizes above them all.
-function(_mime_icon_images out svg sizes)
-    string(REGEX REPLACE "\\.svg$" "" base ${svg})
-    file(GLOB smalls CONFIGURE_DEPENDS ${base}_*.svg)
-    set(ns)
-    foreach(small IN LISTS smalls)
-        string(LENGTH "${base}_" skip)
-        string(SUBSTRING "${small}" ${skip} -1 tail)
-        if(tail MATCHES "^([0-9]+)\\.svg$")
-            list(APPEND ns ${CMAKE_MATCH_1})
-        endif()
-    endforeach()
-    list(SORT ns COMPARE NATURAL)
-    set(images)
-    set(depends ${svg})
-    foreach(size IN LISTS sizes)
-        set(pick ${svg})
-        foreach(n IN LISTS ns)
-            if(size LESS_EQUAL n)
-                set(pick ${base}_${n}.svg)
-                break()
-            endif()
-        endforeach()
-        list(APPEND images "${pick}@${size}")
-        list(APPEND depends ${pick})
-    endforeach()
-    list(REMOVE_DUPLICATES depends)
-    set(${out} "${images}" PARENT_SCOPE)
-    set(${out}_depends "${depends}" PARENT_SCOPE)
-endfunction()
-
 # The file a resource script names as @MIME_ASSETS@/<path>, and the rule that makes it.
 function(mime_asset path)
     get_property(done GLOBAL PROPERTY MIME_ASSET_${path})
@@ -176,44 +91,11 @@ function(mime_asset path)
     endif()
     set_property(GLOBAL PROPERTY MIME_ASSET_${path} TRUE)
     set(output ${MIME_ASSETS}/${path})
-    set(art ${MIME_ICONS})
-    if(path MATCHES "^icons/system_(.+)\\.ico$")
-        set(svg ${art}/icons/${CMAKE_MATCH_1}.svg)
-        _mime_icon_images(images ${svg} "${mime_system_icon_sizes}")
-        _mime_icon_command(${output} ico "${images}" "${images_depends}")
-    elseif(path MATCHES "^icons/(.+)\\.ico$")
-        set(svg ${art}/icons/${CMAKE_MATCH_1}.svg)
-        _mime_icon_images(images ${svg} "${mime_icon_sizes}")
-        _mime_icon_command(${output} ico "${images}" "${images_depends}")
-    elseif(path MATCHES "^cursors/(.+)\\.cur$")
-        set(svg ${art}/cursors/${CMAKE_MATCH_1}.svg)
-        _mime_sized(images ${svg} "${mime_cursor_sizes}")
-        _mime_icon_command(${output} cur "${images}" ${svg})
-    elseif(path MATCHES "^cursors/(.+)\\.ani$")
-        # a frame is a cursor of its own, made in parallel with the others.
-        set(name ${CMAKE_MATCH_1})
-        file(GLOB frames CONFIGURE_DEPENDS ${art}/cursors/${name}_[0-9][0-9].svg)
-        list(SORT frames)
-        if(NOT frames)
-            message(FATAL_ERROR "mime-icons has no frames of the cursor ${name}")
-        endif()
-        set(curs)
-        foreach(svg IN LISTS frames)
-            get_filename_component(frame ${svg} NAME_WE)
-            set(cur ${MIME_ASSETS}/cursors/frames/${frame}.cur)
-            _mime_sized(images ${svg} "${mime_cursor_sizes}")
-            _mime_icon_command(${cur} cur "${images}" ${svg})
-            list(APPEND curs ${cur})
-        endforeach()
-        list(GET frames 0 first)
-        _mime_icon_command(${output} ani "${curs}" "${curs}" -DJIFFIES_FROM=${first})
-    elseif(path MATCHES "^bitmaps/(.+)\\.bmp$")
-        set(svg ${art}/bitmaps/${CMAKE_MATCH_1}.svg)
-        _mime_icon_command(${output} bmp ${svg} ${svg})
-    elseif(path MATCHES "^programs/(.+)/(.+)\\.ico$")
-        file(GLOB images CONFIGURE_DEPENDS ${art}/programs/${CMAKE_MATCH_1}/${CMAKE_MATCH_2}_*.svg)
+    if(path MATCHES "^programs/(.+)/(.+)\\.ico$")
+        # <name>_<size>.svg, one drawing for each size of the icon.
+        file(GLOB images CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/guest/${CMAKE_MATCH_1}/icons/${CMAKE_MATCH_2}_*.svg)
         if(NOT images)
-            message(FATAL_ERROR "mime-icons has no drawing of ${path}")
+            message(FATAL_ERROR "guest/${CMAKE_MATCH_1}/icons has no drawing of ${path}")
         endif()
         _mime_icon_command(${output} ico "${images}" "${images}")
     elseif(path MATCHES "^messages/(.+)\\.bin$")
@@ -248,20 +130,38 @@ function(mime_script_assets out)
     set(${out} ${outputs} PARENT_SCOPE)
 endfunction()
 
-# The system sounds, C:\Windows\Media, and the General MIDI set, C:\Windows\System32\drivers\gm.dls, for the ROM.
-file(GLOB mime_sound_recipes CONFIGURE_DEPENDS ${MIME_AUDIO}/sounds/*.txt)
-foreach(recipe IN LISTS mime_sound_recipes)
-    get_filename_component(name "${recipe}" NAME_WE)
-    set(output "${MIME_ASSETS}/winmedia/${name}.wav")
-    add_custom_command(OUTPUT "${output}"
-        COMMAND ${CMAKE_COMMAND} "-DINPUT=${recipe}" "-DOUTPUT=${output}" -P ${CMAKE_SOURCE_DIR}/scripts/asset/wave.cmake
-        DEPENDS "${recipe}" ${CMAKE_SOURCE_DIR}/scripts/asset/wave.cmake ${MIME_ASSET_SCRIPTS} VERBATIM)
-    set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES "${output}")
+# ===================================== genuine =====================================
+
+# the system files of windows that are microsoft's own, which the host fetches and holds: mime has no code for them and
+# the build none of their bytes. the manifest of the guest's windows lists them, see host/genuine.c, and the rom names
+# each one with no bytes, see scripts/rom.cmake. mime's binaries link against import libraries made from the lists of
+# their exports: gen/<arch>/<name>.def where the processors differ, gen/implib/<name>.def where they do not, and
+# gen/x86/<name>.imports.def.
+set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine-${MIME_GUEST_ARCH}.manifest)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${genuine_manifest})
+set(MIME_GENUINE_FILES)
+file(STRINGS ${genuine_manifest} genuine_lines)
+foreach(line IN LISTS genuine_lines)
+    if(line MATCHES "^([^\t#][^\t]*)\t")
+        string(TOLOWER "${CMAKE_MATCH_1}" genuine_path)
+        list(APPEND MIME_GENUINE_FILES "${genuine_path}")
+    endif()
 endforeach()
-add_custom_command(OUTPUT ${MIME_ASSETS}/windrivers/gm.dls
-    COMMAND ${CMAKE_COMMAND} -E copy ${MIME_AUDIO}/soundsets/gm.dls ${MIME_ASSETS}/windrivers/gm.dls
-    DEPENDS ${MIME_AUDIO}/soundsets/gm.dls VERBATIM)
-set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${MIME_ASSETS}/windrivers/gm.dls)
+
+# whether file of the system folder of arch is one of them. an x64 program on windows on arm loads the arm64x file of
+# System32.
+function(mime_genuine out arch file)
+    set(directory system32)
+    if(arch STREQUAL "x86")
+        set(directory syswow64)
+    endif()
+    string(TOLOWER "${directory}/${file}" path)
+    if(path IN_LIST MIME_GENUINE_FILES)
+        set(${out} TRUE PARENT_SCOPE)
+    else()
+        set(${out} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
 
 # ===================================== guest =====================================
 
@@ -391,6 +291,16 @@ set(MIME_LINK_FLAGS /nologo /debug:dwarf /build-id /nodefaultlib /opt:ref /incre
 function(mime_link output arch)
     cmake_parse_arguments(PARSE_ARGV 2 arg "" "IMPLIB;RESOURCE;RESOURCE_SCRIPT;IMPORTS;ROM"
         "OBJECTS;LIBS;FLAGS;DEPENDS;GROUPS")
+    # like the programs of windows, the programs of mime carry a load configuration with a security cookie. the dlls
+    # get theirs in mime_dll.
+    if(NOT arch STREQUAL "x86" AND NOT "/dll" IN_LIST arg_FLAGS AND "${arg_FLAGS}" MATCHES "/subsystem:(console|windows)")
+        list(APPEND arg_OBJECTS ${arch}-loadconfig)
+    endif()
+    # what calls win32k may call a service only mime has, which no win32u.dll exports: see guest/win32u/mime_x64.S
+    # and guest/win32u/mime_x86.S.
+    if((arch STREQUAL "x64" OR arch STREQUAL "x86") AND "${arg_LIBS}" MATCHES "/win32u\\.lib")
+        list(APPEND arg_OBJECTS ${arch}-win32kmime)
+    endif()
     mime_object_list(objects ${arg_OBJECTS})
     mime_object_targets(object_targets ${arg_OBJECTS})
     set(flags /machine:${MIME_MACHINE_${arch}} ${MIME_LINK_FLAGS} ${arg_FLAGS})
@@ -475,7 +385,8 @@ mime_glob(ntos_common guest/ntos/*.c guest/ntos/*/*.c)
 list(FILTER ntos_common EXCLUDE REGEX "/guest/ntos/arch/")
 mime_glob(ntos_arch guest/ntos/arch/${MIME_GUEST_ARCH}/*.c)
 
-mime_objects(kernel-ntos kernel SOURCES ${ntos_common} ${ntos_arch} ${ntos_asm} guest/lib/crypto/hash.c
+mime_objects(kernel-ntos kernel SOURCES ${ntos_common} ${ntos_arch} ${ntos_asm} guest/lib/crypto/hash.c guest/lib/crypto/bignum.c
+    guest/lib/crypto/rsa.c
     OPTIONS ${ntos_options} INCLUDES guest/ntos guest/lib)
 mime_objects(kernel-rtl kernel SOURCES ${rtl_sources} OPTIONS ${ntos_options} INCLUDES guest/ntos)
 mime_objects(kernel-crt kernel SOURCES ${crt_sources} ${crt_kernel_asm} OPTIONS -fno-builtin)
@@ -532,32 +443,6 @@ set(MIME_DLL_FLAGS_arm64 /dll /subsystem:console,10.0 /highentropyva /dynamicbas
 set(MIME_DLL_FLAGS_x64 ${MIME_DLL_FLAGS_arm64})
 set(MIME_DLL_FLAGS_x86 /dll /subsystem:console,6.0 /dynamicbase /stack:0x40000,0x1000)
 
-# the calls user32 exports by ordinal only, the dpi ones of Windows 11. GetWindowDPI has a name here, too.
-set(user32_ordinals ForceWindowToDpiForTest:2642 RestoreWindowDpiChanges:2643 DeferWindowDpiChanges:2644 SetDpiForWindow:2661
-    EnableChildWindowDpiMessage:2704 IsChildWindowDpiMessageEnabled:2705 IsWindowBroadcastingDpiToChildren:2706)
-set(user32_args_x86_ForceWindowToDpiForTest 8)
-set(user32_args_x86_RestoreWindowDpiChanges 4)
-set(user32_args_x86_DeferWindowDpiChanges 4)
-set(user32_args_x86_SetDpiForWindow 8)
-set(user32_args_x86_EnableChildWindowDpiMessage 8)
-set(user32_args_x86_IsChildWindowDpiMessageEnabled 4)
-set(user32_args_x86_IsWindowBroadcastingDpiToChildren 4)
-foreach(arch IN ITEMS x64 arm64 x86)
-    set(MIME_USER32_ORDINALS_${arch} /export:GetWindowDPI,@2707)
-    foreach(entry IN LISTS user32_ordinals)
-        string(REPLACE ":" ";" entry "${entry}")
-        list(GET entry 0 name)
-        list(GET entry 1 ordinal)
-        if(arch STREQUAL "x86")
-            list(APPEND MIME_USER32_ORDINALS_${arch} /export:${name}=_${name}@${user32_args_x86_${name}},@${ordinal},NONAME)
-        else()
-            list(APPEND MIME_USER32_ORDINALS_${arch} /export:${name},@${ordinal},NONAME)
-        endif()
-    endforeach()
-endforeach()
-# x86 has the name of GetWindowDPI in its definition file already, with the ordinal.
-list(REMOVE_ITEM MIME_USER32_ORDINALS_x86 /export:GetWindowDPI,@2707)
-
 set(MIME_CHKSTK_arm64 guest/crt/chkstk.S)
 set(MIME_CHKSTK_x64 guest/crt/x64/chkstk.S)
 set(MIME_CHKSTK_x86 guest/crt/x86/chkstk.S)
@@ -565,8 +450,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-rtl ${arch} SOURCES ${rtl_sources})
     mime_objects(${arch}-crt ${arch} SOURCES ${crt_sources} OPTIONS -fno-builtin)
     mime_objects(${arch}-chkstk ${arch} SOURCES ${MIME_CHKSTK_${arch}})
+    mime_objects(${arch}-loadconfig ${arch} SOURCES guest/crt/dll/loadconfig.c)
     set(lib_includes guest/lib third_party/SPIRV-Cross)
-    foreach(lib privdata dxbc dxil hlsl png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf xmldom cbs lzms msdelta winrt icc par)
+    foreach(lib privdata dxbc dxil hlsl png pngio jpeg tiff gif bcn vector msstyles compound cabinet audio dinput xinput richedit crypto ttf xmldom cbs lzms wim msdelta winrt icc par transfer)
         mime_glob(lib_sources guest/lib/${lib}/*.c)
         mime_objects(${arch}-lib-${lib} ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes})
     endforeach()
@@ -575,15 +461,56 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     mime_objects(${arch}-lib-jxr ${arch} SOURCES ${lib_sources} INCLUDES ${lib_includes} OPTIONS -fwrapv)
 endforeach()
 mime_objects(x86-div x86 SOURCES guest/crt/x86/div.c guest/crt/x86/div_entry.S)
+mime_objects(x86-win32kmime x86 SOURCES guest/win32u/mime_x86.S)
 set(MIME_RUNTIME_arm64 arm64-rtl arm64-crt arm64-chkstk)
 set(MIME_RUNTIME_x64 x64-rtl x64-crt x64-chkstk)
 set(MIME_RUNTIME_x86 x86-rtl x86-crt x86-chkstk x86-div)
+
+# the import library of a system file that is microsoft's, made from the list of its exports alone.
+function(mime_implib name arch)
+    cmake_parse_arguments(PARSE_ARGV 2 arg "" "FILE;DEF" "")
+    if(NOT arg_FILE)
+        set(arg_FILE ${name}.dll)
+    endif()
+    mime_genuine(genuine ${arch} ${arg_FILE})
+    if(NOT genuine)
+        message(FATAL_ERROR "mime has no code for the ${arch} ${arg_FILE}, which ${genuine_manifest} does not list")
+    endif()
+    set(def ${arg_DEF})
+    if(NOT def AND arch STREQUAL "x86")
+        set(def ${MIME_GEN}/x86/${name}.imports.def)
+    elseif(NOT def AND EXISTS ${MIME_GEN}/${arch}/${name}.def)
+        set(def ${MIME_GEN}/${arch}/${name}.def)
+    elseif(NOT def)
+        set(def ${MIME_GEN}/implib/${name}.def)
+    endif()
+    set(implib ${MIME_LIB_${arch}}/${name}.lib)
+    if(arch STREQUAL "x86")
+        set(command ${MIME_LLVM_DLLTOOL} -m i386 -k -d ${def} -l ${implib})
+    else()
+        set(command ${MIME_LLD_LINK} /lib /nologo /machine:${MIME_MACHINE_${arch}} /def:${def} /out:${implib})
+    endif()
+    file(RELATIVE_PATH comment ${CMAKE_BINARY_DIR} ${implib})
+    add_custom_command(OUTPUT ${implib} COMMAND ${command} DEPENDS ${def}
+        COMMENT "Making ${comment}" VERBATIM)
+    set_property(GLOBAL APPEND PROPERTY MIME_GROUP_guest ${implib})
+endfunction()
 
 function(mime_dll name arch)
     cmake_parse_arguments(PARSE_ARGV 2 arg "NOIMPLIB" "BASE;FILE;ENTRY;DEF;IMPORTS_DEF"
         "SOURCES;OBJECTS;OPTIONS;INCLUDES;IMPORTS;LIBS;FLAGS;DEPENDS")
     if(NOT arg_FILE)
         set(arg_FILE ${name}.dll)
+    endif()
+    # where the file is microsoft's, mime's code for it is not built: only what links against it is made.
+    mime_genuine(genuine ${arch} ${arg_FILE})
+    if(genuine)
+        if(NOT arg_NOIMPLIB AND arch STREQUAL "x86")
+            mime_implib(${name} x86 FILE ${arg_FILE} DEF ${arg_IMPORTS_DEF})
+        elseif(NOT arg_NOIMPLIB)
+            mime_implib(${name} ${arch} FILE ${arg_FILE})
+        endif()
+        return()
     endif()
     if(NOT arg_ENTRY)
         set(arg_ENTRY /entry:DllMain)
@@ -597,6 +524,10 @@ function(mime_dll name arch)
         mime_objects(${arch}-${name} ${arch} SOURCES ${arg_SOURCES} OPTIONS ${arg_OPTIONS}
             INCLUDES guest/${name} ${arg_INCLUDES} DEPENDS ${target_depends})
         list(PREPEND objects ${arch}-${name})
+    endif()
+    # the 32-bit dlls say subsystem 6.0, and a load configuration there must list the handlers of their exceptions.
+    if(NOT arch STREQUAL "x86")
+        list(APPEND objects ${arch}-loadconfig)
     endif()
     set(libs)
     foreach(import IN LISTS arg_IMPORTS)
@@ -679,43 +610,25 @@ set(MIME_WIN32K_SYSCALLS_x64 ${MIME_GEN}/win32u_syscalls_x64.S)
 foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_objects(${arch}-ntsyscalls ${arch} SOURCES ${MIME_SYSCALLS_${arch}})
     mime_objects(${arch}-win32ksyscalls ${arch} SOURCES ${MIME_WIN32K_SYSCALLS_${arch}})
-
     if(arch STREQUAL "x64")
-        mime_glob(ntdll_sources guest/ntdll/*.c guest/ntdll/x64/*.c guest/ntdll/x64/*.S)
-    else()
-        mime_glob(ntdll_sources guest/ntdll/*.c guest/ntdll/arm64/*.c guest/ntdll/arm64/*.S)
+        mime_objects(x64-win32kmime x64 SOURCES guest/win32u/mime_x64.S)
     endif()
-    mime_objects(${arch}-ntdll ${arch} SOURCES ${ntdll_sources} guest/lib/crypto/hash.c INCLUDES guest/ntdll guest/lib)
-    set(ntdll_objects ${arch}-ntdll ${arch}-ntsyscalls ${MIME_RUNTIME_${arch}})
-    mime_dll(ntdll ${arch} BASE 0x7FFC00000000 ENTRY /noentry OBJECTS ${ntdll_objects}
-        DEF ${MIME_GEN}/${arch}/ntdll.def)
 
-    mime_dll(win32u ${arch} BASE 0x7FF700000000 ENTRY /noentry OBJECTS ${arch}-win32ksyscalls
-        FLAGS /subsystem:windows,10.0 DEF ${MIME_GEN}/win32u.def)
+    # microsoft's on every machine, see the genuine section.
+    foreach(name ntdll kernel32 gdi32 user32 msvcrt ucrtbase bcrypt oleaut32)
+        mime_implib(${name} ${arch})
+    endforeach()
+    mime_implib(win32u ${arch} DEF ${MIME_GEN}/win32u.def)
 
     mime_sources(sources kernelbase ${arch})
+    # the ntdll of windows compiles no manifest, so kernelbase carries the generator of activation contexts itself.
+    list(APPEND sources guest/ntdll/actgen.c guest/ntdll/manifest.c)
     mime_dll(kernelbase ${arch} BASE 0x7FFB00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk
         OPTIONS -DMIME_BUILD_KERNELBASE IMPORTS ntdll)
 
-    mime_objects(${arch}-kernel32-thunks ${arch} SOURCES ${MIME_GEN}/${arch}/kernel32_thunks.S)
-    mime_sources(sources kernel32 ${arch})
-    mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk ${arch}-kernel32-thunks
-        OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS ntdll kernelbase DEF ${MIME_GEN}/${arch}/kernel32.def)
-
-    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S OBJECTS ${arch}-chkstk
+    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S OBJECTS ${arch}-chkstk
         IMPORTS ntdll kernel32 DEF ${MIME_GEN}/${arch}/mscoree.def)
 
-    mime_sources(sources gdi32 ${arch})
-    mime_dll(gdi32 ${arch} BASE 0x7FF800000000 SOURCES ${sources} guest/kernelbase/features.c OBJECTS ${arch}-chkstk
-        OPTIONS -DMIME_BUILD_GDI32 IMPORTS ntdll kernel32 win32u)
-
-    mime_sources(sources user32 ${arch})
-    mime_dll(user32 ${arch} BASE 0x7FF900000000 SOURCES ${sources}
-        OBJECTS ${arch}-chkstk ${arch}-lib-png OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib
-        IMPORTS ntdll kernel32 win32u gdi32 FLAGS /subsystem:windows,10.0 ${MIME_USER32_ORDINALS_${arch}})
-
-    # the icons of the system, found by their numbers in the way Windows 11 keeps them.
-    mime_dll(imageres ${arch} BASE 0x7FF7D0000000 ENTRY /noentry NOIMPLIB DEF ${CMAKE_SOURCE_DIR}/guest/imageres/imageres.def)
 endforeach()
 
 if(MIME_GUEST_ARCH STREQUAL "arm64")
@@ -725,15 +638,15 @@ if(MIME_GUEST_ARCH STREQUAL "arm64")
         FLAGS /export:RtlUserThreadStart=MxUserThreadStart NOIMPLIB)
 endif()
 
-set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6D0000000 iphlpapi:0x7FF6C0000000
-    dnsapi:0x7FF6B0000000 ole32:0x7FF6A0000000 oleaut32:0x7FF690000000 rpcrt4:0x7FF680000000
+set(MIME_EXTRA_DLLS advapi32:0x7FF6E0000000 sechost:0x7FF080000000 ws2_32:0x7FF6D0000000 iphlpapi:0x7FF6C0000000
+    dnsapi:0x7FF6B0000000 ole32:0x7FF6A0000000 rpcrt4:0x7FF680000000
     shell32:0x7FF670000000 shlwapi:0x7FF660000000 comdlg32:0x7FF650000000 comctl32:0x7FF640000000
     crypt32:0x7FF630000000 schannel:0x7FF620000000 secur32:0x7FF610000000 uxtheme:0x7FF600000000
     imm32:0x7FF5F0000000 usp10:0x7FF5E0000000 dwmapi:0x7FF5D0000000 winmm:0x7FF5C0000000
     version:0x7FF5B0000000 userenv:0x7FF5A0000000 wtsapi32:0x7FF590000000 netapi32:0x7FF580000000
     odbc32:0x7FF570000000 winspool:0x7FF560000000 msi:0x7FF550000000 dbghelp:0x7FF540000000 imagehlp:0x7FF100000000 mswsock:0x7FF720000000 winsta:0x7FF730000000
-    bcrypt:0x7FF530000000 avrt:0x7FF520000000 dinput8:0x7FF510000000 dwrite:0x7FF500000000
-    dxgi:0x7FF4F0000000 wsock32:0x7FF4E0000000 ucrtbase:0x7FF4D0000000 mpr:0x7FF4C0000000 wintrust:0x7FF4B0000000
+    avrt:0x7FF520000000 dinput8:0x7FF510000000 dwrite:0x7FF500000000
+    dxgi:0x7FF4F0000000 wsock32:0x7FF4E0000000 mpr:0x7FF4C0000000 wintrust:0x7FF4B0000000
     mmdevapi:0x7FF4A0000000 gdiplus:0x7FF490000000 wininet:0x7FF480000000 urlmon:0x7FF470000000
     msimg32:0x7FF460000000 oleacc:0x7FF450000000 oledlg:0x7FF440000000 atl:0x7FEC70000000 combase:0x7FF430000000
     d3d11:0x7FF420000000 msvcp_win:0x7FF410000000 d3dcompiler_47:0x7FF400000000 d3d12:0x7FF3E0000000
@@ -753,8 +666,11 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     windowscodecs:0x7FF7A0000000 vbscript:0x7FF770000000 jscript:0x7FF7C0000000
     onecorecommonproxystub:0x7FEFF0000000 onecoreuapcommonproxystub:0x7FEFE0000000
     rpcss:0x7FEFD0000000 rpcepmap:0x7FEFC0000000 wkscli:0x7FEE70000000 wkssvc:0x7FEE00000000 httpapi:0x7FEDE0000000 wbemcore:0x7FEDD0000000 loadperf:0x7FEDC0000000 webservices:0x7FEDA0000000 xolehlp:0x7FED90000000 vssapi:0x7FED80000000 xmllite:0x7FED70000000 d2d1:0x7FED20000000 mstask:0x7FED10000000 msado15:0x7FED00000000 scrrun:0x7FECF0000000 wshom:0x7FECE0000000 security:0x7FED60000000 sspicli:0x7FECC0000000 rsaenh:0x7FEC90000000 profapi:0x7FEC80000000 clusapi:0x7FED50000000 resutils:0x7FED40000000 nsisvc:0x7FEDF0000000 keyiso:0x7FEDB0000000 feclient:0x7FEFB0000000 zipfldr:0x7FEFA0000000 avifil32:0x7FEF90000000 glu32:0x7FEF80000000 odbccp32:0x7FEE10000000 mscms:0x7FEE20000000 mapi32:0x7FEE30000000 hlink:0x7FEE40000000 authz:0x7FEE50000000 wldap32:0x7FEE60000000 ntdsapi:0x7FEE80000000 mlang:0x7FED30000000 query:0x7FEE90000000 fontsub:0x7FEEA0000000 tdh:0x7FEEB0000000 windows.networking:0x7FEEC0000000 dbgeng:0x7FEED0000000 wmvcore:0x7FEEE0000000 avicap32:0x7FEEF0000000 rstrtmgr:0x7FEF00000000 wlanapi:0x7FEF10000000 snmpapi:0x7FEF20000000 ktmw32:0x7FEF30000000 msvfw32:0x7FEF40000000 normaliz:0x7FEF50000000 cryptsp:0x7FEF60000000 shfolder:0x7FEF70000000 srvcli:0x7FEC40000000 netutils:0x7FEC30000000)
-list(APPEND MIME_EXTRA_DLLS wldp:0x7FECD0000000 rasapi32:0x7FEC10000000 uianimation:0x7FECB0000000
-    windows.graphics:0x7FECA0000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000)
+list(APPEND MIME_EXTRA_DLLS sensapi:0x7FEBF0000000 verifier:0x7FEBE0000000 wldp:0x7FECD0000000 rasapi32:0x7FEC10000000 uianimation:0x7FECB0000000
+    windows.graphics:0x7FECA0000000 windows.media.devices:0x7FEB60000000 windows.devices.enumeration:0x7FEB50000000 windows.networking.connectivity:0x7FEB40000000 cryptowinrt:0x7FEB30000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
+    twinapi.appcore:0x7FEBC0000000 fwpuclnt:0x7FEBB0000000 cryptsvc:0x7FEBA0000000 nlansp_c:0x7FEB90000000 dosvc:0x7FEB80000000
+    qmgr:0x7FEB70000000 netprofmsvc:0x7FEB20000000 bthserv:0x7FEB10000000 devmgr:0x7FEB00000000 newdev:0x7FEAF0000000
+    ngcsvc:0x7FEAE0000000 dhcpcore:0x7FEAD0000000 dnsrslvr:0x7FEAC0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet ${arch}-lib-crypto:guest/lib/crypto/hash.c)
@@ -788,10 +704,13 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_gdiplus ${arch}-lib-vector ${arch}-lib-ttf)
     set(includes_gdiplus guest/lib)
     set(libs_gdiplus ${MIME_LIB_${arch}}/ole32.lib)
-    set(libs_oledlg ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_oledlg ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/advapi32.lib)
+    set(libs_netapi32 ${MIME_LIB_${arch}}/advapi32.lib)
+    set(libs_userenv ${MIME_LIB_${arch}}/advapi32.lib)
     set(libs_uianimation ${MIME_LIB_${arch}}/msvcrt.lib)
     set(libs_mlang ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_secur32 ${MIME_LIB_${arch}}/advapi32.lib)
+    set(libs_crypt32 ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_rsaenh ${MIME_LIB_${arch}}/advapi32.lib)
     set(objects_windowscodecs ${arch}-lib-png:guest/lib/png/inflate.c ${arch}-lib-png:guest/lib/png/deflate.c
         ${arch}-lib-pngio ${arch}-lib-jpeg ${arch}-lib-tiff ${arch}-lib-gif ${arch}-lib-bcn ${arch}-lib-icc ${arch}-lib-jxr ${arch}-lib-par)
@@ -799,16 +718,20 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_windowscodecs ${MIME_LIB_${arch}}/ole32.lib)
     set(objects_dwrite ${arch}-lib-ttf ${arch}-lib-png:guest/lib/png/inflate.c)
     set(includes_dwrite guest/lib)
-    set(objects_bcrypt ${arch}-lib-crypto)
     set(objects_combase ${arch}-lib-crypto:guest/lib/crypto/hash.c)
     set(includes_combase guest/lib)
     set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound ${arch}-lib-cabinet)
     set(objects_secur32 ${arch}-lib-crypto)
+    set(objects_ncrypt ${arch}-lib-crypto:guest/lib/crypto/aes.c ${arch}-lib-crypto:guest/lib/crypto/des.c ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/hmac.c ${arch}-lib-crypto:guest/lib/crypto/kdf.c ${arch}-lib-crypto:guest/lib/crypto/modes.c)
+    set(includes_ncrypt guest/lib)
     set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c
         ${arch}-lib-crypto:guest/lib/crypto/bignum.c ${arch}-lib-crypto:guest/lib/crypto/rsa.c
         ${arch}-lib-crypto:guest/lib/crypto/aes.c ${arch}-lib-crypto:guest/lib/crypto/des.c
         ${arch}-lib-crypto:guest/lib/crypto/modes.c ${arch}-lib-crypto:guest/lib/crypto/kdf.c ${arch}-lib-crypto:guest/lib/crypto/hmac.c)
-    foreach(crypto bcrypt crypt32 secur32 advapi32)
+    # where advapi32 is microsoft's, cryptsp has the providers of mime's advapi32, see guest/cryptsp/crypt.c.
+    set(objects_cryptsp ${objects_advapi32})
+    set(libs_cryptsp ${MIME_LIB_${arch}}/advapi32.lib)
+    foreach(crypto crypt32 secur32 advapi32 cryptsp)
         set(includes_${crypto} guest/lib)
     endforeach()
     set(objects_riched20 ${arch}-lib-richedit)
@@ -816,9 +739,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_riched20 guest/lib)
     set(includes_msftedit guest/lib)
     set(libs_riched32 ${MIME_LIB_${arch}}/riched20.lib)
-    set(libs_oleaut32 ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/msvcrt.lib)
-    set(objects_oleaut32 ${arch}-lib-jpeg)
-    set(includes_oleaut32 guest/lib)
     set(libs_ole32 ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(objects_winhttp ${arch}-lib-png:guest/lib/png/inflate.c)
     set(objects_winspool ${arch}-lib-png:guest/lib/png/deflate.c ${arch}-lib-png:guest/lib/png/inflate.c)
@@ -826,11 +746,11 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_winhttp guest/lib)
     set(libs_winhttp ${MIME_LIB_${arch}}/ws2_32.lib)
     set(libs_wsock32 ${MIME_LIB_${arch}}/ws2_32.lib)
-    set(libs_dnsapi ${MIME_LIB_${arch}}/ws2_32.lib)
+    set(libs_dnsapi ${MIME_LIB_${arch}}/ws2_32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(objects_wininet ${arch}-lib-png:guest/lib/png/inflate.c)
     set(includes_wininet guest/lib)
     set(libs_wininet ${MIME_LIB_${arch}}/ws2_32.lib ${MIME_LIB_${arch}}/kernelbase.lib)
-    set(libs_urlmon ${MIME_LIB_${arch}}/wininet.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_urlmon ${MIME_LIB_${arch}}/wininet.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/kernelbase.lib)
     set(objects_dxgi ${arch}-lib-privdata)
     set(objects_d3d11 ${arch}-lib-privdata ${arch}-lib-dxbc)
     set(objects_d3d12 ${arch}-lib-privdata ${arch}-lib-dxbc ${arch}-lib-dxil ${arch}-d3d11:guest/d3d11/format.c ${arch}-d3d11:guest/d3d11/vkprofile.c ${arch}-d3d11:guest/d3d11/gfxshare.c)
@@ -839,7 +759,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_d3d10 ${arch}-lib-dxbc:guest/lib/dxbc/container.c)
     set(objects_d3d10_1 ${arch}-d3d10:guest/d3d10/create.c)
     set(objects_d3d10_1core ${arch}-d3d10core:guest/d3d10core/kmt.c)
-    set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib)
+    set(libs_wintrust ${MIME_LIB_${arch}}/crypt32.lib ${MIME_LIB_${arch}}/imagehlp.lib)
     set(libs_cryptnet ${MIME_LIB_${arch}}/crypt32.lib)
     set(libs_msvfw32 ${MIME_LIB_${arch}}/winmm.lib ${MIME_LIB_${arch}}/comdlg32.lib)
     set(libs_authz ${MIME_LIB_${arch}}/advapi32.lib)
@@ -852,7 +772,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_setupapi ${arch}-lib-cabinet)
     set(libs_shell32 ${MIME_LIB_${arch}}/kernelbase.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib
         ${MIME_LIB_${arch}}/shlwapi.lib)
-    set(libs_onecorecommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
+    set(libs_onecorecommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_onecoreuapcommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_explorerframe ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/shell32.lib)
     set(libs_ieframe ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib)
@@ -871,15 +791,19 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_vbscript ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib
         ${MIME_LIB_${arch}}/msvcrt.lib)
     set(libs_jscript ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib
-        ${MIME_LIB_${arch}}/msvcrt.lib)
+        ${MIME_LIB_${arch}}/msvcrt.lib ${MIME_LIB_${arch}}/ucrtbase.lib)
     set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib
         ${MIME_LIB_${arch}}/shlwapi.lib ${MIME_LIB_${arch}}/combase.lib)
     set(objects_propsys ${arch}-lib-crypto:guest/lib/crypto/hash.c)
     set(includes_propsys guest/lib)
-    set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/advapi32.lib)
     set(libs_shlwapi ${MIME_LIB_${arch}}/shcore.lib)
     set(objects_shcore ${arch}-lib-winrt)
     set(includes_shcore guest/lib)
+    foreach(runtime windows.media.devices windows.devices.enumeration windows.networking.connectivity cryptowinrt)
+        set(includes_${runtime} guest/lib)
+        set(libs_${runtime} ${MIME_LIB_${arch}}/combase.lib)
+    endforeach()
     set(objects_windows.graphics ${arch}-lib-winrt)
     set(includes_windows.graphics guest/lib)
     set(libs_windows.graphics ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/combase.lib ${MIME_LIB_${arch}}/shcore.lib
@@ -892,6 +816,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_mfreadwrite ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_mf ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_mfcaptureengine ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/mf.lib ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_dxva2 ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_evr ${MIME_LIB_${arch}}/mfplat.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/gdi32.lib
+        ${MIME_LIB_${arch}}/user32.lib ${MIME_LIB_${arch}}/dxva2.lib ${MIME_LIB_${arch}}/d3d9.lib)
     set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
     set(libs_msctf ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_oleacc ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
@@ -901,10 +828,32 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         set(libs_${service} ${MIME_LIB_${arch}}/advapi32.lib)
     endforeach()
     list(APPEND libs_coremessaging ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/combase.lib)
+    list(APPEND libs_rpcepmap ${MIME_LIB_${arch}}/rpcrt4.lib)
+    list(APPEND libs_rpcss ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
     set(libs_wkscli ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_wkssvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
-    set(libs_nsisvc ${MIME_LIB_${arch}}/advapi32.lib)
+    set(libs_nsisvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_keyiso ${MIME_LIB_${arch}}/advapi32.lib)
+    set(libs_cryptsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
+    set(libs_bthserv ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ole32.lib
+        ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_dhcpcore ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
+    set(libs_dnsrslvr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ws2_32.lib)
+    set(libs_ngcsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ncrypt.lib)
+    set(libs_devmgr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/comctl32.lib ${MIME_LIB_${arch}}/setupapi.lib
+        ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/uxtheme.lib)
+    set(libs_newdev ${MIME_LIB_${arch}}/setupapi.lib ${MIME_LIB_${arch}}/shell32.lib)
+    set(objects_dosvc ${arch}-lib-transfer)
+    set(includes_dosvc guest/lib)
+    set(libs_dosvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib
+        ${MIME_LIB_${arch}}/winhttp.lib ${MIME_LIB_${arch}}/crypt32.lib)
+    set(objects_qmgr ${arch}-lib-transfer)
+    set(includes_qmgr guest/lib)
+    set(libs_qmgr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib
+        ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/winhttp.lib ${MIME_LIB_${arch}}/crypt32.lib
+        ${MIME_LIB_${arch}}/kernelbase.lib)
+    set(libs_netprofmsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
+    set(libs_nlansp_c ${MIME_LIB_${arch}}/ws2_32.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
     set(libs_wbemcore ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_loadperf ${MIME_LIB_${arch}}/advapi32.lib)
     set(libs_bthprops ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ole32.lib)
@@ -937,8 +886,29 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             set(file UIAnimation.dll)
         elseif(name STREQUAL "windows.graphics")
             set(file Windows.Graphics.dll)
+        elseif(name STREQUAL "windows.media.devices")
+            set(file Windows.Media.Devices.dll)
+        elseif(name STREQUAL "windows.devices.enumeration")
+            set(file Windows.Devices.Enumeration.dll)
+        elseif(name STREQUAL "windows.networking.connectivity")
+            set(file Windows.Networking.Connectivity.dll)
+        elseif(name STREQUAL "cryptowinrt")
+            set(file CryptoWinRT.dll)
         endif()
         mime_glob(sources guest/${name}/*.c guest/${name}/*.cpp guest/${name}/${arch}/*.S)
+        # the classes are those mime's combase had, each compiled into the library windows keeps it in.
+        if(name STREQUAL "windows.media.devices")
+            list(APPEND sources guest/combase/mediadevice.c guest/combase/audioendpoint.c)
+        elseif(name STREQUAL "windows.devices.enumeration")
+            list(APPEND sources guest/combase/devinfo.c guest/combase/audioendpoint.c)
+        elseif(name STREQUAL "windows.networking.connectivity")
+            list(APPEND sources guest/combase/netinfo.c guest/combase/async.c guest/combase/collections.c)
+        elseif(name STREQUAL "cryptowinrt")
+            list(APPEND sources guest/combase/keycred.c guest/combase/async.c)
+        elseif(name STREQUAL "dnsrslvr")
+            # the service makes its lookups with dnsapi's code.
+            list(APPEND sources guest/dnsapi/dnsclient.c guest/dnsapi/dnswire.c guest/dnsapi/dnsrecord.c)
+        endif()
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}
             INCLUDES ${includes_${name}} IMPORTS ntdll kernel32 user32 gdi32 win32u LIBS ${libs_${name}}
             DEPENDS ${depends_${name}})
@@ -950,8 +920,10 @@ set(services_arch ${MIME_GUEST_ARCH})
 mime_objects(${services_arch}-services ${services_arch} SOURCES ${services_sources} INCLUDES guest/services guest/lib)
 mime_link(${MIME_OUT_${services_arch}}/services.exe ${services_arch}
     OBJECTS ${services_arch}-services ${services_arch}-chkstk ${services_arch}-lib-crypto:guest/lib/crypto/hash.c
+        ${services_arch}-lib-crypto:guest/lib/crypto/hmac.c ${services_arch}-lib-crypto:guest/lib/crypto/aes.c
+        ${services_arch}-lib-crypto:guest/lib/crypto/modes.c ${services_arch}-lib-crypto:guest/lib/crypto/kdf.c
     LIBS ${MIME_LIB_${services_arch}}/ntdll.lib ${MIME_LIB_${services_arch}}/kernel32.lib
-        ${MIME_LIB_${services_arch}}/advapi32.lib
+        ${MIME_LIB_${services_arch}}/advapi32.lib ${MIME_LIB_${services_arch}}/rpcrt4.lib
     FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A8000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
     RESOURCE services.exe ROM ${MIME_ROM_${services_arch}}/services.exe GROUPS guest)
 
@@ -970,6 +942,14 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
             FLAGS ${svchost_flags} RESOURCE svchost.exe ROM ${MIME_ROM_${arch}}/svchost.exe GROUPS guest)
     endif()
 endforeach()
+
+# the process of the security authority, which hosts the key isolation service of cng.
+mime_objects(${MIME_GUEST_ARCH}-lsass ${MIME_GUEST_ARCH} SOURCES guest/lsass/main.c)
+mime_link(${MIME_OUT_${MIME_GUEST_ARCH}}/lsass.exe ${MIME_GUEST_ARCH} OBJECTS ${MIME_GUEST_ARCH}-lsass ${MIME_GUEST_ARCH}-chkstk
+    LIBS ${MIME_LIB_${MIME_GUEST_ARCH}}/ntdll.lib ${MIME_LIB_${MIME_GUEST_ARCH}}/kernel32.lib
+        ${MIME_LIB_${MIME_GUEST_ARCH}}/advapi32.lib
+    FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6A7000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
+    RESOURCE lsass.exe ROM ${MIME_ROM_${MIME_GUEST_ARCH}}/lsass.exe GROUPS guest)
 
 mime_glob(msiexec_sources guest/msiexec/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
@@ -1017,7 +997,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
         mime_objects(${arch}-regsvr32 ${arch} SOURCES ${regsvr32_sources} INCLUDES guest/regsvr32)
         set(regsvr32_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
-            ${MIME_LIB_${arch}}/ole32.lib)
+            ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/kernelbase.lib)
         set(regsvr32_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6AB000000 /highentropyva /dynamicbase
             /stack:0x100000,0x4000)
         if(arch STREQUAL "x86")
@@ -1033,7 +1013,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
         mime_objects(${arch}-rundll32 ${arch} SOURCES ${rundll32_sources} INCLUDES guest/rundll32)
         set(rundll32_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
-            ${MIME_LIB_${arch}}/ole32.lib)
+            ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/kernelbase.lib)
         set(rundll32_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6AC000000 /highentropyva /dynamicbase
             /stack:0x100000,0x4000)
         if(arch STREQUAL "x86")
@@ -1137,23 +1117,6 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         IMPORTS ntdll kernel32 win32u user32 DEF ${MIME_GEN}/vulkan/mvk_exports.def)
 endforeach()
 
-if(MIME_GUEST_ARCH STREQUAL "x64")
-
-    mime_objects(x64-wow32 x64 SOURCES guest/xta64/wow32.c guest/xta64/wow32_query.c guest/xta64/wow32_win32k.c
-        guest/xta64/wow32_callback.c
-        OPTIONS -fno-math-errno INCLUDES guest/xta64)
-    mime_sources(sources wow64 x64)
-    mime_dll(wow64 x64 BASE 0x7FF420000000 SOURCES ${sources}
-        OBJECTS x64-chkstk x64-wow32:guest/xta64/wow32.c x64-wow32:guest/xta64/wow32_query.c
-        INCLUDES guest/xta64 IMPORTS ntdll)
-    mime_sources(sources wow64win x64)
-    mime_dll(wow64win x64 BASE 0x7FF410000000 SOURCES ${sources}
-        OBJECTS x64-chkstk x64-wow32:guest/xta64/wow32_win32k.c x64-wow32:guest/xta64/wow32_callback.c
-        INCLUDES guest/xta64 IMPORTS ntdll wow64)
-    mime_sources(sources wow64cpu x64)
-    mime_dll(wow64cpu x64 BASE 0x78000000 SOURCES ${sources} OBJECTS x64-chkstk IMPORTS ntdll wow64)
-endif()
-
 # ===================================== regedit =====================================
 
 # regedit.exe and reg.exe, and the reader and writer of .reg files that both are built on.
@@ -1239,54 +1202,27 @@ endforeach()
 # ===================================== x86 =====================================
 
 set(gen86 ${MIME_GEN}/x86)
-set(stubs86 ${gen86})
-if(MIME_GUEST_ARCH STREQUAL "x64")
-    set(stubs86 ${gen86}/wow64)
-endif()
 
-mime_objects(x86-ntsyscalls x86 SOURCES ${stubs86}/ntdll_syscalls.S)
-mime_glob(sources guest/ntdll/*.c guest/ntdll/x86/*.c guest/ntdll/x86/*.S)
-mime_objects(x86-ntdll x86 SOURCES ${sources} guest/lib/crypto/hash.c INCLUDES guest/ntdll guest/lib)
-set(objects x86-ntdll x86-ntsyscalls ${MIME_RUNTIME_x86})
-mime_dll(ntdll x86 BASE 0x77000000 ENTRY /noentry OBJECTS ${objects} DEF ${gen86}/ntdll.def
-    IMPORTS_DEF ${gen86}/ntdll.imports.def)
+# microsoft's on every machine, see the genuine section.
+foreach(name ntdll kernel32 win32u gdi32 user32 msvcrt ucrtbase bcrypt oleaut32)
+    mime_implib(${name} x86)
+endforeach()
 
 mime_sources(sources kernelbase x86)
+list(APPEND sources guest/ntdll/actgen.c guest/ntdll/manifest.c)
 mime_dll(kernelbase x86 BASE 0x76000000 SOURCES ${sources} OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_KERNELBASE
     IMPORTS ntdll)
 
-mime_objects(x86-kernel32-thunks x86 SOURCES ${gen86}/kernel32_thunks.S)
-mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel32/transacted.c guest/kernel32/binary.c
-    OBJECTS x86-kernel32-thunks
-    OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
-    IMPORTS_DEF ${gen86}/kernel32.imports.def)
-
-mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
-
-set(sources ${stubs86}/win32u_syscalls.S)
-set(imports)
-if(MIME_GUEST_ARCH STREQUAL "x64")
-    list(APPEND sources guest/win32u/x86/wow64.S)
-    set(imports ntdll)
-endif()
-mime_dll(win32u x86 BASE 0x74000000 ENTRY /noentry SOURCES ${sources} IMPORTS ${imports})
-
-mime_sources(sources gdi32 x86)
-mime_dll(gdi32 x86 BASE 0x73000000 SOURCES ${sources} guest/kernelbase/features.c OBJECTS x86-chkstk OPTIONS -DMIME_BUILD_GDI32
-    IMPORTS ntdll kernel32 win32u)
-mime_sources(sources user32 x86)
-mime_dll(user32 x86 BASE 0x72000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-png
-    OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib IMPORTS ntdll kernel32 win32u gdi32 FLAGS ${MIME_USER32_ORDINALS_x86})
-mime_dll(imageres x86 BASE 0x6C000000 ENTRY /noentry NOIMPLIB DEF ${CMAKE_SOURCE_DIR}/guest/imageres/imageres.def)
+mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
 
 set(all_five ntdll kernel32 user32 gdi32 win32u)
 set(MIME_X86_DLLS
-    shlwapi:0x71000000:all_five shell32:0x70000000:shell32_imports winmm:0x6f000000:all_five version:0x6e000000:all_five
-    advapi32:0x6d000000:all_five sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
-    netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:secur32_imports
-    crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:oleaut32_imports
+    shlwapi:0x71000000:shlwapi_imports shell32:0x70000000:shell32_imports winmm:0x6f000000:all_five version:0x6e000000:all_five
+    advapi32:0x6d000000:advapi32_imports sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
+    netapi32:0x6a000000:registry_imports wtsapi32:0x69000000:all_five secur32:0x68000000:secur32_imports
+    crypt32:0x67000000:crypt32_imports userenv:0x66000000:registry_imports ole32:0x65000000:ole32_imports
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
-    msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
+    msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:wintrust_imports odbc32:0x5c000000:user
     gdiplus:0x5b000000:gdiplus_imports d2d1:0x1E500000:d2d1_imports msvbvm60:0x1E400000:msvbvm60_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:oleacc_imports oledlg:0x56000000:oledlg_imports combase:0x54000000:all_five usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup dwrite:0x45000000:all_five msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
@@ -1298,22 +1234,22 @@ set(MIME_X86_DLLS
     bcryptprimitives:0x28000000:all_five pdh:0x27000000:all_five wevtapi:0x26000000:all_five tbs:0x25000000:all_five
     ncrypt:0x24000000:all_five credui:0x23000000:all_five cryptui:0x22000000:all_five ndfapi:0x21000000:all_five
     winusb:0x20000000:all_five dhcpcsvc:0x1E000000:all_five esent:0x1D000000:all_five
-    uiautomationcore:0x1C000000:uia_imports iphlpapi:0x1B000000:base bcrypt:0x1A000000:all_five
+    uiautomationcore:0x1C000000:uia_imports iphlpapi:0x1B000000:base
     mfplat:0x12400000:mfplat_imports mf:0x12200000:mf_imports mfreadwrite:0x12000000:mfreadwrite_imports
     mfcaptureengine:0x12100000:mfce_imports
     schannel:0x19000000:base msctf:0x0E000000:ctf_imports activeds:0x47000000:ads_imports advpack:0x10000000:advpack_imports
     imagehlp:0x02000000:base cabinet:0x09000000:base sfc:0x08000000:base sfc_os:0x07000000:sfc_os_imports
     dnsapi:0x04000000:dnsapi_imports msxml3:0x06000000:msxml_imports msxml6:0x05000000:msxml_imports windowscodecs:0x5A000000:wic_imports
     onecorecommonproxystub:0x02000000:proxy_imports onecoreuapcommonproxystub:0x01000000:proxy_imports
-    feclient:0x03000000:base wkscli:0x55600000:wkscli_imports zipfldr:0x15800000:explorerframe_imports mstask:0x31D00000:mstask_imports msado15:0x31C00000:msado15_imports vbscript:0x30900000:vbscript_imports jscript:0x30A00000:jscript_imports scrrun:0x31B00000:scrrun_imports wshom:0x31A00000:wshom_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base dbghelp:0x32D00000:base odbccp32:0x55500000:base mscms:0x55400000:mscms_imports mapi32:0x55300000:mapi32_imports hlink:0x55200000:hlink_imports atl:0x55800000:base authz:0x55100000:authz_imports wldap32:0x55000000:base ntdsapi:0x32C00000:base mlang:0x32E00000:mlang_imports query:0x32B00000:all_five fontsub:0x32A00000:base tdh:0x32900000:base windows.networking:0x32800000:base dbgeng:0x32700000:base wmvcore:0x32600000:base atmlib:0x32500000:base avicap32:0x32400000:all_five rstrtmgr:0x32300000:base wlanapi:0x32200000:base snmpapi:0x32100000:base ktmw32:0x32000000:base httpapi:0x31F00000:base wbemcore:0x31E00000:wbem_imports loadperf:0x1E800000:loadperf_imports xmllite:0x1E700000:xmllite_imports security:0x1E600000:base sspicli:0x1E300000:base rsaenh:0x1E200000:mscms_imports msvfw32:0x1FC00000:msvfw32_imports normaliz:0x1F800000:base cryptsp:0x1F400000:base shfolder:0x1F000000:base msdmo:0x32F00000:mstask_imports dxva2:0x32F80000:user srvcli:0x1E900000:base netutils:0x1EA00000:base)
+    feclient:0x03000000:base wkscli:0x55600000:wkscli_imports zipfldr:0x15800000:explorerframe_imports mstask:0x31D00000:mstask_imports msado15:0x31C00000:msado15_imports vbscript:0x30900000:vbscript_imports jscript:0x30A00000:jscript_imports scrrun:0x31B00000:scrrun_imports wshom:0x31A00000:wshom_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base dbghelp:0x32D00000:base odbccp32:0x55500000:base mscms:0x55400000:mscms_imports mapi32:0x55300000:mapi32_imports hlink:0x55200000:hlink_imports atl:0x55800000:base authz:0x55100000:authz_imports wldap32:0x55000000:base ntdsapi:0x32C00000:base mlang:0x32E00000:mlang_imports query:0x32B00000:all_five fontsub:0x32A00000:base tdh:0x32900000:base windows.networking:0x32800000:base dbgeng:0x32700000:base wmvcore:0x32600000:base atmlib:0x32500000:base avicap32:0x32400000:all_five rstrtmgr:0x32300000:base wlanapi:0x32200000:base snmpapi:0x32100000:base ktmw32:0x32000000:base httpapi:0x31F00000:base wbemcore:0x31E00000:wbem_imports loadperf:0x1E800000:loadperf_imports xmllite:0x1E700000:xmllite_imports security:0x1E600000:base sspicli:0x1E300000:base rsaenh:0x1E200000:mscms_imports msvfw32:0x1FC00000:msvfw32_imports normaliz:0x1F800000:base cryptsp:0x1F400000:base sensapi:0x55900000:base verifier:0x55A00000:base shfolder:0x1F000000:base msdmo:0x32F00000:mstask_imports dxva2:0x32F80000:dxva2_imports srvcli:0x1E900000:base netutils:0x1EA00000:base)
 set(base ntdll kernel32)
 set(mscms_imports ntdll kernel32 advapi32)
 set(wbem_imports ntdll kernel32 advapi32 ole32 oleaut32)
 set(loadperf_imports ntdll kernel32 advapi32)
 set(xmllite_imports ntdll kernel32)
 set(wkscli_imports ntdll kernel32 advapi32 rpcrt4 msvcrt)
-set(dnsapi_imports ntdll kernel32 ws2_32)
-set(oledlg_imports ntdll kernel32 user32 ole32)
+set(dnsapi_imports ntdll kernel32 ws2_32 rpcrt4 msvcrt)
+set(oledlg_imports ntdll kernel32 user32 ole32 advapi32)
 set(msvfw32_imports ntdll kernel32 user32 gdi32 win32u winmm comdlg32)
 set(authz_imports ntdll kernel32 advapi32)
 set(mapi32_imports ntdll kernel32 ole32)
@@ -1323,7 +1259,7 @@ set(scrrun_imports ntdll kernel32 user32 advapi32 ole32 oleaut32 version mpr she
 set(wshom_imports ntdll kernel32 user32 advapi32 ole32 oleaut32 shell32 mpr winspool scrrun)
 set(vbscript_imports ntdll kernel32 user32 gdi32 win32u advapi32 ole32 oleaut32 msvcrt)
 set(objects_vbscript x86-div)
-set(jscript_imports ntdll kernel32 user32 advapi32 ole32 oleaut32 msvcrt)
+set(jscript_imports ntdll kernel32 user32 advapi32 ole32 oleaut32 msvcrt ucrtbase)
 set(objects_jscript x86-div)
 set(mstask_imports ntdll kernel32 advapi32 ole32)
 set(objects_mstask x86-div)
@@ -1332,19 +1268,22 @@ set(avifil32_imports ntdll kernel32 user32 gdi32 win32u ole32 msacm32)
 set(objects_avifil32 x86-div)
 set(includes_zipfldr guest/lib)
 set(rpcrt4_imports ntdll kernel32 user32 gdi32 win32u msvcrt)
-set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
-set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4 msvcrt)
+set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt advapi32)
+set(shlwapi_imports ntdll kernel32 user32 gdi32 win32u kernelbase advapi32)
+set(advapi32_imports ntdll kernel32 user32 gdi32 win32u kernelbase)
+set(registry_imports ntdll kernel32 user32 gdi32 win32u advapi32)
+set(crypt32_imports ntdll kernel32 user32 gdi32 win32u advapi32 rpcrt4 msvcrt)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 advapi32 shlwapi combase)
 set(mlang_imports ntdll kernel32 oleaut32)
 set(secur32_imports ntdll kernel32 user32 gdi32 win32u advapi32)
 set(objects_propsys x86-lib-crypto:guest/lib/crypto/hash.c)
 set(includes_propsys guest/lib)
 set(wic_imports ntdll kernel32 user32 gdi32 win32u ole32)
-set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32)
+set(shcore_imports ntdll kernel32 user32 gdi32 win32u ole32 advapi32)
 set(objects_shcore x86-lib-winrt)
 set(includes_shcore guest/lib)
-set(proxy_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4)
-set(shell32_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 shlwapi)
+set(proxy_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 rpcrt4)
+set(shell32_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 shlwapi kernelbase)
 set(explorerframe_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 shell32)
 set(ieframe_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 advapi32)
 set(dialog_imports ntdll kernel32 user32 gdi32 win32u comctl32 shell32 shlwapi ole32 advapi32)
@@ -1355,6 +1294,7 @@ set(mfreadwrite_imports ntdll kernel32 mfplat ole32)
 set(mf_imports ntdll kernel32 mfplat cfgmgr32 ole32)
 set(mfce_imports ntdll kernel32 mfplat mf ole32)
 set(user ntdll kernel32 user32)
+set(dxva2_imports ntdll kernel32 user32 ole32)
 set(ads_imports ntdll kernel32 advapi32 netapi32 oleaut32)
 set(advpack_imports ntdll kernel32 advapi32 version)
 set(objects_advpack x86-lib-cabinet)
@@ -1375,8 +1315,9 @@ set(gdi ntdll kernel32 gdi32)
 set(user_gdi ntdll kernel32 user32 gdi32)
 set(gdiplus_imports ntdll kernel32 user32 gdi32 ole32)
 set(d2d1_imports ntdll kernel32 user32 gdi32 ole32 dwrite)
-set(msvbvm60_imports ntdll kernel32 user32 gdi32 ole32 oleaut32)
+set(msvbvm60_imports ntdll kernel32 user32 gdi32 ole32 oleaut32 advapi32)
 set(crypt ntdll kernel32 crypt32)
+set(wintrust_imports ntdll kernel32 crypt32 imagehlp)
 set(acm ntdll kernel32 user32 gdi32 winmm)
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
 set(setup ntdll kernel32 cfgmgr32 advapi32 version)
@@ -1384,9 +1325,7 @@ set(objects_setupapi x86-lib-cabinet)
 set(xinput ntdll kernel32 user32 setupapi)
 set(http ntdll kernel32 user32 ws2_32)
 set(wininet_imports ntdll kernel32 user32 ws2_32 kernelbase)
-set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32)
-set(objects_oleaut32 x86-div x86-lib-jpeg)
-set(includes_oleaut32 guest/lib)
+set(urlmon_imports ntdll kernel32 user32 wininet ole32 oleaut32 kernelbase)
 set(objects_msi x86-lib-compound x86-lib-cabinet x86-lib-crypto:guest/lib/crypto/hash.c)
 set(includes_msi guest/lib)
 set(objects_winmm x86-lib-audio)
@@ -1407,17 +1346,21 @@ set(objects_dwrite x86-lib-ttf x86-lib-png:guest/lib/png/inflate.c x86-div)
 set(includes_dwrite guest/lib)
 set(objects_windowscodecs x86-lib-png:guest/lib/png/inflate.c x86-lib-png:guest/lib/png/deflate.c x86-lib-pngio x86-lib-jpeg x86-lib-tiff x86-lib-gif x86-lib-bcn x86-lib-icc x86-lib-jxr x86-lib-par x86-div)
 set(includes_windowscodecs guest/lib)
-set(objects_bcrypt x86-lib-crypto)
 set(objects_combase x86-lib-crypto:guest/lib/crypto/hash.c)
 set(includes_combase guest/lib)
 set(objects_crypt32 x86-lib-crypto x86-lib-compound x86-lib-cabinet)
+set(objects_ncrypt x86-lib-crypto:guest/lib/crypto/aes.c x86-lib-crypto:guest/lib/crypto/des.c x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/hmac.c x86-lib-crypto:guest/lib/crypto/kdf.c x86-lib-crypto:guest/lib/crypto/modes.c)
+set(includes_ncrypt guest/lib)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
         x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c
         x86-lib-crypto:guest/lib/crypto/aes.c x86-lib-crypto:guest/lib/crypto/des.c x86-lib-crypto:guest/lib/crypto/modes.c x86-lib-crypto:guest/lib/crypto/kdf.c x86-lib-crypto:guest/lib/crypto/hmac.c)
-foreach(crypto bcrypt crypt32 secur32 advapi32)
+foreach(crypto crypt32 secur32 advapi32)
     set(includes_${crypto} guest/lib)
 endforeach()
+# the 32-bit advapi32 is mime's and has the providers, so cryptsp only forwards there.
+set(objects_cryptsp)
+set(libs_cryptsp)
 set(objects_winhttp x86-lib-png:guest/lib/png/inflate.c)
 set(includes_winhttp guest/lib)
 set(objects_wininet x86-lib-png:guest/lib/png/inflate.c)
@@ -1427,6 +1370,20 @@ set(includes_wininet guest/lib)
 set(d3dcompiler_imports ${all_five} msvcrt)
 list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:d3dcompiler_imports)
 list(APPEND MIME_X86_DLLS wldp:0x31900000:base cryptnet:0x55900000:crypt)
+# the windows runtime classes genuine combase loads from SysWOW64, as the 32-bit view of the registry names them.
+set(runtime_imports ntdll kernel32 user32 gdi32 win32u combase)
+list(APPEND MIME_X86_DLLS windows.media.devices:0x48000000:runtime_imports
+    windows.devices.enumeration:0x48400000:runtime_imports windows.networking.connectivity:0x48800000:runtime_imports
+    cryptowinrt:0x48C00000:runtime_imports)
+foreach(runtime windows.media.devices windows.devices.enumeration windows.networking.connectivity cryptowinrt)
+    set(includes_${runtime} guest/lib)
+endforeach()
+set(devmgr_imports ntdll kernel32 user32 gdi32 win32u advapi32 comctl32 setupapi cfgmgr32 uxtheme)
+set(newdev_imports ntdll kernel32 setupapi shell32)
+list(APPEND MIME_X86_DLLS winsta:0x10800000:all_five)
+list(APPEND MIME_X86_DLLS devmgr:0x10400000:devmgr_imports newdev:0x10C00000:newdev_imports)
+set(evr_imports ntdll kernel32 mfplat ole32 gdi32 user32 dxva2 d3d9)
+list(APPEND MIME_X86_DLLS evr:0x32F90000:evr_imports)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c x86-lib-hlsl x86-div)
 
 mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
@@ -1450,6 +1407,61 @@ set(includes_dcomp ${MIME_GEN}/shaders)
 set(objects_dcomp)
 set(libs_dcomp)
 
+# where the 32-bit cryptsp is microsoft's, the CryptoAPI of mime's 32-bit advapi32 is forwarded there, as the calls of
+# windows' advapi32 end there, with the SystemFunction exports windows forwards too. the providers of
+# guest/advapi32/crypt.c are not built then.
+mime_genuine(cryptsp_x86_genuine x86 cryptsp.dll)
+# where the 32-bit sechost is microsoft's, the credential functions of mime's 32-bit advapi32 are forwarded there, as
+# the calls of windows' advapi32 end there: sechost asks the security authority, so both widths have one store. the
+# manager of guest/advapi32/sechost_credman.c is then for the guests whose sechost is mime's.
+mime_genuine(sechost_x86_genuine x86 sechost.dll)
+set(sechost_credentials BackupCredentials DeleteA DeleteW EncryptAndMarshalBinaryBlob EnumerateA EnumerateW
+    FindBestCredentialA FindBestCredentialW Free GetSessionTypes GetTargetInfoA GetTargetInfoW IsMarshaledCredentialW
+    IsProtectedA IsProtectedW MarshalCredentialA MarshalCredentialW ParseUserNameWithType ProfileLoaded ProfileLoadedEx
+    ProfileUnloaded ProtectA ProtectEx ProtectW ReadA ReadByTokenHandle ReadDomainCredentialsA ReadDomainCredentialsW
+    ReadW RestoreCredentials UnmarshalCredentialA UnmarshalCredentialW UnprotectA UnprotectEx UnprotectW WriteA
+    WriteDomainCredentialsA WriteDomainCredentialsW WriteW)
+set(def_advapi32)
+if(cryptsp_x86_genuine OR sechost_x86_genuine)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MIME_GEN}/x86/advapi32.def)
+    file(STRINGS ${MIME_GEN}/x86/advapi32.def advapi32_lines)
+    set(advapi32_def "")
+    foreach(line IN LISTS advapi32_lines)
+        set(keep TRUE)
+        if(cryptsp_x86_genuine AND line MATCHES "^ +Crypt[A-Za-z]+=_Crypt")
+            set(keep FALSE)
+        elseif(sechost_x86_genuine AND line MATCHES "^ +Cred([A-Za-z]+)=_Cred" AND CMAKE_MATCH_1 IN_LIST sechost_credentials)
+            set(keep FALSE)
+        endif()
+        if(keep)
+            string(APPEND advapi32_def "${line}\n")
+        endif()
+    endforeach()
+    if(sechost_x86_genuine)
+        foreach(export IN LISTS sechost_credentials)
+            string(APPEND advapi32_def "    Cred${export}=sechost.Cred${export}\n")
+        endforeach()
+    endif()
+endif()
+if(cryptsp_x86_genuine)
+    foreach(export AcquireContextA AcquireContextW ContextAddRef CreateHash Decrypt DeriveKey DestroyHash DestroyKey
+            DuplicateHash DuplicateKey Encrypt EnumProviderTypesA EnumProviderTypesW EnumProvidersA EnumProvidersW
+            ExportKey GenKey GenRandom GetDefaultProviderA GetDefaultProviderW GetHashParam GetKeyParam GetProvParam
+            GetUserKey HashData HashSessionKey ImportKey ReleaseContext SetHashParam SetKeyParam SetProvParam
+            SetProviderA SetProviderExA SetProviderExW SetProviderW SignHashA SignHashW VerifySignatureA
+            VerifySignatureW)
+        string(APPEND advapi32_def "    Crypt${export}=cryptsp.Crypt${export}\n")
+    endforeach()
+    foreach(number 006 007 008 009 010 011 012 013 014 015 016 018 020 021 022 023 024 025 026 027 030 031 032 033)
+        string(APPEND advapi32_def "    SystemFunction${number}=cryptsp.SystemFunction${number}\n")
+    endforeach()
+    string(APPEND advapi32_def "    SystemFunction035=cryptsp.CheckSignatureInFile\n")
+endif()
+if(cryptsp_x86_genuine OR sechost_x86_genuine)
+    file(CONFIGURE OUTPUT ${MIME_BUILD_GEN}/x86/advapi32.def CONTENT "${advapi32_def}" @ONLY)
+    set(def_advapi32 DEF ${MIME_BUILD_GEN}/x86/advapi32.def IMPORTS_DEF ${MIME_GEN}/x86/advapi32.imports.def)
+endif()
+
 foreach(entry IN LISTS MIME_X86_DLLS)
     string(REPLACE ":" ";" entry ${entry})
     list(GET entry 0 name)
@@ -1461,9 +1473,24 @@ foreach(entry IN LISTS MIME_X86_DLLS)
         set(file windows.storage.dll)
     elseif(name STREQUAL "wshom")
         set(file wshom.ocx)
+    elseif(name STREQUAL "windows.media.devices")
+        set(file Windows.Media.Devices.dll)
+        list(APPEND sources guest/combase/mediadevice.c guest/combase/audioendpoint.c)
+    elseif(name STREQUAL "windows.devices.enumeration")
+        set(file Windows.Devices.Enumeration.dll)
+        list(APPEND sources guest/combase/devinfo.c guest/combase/audioendpoint.c)
+    elseif(name STREQUAL "windows.networking.connectivity")
+        set(file Windows.Networking.Connectivity.dll)
+        list(APPEND sources guest/combase/netinfo.c guest/combase/async.c guest/combase/collections.c)
+    elseif(name STREQUAL "cryptowinrt")
+        set(file CryptoWinRT.dll)
+        list(APPEND sources guest/combase/keycred.c guest/combase/async.c)
+    endif()
+    if(name STREQUAL "advapi32" AND cryptsp_x86_genuine)
+        list(FILTER sources EXCLUDE REGEX "/advapi32/crypt\\.c$")
     endif()
     mime_dll(${name} x86 BASE ${address} FILE ${file} SOURCES ${sources} OBJECTS x86-chkstk ${objects_${name}}
-        INCLUDES ${includes_${name}} IMPORTS ${${imports}} DEPENDS ${depends_${name}})
+        INCLUDES ${includes_${name}} IMPORTS ${${imports}} DEPENDS ${depends_${name}} ${def_${name}})
 endforeach()
 
 mime_sources(sources d3d8 x86)
@@ -1490,15 +1517,6 @@ mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources}
 
 mime_sources(sources bthprops x86)
 mime_dll(bthprops x86 BASE 0x1F000000 FILE bthprops.cpl SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ${all_five} rpcrt4 ole32)
-
-mime_sources(sources msvcrt x86)
-mime_objects(x86-msvcrt x86 SOURCES ${sources} INCLUDES guest/msvcrt)
-mime_dll(msvcrt x86 BASE 0x48000000 OBJECTS x86-msvcrt x86-chkstk x86-div IMPORTS ntdll kernel32
-    DEF ${gen86}/msvcrt.def IMPORTS_DEF ${gen86}/msvcrt.imports.def)
-
-mime_objects(x86-ucrtbase x86 SOURCES guest/ucrtbase/main.c INCLUDES guest/ucrtbase)
-mime_dll(ucrtbase x86 BASE 0x47000000 ENTRY /noentry OBJECTS x86-ucrtbase x86-chkstk DEF ${gen86}/ucrtbase.def
-    IMPORTS_DEF ${gen86}/ucrtbase.imports.def DEPENDS ${MIME_LIB_x86}/msvcrt.lib)
 
 mime_dll(opengl32 x86 BASE 0x44000000 ENTRY /noentry SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c ${MIME_GEN}/opengl32/dlist_gen.c
     OBJECTS ${MIME_RUNTIME_x86} OPTIONS ${opengl32_options} INCLUDES ${opengl32_includes} IMPORTS ntdll win32u)
@@ -1623,7 +1641,7 @@ set(features_libs ${MIME_LIB_${features_arch}}/ntdll.lib ${MIME_LIB_${features_a
 foreach(features_name OptionalFeatures dism fondue)
     mime_link(${MIME_OUT_${features_arch}}/${features_name}.exe ${features_arch}
         OBJECTS ${features_arch}-features ${features_arch}-toolutil ${features_arch}-chkstk ${features_arch}-lib-cbs ${features_arch}-lib-msdelta
-            ${features_arch}-lib-cabinet ${features_arch}-lib-png ${features_arch}-lib-lzms ${features_arch}-lib-crypto:guest/lib/crypto/hash.c LIBS ${features_libs}
+            ${features_arch}-lib-cabinet ${features_arch}-lib-png ${features_arch}-lib-lzms ${features_arch}-lib-wim ${features_arch}-lib-crypto:guest/lib/crypto/hash.c LIBS ${features_libs}
         FLAGS /subsystem:console,10.0 /entry:entry /base:0x7FF6AE000000 /highentropyva /dynamicbase
             /stack:0x100000,0x4000
         ROM ${MIME_ROM_${features_arch}}/${features_name}.exe GROUPS guest)
@@ -1636,7 +1654,7 @@ mime_glob(cmd_sources guest/cmd/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
         mime_objects(${arch}-cmd ${arch} SOURCES ${cmd_sources} INCLUDES guest/cmd)
-        set(cmd_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib)
+        set(cmd_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/advapi32.lib)
         set(cmd_objects ${arch}-cmd ${arch}-chkstk)
         set(cmd_flags /subsystem:console,10.0 /entry:entry /base:0x7FF6AD000000 /highentropyva /dynamicbase
             /stack:0x1000000,0x10000)
@@ -1684,6 +1702,35 @@ add_custom_command(OUTPUT ${registry_hives}
     DEPENDS regc ${registry_sources} COMMENT "Compiling the registry hives" VERBATIM)
 set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${registry_hives})
 
+# ===================================== nls =====================================
+
+# the nls files of System32 that the kernel maps for the system dll, written from the tables of gen in the layout of
+# windows: a code page file for every page windows has one for, the case tables, the locales and the normalization forms.
+add_executable(nlsc host/nlsc/nlsc.c)
+target_include_directories(nlsc PRIVATE ${MIME_GEN})
+target_compile_options(nlsc PRIVATE -Wall -Wextra)
+set_target_properties(nlsc PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tools)
+
+set(MIME_NLS ${MIME_ASSETS}/nls)
+set(nls_files ${MIME_NLS}/l_intl.nls ${MIME_NLS}/locale.nls ${MIME_NLS}/normnfc.nls ${MIME_NLS}/normnfd.nls
+    ${MIME_NLS}/normnfkc.nls ${MIME_NLS}/normnfkd.nls ${MIME_NLS}/normidna.nls)
+file(STRINGS ${MIME_GEN}/nls_cpfit.h nls_pages REGEX "^    {[0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+},$")
+foreach(page IN LISTS nls_pages)
+    string(REGEX REPLACE "^    {([0-9]+),.*$" "\\1" page "${page}")
+    if(page LESS 100)
+        set(page "0${page}")
+    endif()
+    list(APPEND nls_files ${MIME_NLS}/C_${page}.NLS)
+endforeach()
+set(nls_tables ${MIME_GEN}/nls_cpdata.h ${MIME_GEN}/nls_cpfit.h ${MIME_GEN}/nls_case.h ${MIME_GEN}/nls_files.h)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MIME_GEN}/nls_cpfit.h)
+add_custom_command(OUTPUT ${nls_files}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${MIME_NLS}
+    COMMAND nlsc ${MIME_NLS}
+    DEPENDS nlsc ${nls_tables} COMMENT "Writing the nls files" VERBATIM)
+set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${nls_files})
+
 # ===================================== fonts =====================================
 
 # the folder's desktop.ini, which gives it the fonts view of the shell as on windows.
@@ -1722,12 +1769,14 @@ set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/gen/theme
 # ===================================== host =====================================
 
 get_property(rom_files GLOBAL PROPERTY MIME_ROM_FILES)
-# microsoft's originals of a few system files are fetched by the host at run time, never put in the build: the rom and
-# the host only know them by the manifest of the guest's windows, see host/genuine.c.
-set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine-${MIME_GUEST_ARCH}.manifest)
+# the files of the genuine manifest are named in the rom with no bytes, see the genuine section and scripts/rom.cmake.
+set(rom_sysx64 OFF)
+if(MIME_GUEST_ARCH STREQUAL "arm64")
+    set(rom_sysx64 ON)
+endif()
 add_custom_command(OUTPUT ${MIME_BUILD_GEN}/rom.S
     COMMAND ${CMAKE_COMMAND} -DOUTPUT=${MIME_BUILD_GEN}/rom.S -DSYSTEM=${CMAKE_SYSTEM_NAME} "-DFILES=${rom_files}"
-        -DMANIFEST=${genuine_manifest} -P ${CMAKE_SOURCE_DIR}/scripts/rom.cmake
+        -DMANIFEST=${genuine_manifest} -DSYSX64=${rom_sysx64} -P ${CMAKE_SOURCE_DIR}/scripts/rom.cmake
     DEPENDS scripts/rom.cmake ${rom_files} ${genuine_manifest} VERBATIM)
 add_custom_target(rom DEPENDS ${MIME_BUILD_GEN}/rom.S)
 
@@ -1809,12 +1858,27 @@ if(APPLE)
         VERBATIM)
 else()
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(HOST_LIBS REQUIRED IMPORTED_TARGET sdl3 wayland-client)
+    pkg_check_modules(HOST_LIBS REQUIRED IMPORTED_TARGET wayland-client wayland-cursor xkbcommon)
     pkg_check_modules(HOST_SDBUS IMPORTED_TARGET libsystemd)
     find_package(Threads REQUIRED)
-    mime_glob(host_sources host/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
+    mime_glob(host_sources host/*.c host/linux/*.c host/vmm/*.c host/camera/*.c guest/lib/png/*.c)
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
     list(APPEND host_sources host/gpu/shader.c host/gpu/glsl_compat.c host/ui/pe_icon.c)
+
+    # the protocols of the compositor past the core one, from the descriptions kept in third_party/wayland-protocols.
+    find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
+    set(wayland_gen ${MIME_BUILD_GEN}/wayland)
+    file(MAKE_DIRECTORY ${wayland_gen})
+    foreach(protocol xdg-shell viewporter tablet-v2 fractional-scale-v1 cursor-shape-v1 xdg-toplevel-icon-v1
+            text-input-unstable-v3 pointer-constraints-unstable-v1 relative-pointer-unstable-v1 xdg-output-unstable-v1)
+        set(xml ${CMAKE_SOURCE_DIR}/third_party/wayland-protocols/${protocol}.xml)
+        add_custom_command(OUTPUT ${wayland_gen}/${protocol}.h ${wayland_gen}/${protocol}.c
+            COMMAND ${WAYLAND_SCANNER} client-header ${xml} ${wayland_gen}/${protocol}.h
+            COMMAND ${WAYLAND_SCANNER} private-code ${xml} ${wayland_gen}/${protocol}.c
+            DEPENDS ${xml} VERBATIM)
+        list(APPEND host_sources ${wayland_gen}/${protocol}.c)
+        list(APPEND wayland_headers ${wayland_gen}/${protocol}.h)
+    endforeach()
 
     add_executable(mime ${host_sources} ${vulkan_host_sources} ${MIME_BUILD_GEN}/rom.S $<TARGET_OBJECTS:mvk-host>
         $<TARGET_OBJECTS:shaderc>)
@@ -1822,6 +1886,8 @@ else()
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
     set_source_files_properties(host/linux/gpu.c PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen};${CMAKE_SOURCE_DIR}/third_party/glslang")
+    set_source_files_properties(host/linux/wayland.c PROPERTIES OBJECT_DEPENDS "${wayland_headers}")
+    target_include_directories(mime PRIVATE ${wayland_gen} guest/lib)
     target_compile_definitions(mime PRIVATE _GNU_SOURCE)
     target_link_libraries(mime PRIVATE PkgConfig::HOST_LIBS Threads::Threads m)
     # the client tells a machine of another build by it, see host/build_id.c.
@@ -1832,19 +1898,14 @@ else()
     else()
         message(STATUS "mime: no libsystemd, the host will not show the guest's notification icons")
     endif()
-    # only the headers: the library is loaded at run time, so a host without PipeWire still starts.
-    pkg_check_modules(HOST_PIPEWIRE libpipewire-0.3)
-    if(HOST_PIPEWIRE_FOUND)
-        set(pipewire_includes "")
-        foreach(dir ${HOST_PIPEWIRE_INCLUDE_DIRS})
-            list(APPEND pipewire_includes "-isystem${dir}")
-        endforeach()
-        set_source_files_properties(host/linux/pipewire.c PROPERTIES COMPILE_DEFINITIONS MIME_HAVE_PIPEWIRE=1
-            COMPILE_OPTIONS "${pipewire_includes}")
-        target_link_libraries(mime PRIVATE ${CMAKE_DL_LIBS})
-    else()
-        message(STATUS "mime: no libpipewire headers, audio devices get the formats SDL tells")
-    endif()
+    # only the headers: the library is loaded at run time, so a host without PipeWire still starts, with no sound.
+    pkg_check_modules(HOST_PIPEWIRE REQUIRED libpipewire-0.3)
+    set(pipewire_includes "")
+    foreach(dir ${HOST_PIPEWIRE_INCLUDE_DIRS})
+        list(APPEND pipewire_includes "-isystem${dir}")
+    endforeach()
+    set_source_files_properties(host/linux/pipewire.c PROPERTIES COMPILE_OPTIONS "${pipewire_includes}")
+    target_link_libraries(mime PRIVATE ${CMAKE_DL_LIBS})
     set_target_properties(mime PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 
@@ -1863,7 +1924,8 @@ add_custom_command(OUTPUT ${MIME_BUILD_GEN}/genuine_manifest.h
     COMMAND ${CMAKE_COMMAND} -DINPUT=${genuine_manifest} -DOUTPUT=${MIME_BUILD_GEN}/genuine_manifest.h
         -P ${CMAKE_SOURCE_DIR}/scripts/genuine.cmake
     DEPENDS scripts/genuine.cmake ${genuine_manifest} VERBATIM)
-target_sources(mime PRIVATE ${MIME_BUILD_GEN}/genuine_manifest.h)
+# the reader of the windows image, the same as features.exe's, for the files of the manifest that come from it.
+target_sources(mime PRIVATE ${MIME_BUILD_GEN}/genuine_manifest.h guest/lib/wim/wim.c guest/lib/lzms/lzms.c)
 set_source_files_properties(host/genuine.c PROPERTIES INCLUDE_DIRECTORIES ${MIME_BUILD_GEN}
     OBJECT_DEPENDS ${MIME_BUILD_GEN}/genuine_manifest.h)
 find_package(CURL REQUIRED)

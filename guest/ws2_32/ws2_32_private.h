@@ -64,6 +64,13 @@ WS_THREAD *WsThread(void);
 void WsCloseAllSockets(void);
 void WsSocketsInitialize(void);
 
+/*
+ * set by mswsock when the genuine ws2_32 loads it as the service provider of its catalog. WsCatalogEntry gives the
+ * catalog entry of a kind of socket, WsAnnounceSocket hands a new socket handle to ws2_32 and answers 0 or the error.
+ */
+extern BOOL (*WsCatalogEntry)(int family, int type, WSAPROTOCOL_INFOW *info);
+extern int (*WsAnnounceSocket)(SOCKET s, int family, int type);
+
 
 /* the IPv4 parser of RtlIpv4StringToAddressA: four decimal parts when strict, the inet_aton forms otherwise. */
 BOOL WsParseIpv4(const char *s, BOOL strict, IN_ADDR *addr, const char **end);
@@ -96,6 +103,14 @@ BOOL WsIsLoopbackV6(const IN6_ADDR *addr);
 /* the service and protocol tables, used by getaddrinfo and getnameinfo too. */
 BOOL WsServiceByName(const char *name, const char *proto, USHORT *port, const char **found_proto);
 const char *WsServiceByPort(USHORT port, const char *proto);
+/* the table entry of a service by name, or by port when name is null, with up to three aliases. */
+typedef struct {
+    const char *name;
+    USHORT port;
+    const char *proto;
+    const char *aliases[3];
+} WS_SERVICE_ENTRY;
+BOOL WsServiceEntry(const char *name, USHORT port, const char *proto, WS_SERVICE_ENTRY *entry);
 
 
 /* TRUE when s names an open socket. */

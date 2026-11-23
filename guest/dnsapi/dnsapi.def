@@ -7,6 +7,8 @@ EXPORTS
     DnsFlushResolverCacheEntry_W
     DnsExtractRecordsFromMessage_W
     DnsFree
+    DnsGetCacheDataTable
+    DnsGetCacheDataTableEx
     DnsQueryConfig
     DnsQueryEx
     DnsQueryExA
@@ -20,3 +22,10 @@ EXPORTS
     DnsValidateName_A
     DnsValidateName_UTF8
     DnsValidateName_W
+    DnsApiFree
+    DnsFreeAdaptersInfo
+    DnsGetAdaptersInfo
+    DnsGetInterfaceSettings
+    DnsGetSettings
+    DnsSetInterfaceSettings
+    DnsSetSettings

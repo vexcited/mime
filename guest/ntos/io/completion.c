@@ -6,12 +6,18 @@
 
 POBJECT_TYPE IoCompletionObjectType;
 
+struct WAIT_PACKET;
+
+/* a packet a wait completion packet queued names it, until a thread takes the packet or the wait is cancelled. */
 typedef struct IO_COMPLETION_PACKET {
     LIST_ENTRY Links;
     PVOID KeyContext;
     PVOID ApcContext;
     IO_STATUS_BLOCK IoStatus;
+    struct WAIT_PACKET *Owner;
 } IO_COMPLETION_PACKET;
+
+static void packet_taken(IO_COMPLETION_PACKET *p);
 
 /* the semaphore counts the queued packets. the lock guards the list, a real one: packets come and go without the kernel lock. */
 typedef struct IO_COMPLETION {
@@ -19,6 +25,7 @@ typedef struct IO_COMPLETION {
     volatile LONG Lock;
     LIST_ENTRY Queue;
     LONG Count;
+    PVOID Factory; /* the worker factory bound to the port, told of each packet. */
 } IO_COMPLETION;
 
 /* what NtSetInformationFile(FileCompletionInformation) attaches to a file object. */
@@ -40,8 +47,12 @@ typedef struct FILE_IO_COMPLETION_INFORMATION {
 static void completion_delete(PVOID object)
 {
     IO_COMPLETION *port = object;
-    while (!IsListEmpty(&port->Queue))
-        ExFreePool(CONTAINING_RECORD(RemoveHeadList(&port->Queue), IO_COMPLETION_PACKET, Links));
+    while (!IsListEmpty(&port->Queue)) {
+        IO_COMPLETION_PACKET *p = CONTAINING_RECORD(RemoveHeadList(&port->Queue), IO_COMPLETION_PACKET, Links);
+        p->Links.Flink = nullptr;
+        packet_taken(p);
+        ExFreePool(p);
+    }
 }
 
 void IopInitializeCompletion(void)
@@ -53,25 +64,38 @@ void IopInitializeCompletion(void)
     IoCompletionObjectType = ObCreateObjectType(L"IoCompletion", &init);
 }
 
-static NTSTATUS queue_packet(IO_COMPLETION *port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information)
+static IO_COMPLETION_PACKET *new_packet(PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information)
 {
     IO_COMPLETION_PACKET *p = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*p), KI_TAG('I', 'o', 'C', 'p'));
     if (!p)
-        return STATUS_INSUFFICIENT_RESOURCES;
+        return nullptr;
     p->KeyContext = key;
     p->ApcContext = apc_context;
     p->IoStatus.Status = status;
     p->IoStatus.Information = information;
+    p->Owner = nullptr;
+    return p;
+}
+
+static void insert_packet(IO_COMPLETION *port, IO_COMPLETION_PACKET *p)
+{
     ULONG64 state = KiAcquireRawLock(&port->Lock);
     InsertTailList(&port->Queue, &p->Links);
     port->Count++;
+    /* a factory is unbound under this lock before its last handle goes, so it is whole here. */
+    PVOID factory = port->Factory ? ExWorkerFactoryPacketQueued(port->Factory) : nullptr;
     KiReleaseRawLock(&port->Lock, state);
     KeReleaseSemaphore(&port->Packets, IO_NO_INCREMENT, 1, FALSE);
-    if (KiTimelineOn) {
-        char text[24];
-        mime_format(text, sizeof(text), "port%llx", (ULONG64)(ULONG_PTR)port & 0xFFFFFFFFFFFull);
-        KiTimelineNote(3, text, (ULONG64)(ULONG_PTR)apc_context);
-    }
+    if (factory)
+        ExWorkerFactoryCheck(factory);
+}
+
+static NTSTATUS queue_packet(IO_COMPLETION *port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information)
+{
+    IO_COMPLETION_PACKET *p = new_packet(key, apc_context, status, information);
+    if (!p)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    insert_packet(port, p);
     return STATUS_SUCCESS;
 }
 
@@ -197,11 +221,13 @@ BOOLEAN IopRemoveCompletionPacket(PVOID object, ULONG64 values[4])
     ULONG64 state = KiAcquireRawLock(&port->Lock);
     if (!IsListEmpty(&port->Queue)) {
         p = CONTAINING_RECORD(RemoveHeadList(&port->Queue), IO_COMPLETION_PACKET, Links);
+        p->Links.Flink = nullptr;
         port->Count--;
     }
     KiReleaseRawLock(&port->Lock, state);
     if (!p)
         return FALSE;
+    packet_taken(p);
     values[0] = (ULONG64)(ULONG_PTR)p->KeyContext;
     values[1] = (ULONG64)(ULONG_PTR)p->ApcContext;
     values[2] = (ULONG64)(ULONG_PTR)p->IoStatus.Pointer;
@@ -210,18 +236,14 @@ BOOLEAN IopRemoveCompletionPacket(PVOID object, ULONG64 values[4])
     return TRUE;
 }
 
-/* waits in the caller's mode for up to count packets, into a kernel buffer. */
-static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
-                               PLARGE_INTEGER timeout, BOOLEAN alertable)
+/* waits in the caller's mode for up to count packets of a port, into a kernel buffer. */
+static NTSTATUS remove_from(IO_COMPLETION *port, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
+                            PLARGE_INTEGER timeout, BOOLEAN alertable)
 {
-    IO_COMPLETION *port;
     KPROCESSOR_MODE mode = KeGetPreviousMode();
-    *removed = 0;
-    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType, mode, &port);
-    if (!NT_SUCCESS(status))
-        return status;
     ULONG n = 0;
-    status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
+    *removed = 0;
+    NTSTATUS status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
     while (status == STATUS_SUCCESS) {
         ULONG64 values[4];
         if (!IopRemoveCompletionPacket(port, values))
@@ -237,9 +259,45 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
         if (KeWaitForSingleObject(&port->Packets, UserRequest, mode, FALSE, &zero) != STATUS_SUCCESS)
             break;
     }
-    ObDereferenceObject(port);
     *removed = n;
     return n ? STATUS_SUCCESS : status;
+}
+
+static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
+                               PLARGE_INTEGER timeout, BOOLEAN alertable)
+{
+    IO_COMPLETION *port;
+    *removed = 0;
+    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType,
+                                           KeGetPreviousMode(), &port);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = remove_from(port, out, count, removed, timeout, alertable);
+    ObDereferenceObject(port);
+    return status;
+}
+
+/* the wait of a worker factory on its port. */
+NTSTATUS IopRemoveCompletionPackets(PVOID port, PVOID out, ULONG count, PULONG removed, PLARGE_INTEGER timeout)
+{
+    return remove_from(port, out, count, removed, timeout, FALSE);
+}
+
+LONG IopCompletionDepth(PVOID port)
+{
+    return ((IO_COMPLETION *)port)->Count;
+}
+
+/* a port tells the factory bound last, and a factory that goes takes only its own binding away. */
+void IopBindCompletionFactory(PVOID object, PVOID factory, BOOLEAN bind)
+{
+    IO_COMPLETION *port = object;
+    ULONG64 state = KiAcquireRawLock(&port->Lock);
+    if (bind)
+        port->Factory = factory;
+    else if (port->Factory == factory)
+        port->Factory = nullptr;
+    KiReleaseRawLock(&port->Lock, state);
 }
 
 static NTSTATUS capture_timeout(PLARGE_INTEGER user, PLARGE_INTEGER storage, PLARGE_INTEGER *out)
@@ -352,6 +410,24 @@ void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
         *iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)*iosb | 1);
 }
 
+/*
+ * like NtLockFile, IopReadFile and IopXxxControlFile of ntoskrnl 26300: a 32-bit program's request for a file that is
+ * not synchronous comes from wow64 with a 64-bit status block whose first word holds the address of the 32-bit one,
+ * which the request then completes in the 32-bit layout. a synchronous one is done before the service returns, and
+ * wow64 copies the 64-bit block itself.
+ */
+void IopTakeWow64Iosb(PFILE_OBJECT file, PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
+{
+    if (KeGetPreviousMode() != UserMode || !*iosb || ((ULONG_PTR)*iosb & 1) || (file->Flags & FO_SYNCHRONOUS_IO) ||
+        !PspIsWow64Process(PsCurrentProcess()))
+        return;
+    ULONG block = 0;
+    if (!NT_SUCCESS(KiCopyFromUser(&block, *iosb, sizeof(block))))
+        return;
+    *iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)block | 1);
+    *apc_routine = (PVOID)((ULONG_PTR)*apc_routine & ~(ULONG_PTR)1);
+}
+
 /* the status block bytes and their address, in the 32-bit layout when the iosb is marked. */
 ULONG IopIosbImage(PIO_STATUS_BLOCK iosb, NTSTATUS status, ULONG_PTR information, PVOID *address, ULONG64 image[2])
 {
@@ -383,7 +459,11 @@ void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_ST
 
 /*
  * a packet ties the wait on an object to a port: once the object is signalled, a completion is queued to the port.
- * a system thread does the wait, and a packet has at most one wait pending.
+ * a system thread does the wait. a packet is idle, waiting, or queued in the port until a thread takes its
+ * completion, and only an idle one takes a new wait. measured on windows 11 with wcp.c of the research repository:
+ * a second wait is c00000ef, cancelling a wait is success, cancelling a queued completion is pending unless it is
+ * asked to be removed, and cancelling an idle packet is c0000120. the thread pool of ntdll waits for the callback
+ * of a wait it could not cancel, so each answer matters.
  */
 typedef struct WAIT_PACKET WAIT_PACKET;
 
@@ -402,9 +482,53 @@ typedef struct PACKET_WAIT {
 struct WAIT_PACKET {
     KSPIN_LOCK Lock;
     PACKET_WAIT *Active;
+    /* the completion in the queue of a port, taken under this lock and then the lock of the port. */
+    IO_COMPLETION_PACKET *Queued;
+    IO_COMPLETION *QueuedPort;
 };
 
 static POBJECT_TYPE WaitPacketObjectType;
+
+/* a thread took the completion out of its port, or the port went: the wait packet is idle again. */
+static void packet_taken(IO_COMPLETION_PACKET *p)
+{
+    WAIT_PACKET *owner = p->Owner;
+    if (!owner)
+        return;
+    KIRQL irql;
+    KeAcquireSpinLock(&owner->Lock, &irql);
+    if (owner->Queued == p) {
+        owner->Queued = nullptr;
+        owner->QueuedPort = nullptr;
+    }
+    KeReleaseSpinLock(&owner->Lock, irql);
+    ObDereferenceObject(owner);
+}
+
+/* queues the completion of a wait packet, which holds it until it is taken. */
+static NTSTATUS queue_owned(WAIT_PACKET *packet, PACKET_WAIT *wait, IO_COMPLETION *port, PVOID key, PVOID apc_context,
+                            NTSTATUS io_status, ULONG_PTR information)
+{
+    IO_COMPLETION_PACKET *p = new_packet(key, apc_context, io_status, information);
+    if (!p)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    KIRQL irql;
+    KeAcquireSpinLock(&packet->Lock, &irql);
+    /* a wait that was cancelled while it was signalled queues nothing. */
+    if (packet->Active != wait || packet->Queued) {
+        KeReleaseSpinLock(&packet->Lock, irql);
+        ExFreePool(p);
+        return wait ? STATUS_CANCELLED : STATUS_INVALID_PARAMETER_1;
+    }
+    packet->Active = nullptr;
+    packet->Queued = p;
+    packet->QueuedPort = port;
+    p->Owner = packet;
+    ObReferenceObject(packet);
+    KeReleaseSpinLock(&packet->Lock, irql);
+    insert_packet(port, p);
+    return STATUS_SUCCESS;
+}
 
 /* ends the pending wait of a packet, and tells whether there was one. */
 static BOOLEAN cancel_wait(WAIT_PACKET *packet)
@@ -432,18 +556,15 @@ static void NTAPI packet_thread(PVOID context)
     KWAIT_BLOCK blocks[2];
     NTSTATUS status = KiWaitObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, blocks);
     WAIT_PACKET *packet = wait->Packet;
-    BOOLEAN post = FALSE;
-    if (status == STATUS_WAIT_0) {
+    if (status == STATUS_WAIT_0 &&
+        queue_owned(packet, wait, wait->Port, wait->Key, wait->ApcContext, wait->IoStatus, wait->Information) ==
+            STATUS_INSUFFICIENT_RESOURCES) {
         KIRQL irql;
         KeAcquireSpinLock(&packet->Lock, &irql);
-        if (packet->Active == wait) {
+        if (packet->Active == wait)
             packet->Active = nullptr;
-            post = TRUE;
-        }
         KeReleaseSpinLock(&packet->Lock, irql);
     }
-    if (post)
-        queue_packet(wait->Port, wait->Key, wait->ApcContext, wait->IoStatus, wait->Information);
     ObDereferenceObject(wait->Target);
     ObDereferenceObject(wait->Port);
     ObDereferenceObject(packet);
@@ -507,9 +628,9 @@ NTSTATUS NTAPI NtAssociateWaitCompletionPacket(HANDLE packet_handle, HANDLE port
         if (!NT_SUCCESS(status))
             goto fail;
     }
-    /* a wait already pending is no place for a second one. */
-    if (packet->Active) {
-        status = STATUS_INVALID_PARAMETER;
+    /* a wait already pending, or a completion not taken yet, is no place for a second one. */
+    if (packet->Active || packet->Queued) {
+        status = STATUS_INVALID_PARAMETER_1;
         goto fail;
     }
     /* an object that is signalled now completes at once. */
@@ -521,7 +642,7 @@ NTSTATUS NTAPI NtAssociateWaitCompletionPacket(HANDLE packet_handle, HANDLE port
             BOOLEAN yes = TRUE;
             KiCopyToUser(already_signaled, &yes, sizeof(yes));
         }
-        status = queue_packet(port, key, apc_context, io_status, information);
+        status = queue_owned(packet, nullptr, port, key, apc_context, io_status, information);
         goto fail;
     }
     PACKET_WAIT *wait = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*wait), KI_TAG('W', 'p', 'W', 't'));
@@ -556,14 +677,50 @@ fail:
     return status;
 }
 
-/* a cancelled wait reports STATUS_CANCELLED, a packet that was queued already STATUS_SUCCESS. */
 NTSTATUS NTAPI NtCancelWaitCompletionPacket(HANDLE packet_handle, BOOLEAN remove_signaled)
 {
     WAIT_PACKET *packet;
     NTSTATUS status = ObReferenceHandle(packet_handle, WaitPacketObjectType, KeGetPreviousMode(), (PVOID *)&packet, nullptr);
     if (!NT_SUCCESS(status))
         return status;
-    status = cancel_wait(packet) ? STATUS_CANCELLED : STATUS_SUCCESS;
+    if (cancel_wait(packet)) {
+        ObDereferenceObject(packet);
+        return STATUS_SUCCESS;
+    }
+    IO_COMPLETION_PACKET *removed = nullptr;
+    IO_COMPLETION *port = nullptr;
+    status = STATUS_CANCELLED;
+    KIRQL irql;
+    KeAcquireSpinLock(&packet->Lock, &irql);
+    IO_COMPLETION_PACKET *queued = packet->Queued;
+    if (queued && !remove_signaled) {
+        status = STATUS_PENDING;
+    } else if (queued) {
+        /* the port lives while the packet names it: a port that goes clears the name under the lock held here. */
+        port = packet->QueuedPort;
+        ULONG64 state = KiAcquireRawLock(&port->Lock);
+        if (queued->Links.Flink) {
+            RemoveEntryList(&queued->Links);
+            port->Count--;
+            removed = queued;
+        }
+        KiReleaseRawLock(&port->Lock, state);
+        if (removed) {
+            ObReferenceObject(port);
+            packet->Queued = nullptr;
+            packet->QueuedPort = nullptr;
+            status = STATUS_SUCCESS;
+        }
+    }
+    KeReleaseSpinLock(&packet->Lock, irql);
+    if (removed) {
+        /* the count of the semaphore that stood for it goes too, unless a thread took it and finds the queue short. */
+        LARGE_INTEGER zero = {};
+        KeWaitForSingleObject(&port->Packets, Executive, KernelMode, FALSE, &zero);
+        ObDereferenceObject(port);
+        ExFreePool(removed);
+        ObDereferenceObject(packet);
+    }
     ObDereferenceObject(packet);
     return status;
 }

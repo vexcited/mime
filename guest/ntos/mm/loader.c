@@ -13,7 +13,6 @@ LIST_ENTRY PsLoadedModuleList = {&PsLoadedModuleList, &PsLoadedModuleList};
 ERESOURCE PsLoadedModuleResource;
 static FAST_MUTEX g_modules_lock;
 static PKLDR_DATA_TABLE_ENTRY g_kernel_module;
-BOOLEAN MiTraceRoutines;
 
 #define MI_MAX_IMPORT_DEPTH 8
 
@@ -100,7 +99,8 @@ static PKLDR_DATA_TABLE_ENTRY module_by_name(const char *name)
         return g_kernel_module;
     for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
         PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-        if (ascii_equal_unicode(name, &m->BaseDllName))
+        /* an image of a file of microsoft's is memory to read, nothing of it runs here. */
+        if (ascii_equal_unicode(name, &m->BaseDllName) && !MiIsSystemImageRecord(m))
             return m;
     }
     return nullptr;
@@ -182,12 +182,23 @@ static PKLDR_DATA_TABLE_ENTRY add_module(PVOID base, SIZE_T size, PVOID entry, P
     m->CheckSum = nt->OptionalHeader.CheckSum;
     m->TimeDateStamp = nt->FileHeader.TimeDateStamp;
     m->SizeOfImageNotRounded = nt->OptionalHeader.SizeOfImage;
-    m->Flags = LDRP_ENTRY_PROCESSED;
+    /* measured on windows 11 26300: the flags of a driver a service loaded. */
+    m->Flags = 0x49104000;
     m->LoadCount = 1;
     ExAcquireFastMutex(&g_modules_lock);
-    InsertTailList(&PsLoadedModuleList, &m->InLoadOrderLinks);
+    InsertHeadList(MiPlaceLoadedModule(m), &m->InLoadOrderLinks);
     ExReleaseFastMutex(&g_modules_lock);
     return m;
+}
+
+void MiLockLoadedModules(void)
+{
+    ExAcquireFastMutex(&g_modules_lock);
+}
+
+void MiUnlockLoadedModules(void)
+{
+    ExReleaseFastMutex(&g_modules_lock);
 }
 
 /* the kernel is the first module, as on windows, under the name windows gives it. */
@@ -195,6 +206,7 @@ void MiInitializeLoadedModules(void)
 {
     ExInitializeFastMutex(&g_modules_lock);
     ExInitializeResourceLite(&PsLoadedModuleResource);
+    MiInitializeSystemImages();
     PVOID base = (PVOID)HalBootInfo->kernel_virt;
     PIMAGE_NT_HEADERS64 nt = image_headers(base);
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\SystemRoot\\system32\\ntoskrnl.exe");
@@ -214,7 +226,7 @@ ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
     ExAcquireFastMutex(&g_modules_lock);
     for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
         PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-        callback(context, index++, m->DllBase, m->SizeOfImage, &m->FullDllName);
+        callback(context, index++, m);
     }
     ExReleaseFastMutex(&g_modules_lock);
     return index;
@@ -222,7 +234,8 @@ ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
 
 BOOLEAN MiIsCodeAddress(ULONG_PTR address)
 {
-    return MiLookupModule(address) != nullptr;
+    PKLDR_DATA_TABLE_ENTRY m = MiLookupModule(address);
+    return m && !MiIsSystemImageRecord(m);
 }
 
 /* image name and offset in the image, which the linker maps give the function for. */
@@ -252,17 +265,6 @@ PVOID MiFindKernelExport(PVOID image_base, const char *name)
     return find_export(image_base, name, 0, FALSE);
 }
 
-/* a stand in for routines the kernel lacks, while finding out which ones a driver looks up. */
-BOOLEAN MiDiscoverRoutines;
-
-static ULONG_PTR NTAPI MiMissingRoutine(void)
-{
-    char caller[96];
-    MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
-    KiLogPrintf("a missing routine was called from %s", caller);
-    return 0;
-}
-
 /* the routines of the kernel and the hal, which mime's kernel holds both of. */
 PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
 {
@@ -274,13 +276,11 @@ PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
         ansi[i] = (char)name->Buffer[i];
     ansi[n] = 0;
     PVOID found = find_export((PVOID)HalBootInfo->kernel_virt, ansi, 0, FALSE);
-    if (!found && MiDiscoverRoutines)
-        found = (PVOID)MiMissingRoutine;
 #ifdef __x86_64__
     if (found && KiIsForeignCaller((ULONG_PTR)__builtin_return_address(0)))
         found = KiForeignImport(found, ansi);
 #endif
-    if (!found || MiTraceRoutines) {
+    if (!found) {
         char caller[96];
         MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
         KiLogPrintf("MmGetSystemRoutineAddress(%s) = %p from %s", ansi, found, caller);
@@ -368,6 +368,10 @@ static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size
         *volume = ~0u;
     ULONG64 file_size;
     status = IoQueryFileSize(file, &file_size);
+    /* a kernel image of microsoft's is never run: for the loader there is no such driver, as before the file was. */
+    const MimeRomEntry *rom = IoGetRomFile(file);
+    if (NT_SUCCESS(status) && rom && rom->genuine)
+        status = STATUS_OBJECT_NAME_NOT_FOUND;
     if (NT_SUCCESS(status) && (file_size == 0 || file_size > 64 * 1024 * 1024))
         status = STATUS_INVALID_IMAGE_FORMAT;
     if (NT_SUCCESS(status)) {
@@ -423,7 +427,7 @@ static PKLDR_DATA_TABLE_ENTRY import_module(const char *dll, ULONG depth, NTSTAT
     RtlInitUnicodeString(&name, path);
     *status = load_image(&name, depth + 1, &m);
     if (*status == STATUS_IMAGE_ALREADY_LOADED)
-        *status = STATUS_SUCCESS;
+        *status = m ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
     if (!NT_SUCCESS(*status)) {
         KiLogPrintf("driver import from %s: %08x", dll, *status);
         return nullptr;
@@ -451,7 +455,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
         PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
         if (RtlEqualUnicodeString(&m->BaseDllName, &leaf_name, TRUE)) {
-            *out = m;
+            *out = MiIsSystemImageRecord(m) ? nullptr : m;
             return STATUS_IMAGE_ALREADY_LOADED;
         }
     }
@@ -526,8 +530,11 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     ULONG64 rom_id;
     BOOLEAN foreign = NT_SUCCESS(status) && !(file_object && MimeFsLockIdentity(file_object, &rom_volume, &rom_id) &&
                                               rom_volume == ~0u);
-    if (foreign)
+    if (foreign) {
         KiNoteForeignImage(base, info.SizeOfImage);
+        /* a driver of another maker walks the list from its first instruction. */
+        MiSyncSystemImages();
+    }
 #endif
     IMAGE_DATA_DIRECTORY imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : nullptr;
@@ -605,14 +612,23 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out)
     return load_image(path, 0, out);
 }
 
+/* an export driver of System32\drivers by its file name, loaded as for a driver that imports from it. */
+NTSTATUS MmLoadExportDriver(const char *name)
+{
+    NTSTATUS status;
+    import_module(name, 0, &status);
+    return status;
+}
+
 /* the image's pages go, the record leaves the list and stays for readers that may still hold it. */
 void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY m)
 {
-    if (!m || m == g_kernel_module)
+    if (!m || m == g_kernel_module || MiIsSystemImageRecord(m))
         return;
     ExAcquireFastMutex(&g_modules_lock);
     RemoveEntryList(&m->InLoadOrderLinks);
     InitializeListHead(&m->InLoadOrderLinks);
+    MiForgetLoadedModule(m);
     ExReleaseFastMutex(&g_modules_lock);
     unpin_file(m);
     KiLogPrintf("unloaded %wZ from %p", &m->FullDllName, m->DllBase);
@@ -651,18 +667,57 @@ static PVOID section_export(PSECTION s, const char *name)
             ULONG func;
             memcpy(&ordinal, AT(exp.AddressOfNameOrdinals + i * 2), 2);
             memcpy(&func, AT(exp.AddressOfFunctions + ordinal * 4), 4);
-            return (PVOID)(s->Image.ImageBase + func);
+            return (PVOID)(s->BasedAddress + func);
         }
     }
     return nullptr;
 #undef AT
 }
 
+/*
+ * ntdll keeps three tables side by side for RtlRetrieveNtUserPfn, which csrss hands to win32k on windows: the ansi
+ * and the unicode window procedures, 24 each, then 18 workers. no export names them. they hold the addresses of a
+ * run of stubs 16 bytes apart of which NtdllDefWindowProc_A is exported: the ansi table starts with the stub 0x80
+ * before it, then itself, then the stub 0x40 before it. seen alike in the ntdll of 26300.9457 and of 26100.9974.
+ */
+NTSTATUS NTAPI PsQueryNtUserPfn(ULONG64 *procedures)
+{
+    static ULONG64 found[MIME_NTUSER_PFN_COUNT];
+    static BOOLEAN done;
+    PSECTION s = PspNativeSystemDll.Section;
+    if (!done && s) {
+#define AT(rva) ((PUCHAR)HalPhysmap(MiSectionPage(s, (rva) >> PAGE_SHIFT)) + ((rva) & (PAGE_SIZE - 1)))
+        ULONG64 def = (ULONG64)section_export(s, "NtdllDefWindowProc_A");
+        ULONG size = ((PIMAGE_NT_HEADERS64)AT((ULONG)((PIMAGE_DOS_HEADER)AT(0))->e_lfanew))->OptionalHeader.SizeOfImage;
+        ULONG last = size - MIME_NTUSER_PFN_COUNT * 8;
+        for (ULONG rva = PAGE_SIZE; def && rva < last && !done; rva += 8) {
+            if (!MiSectionPage(s, rva >> PAGE_SHIFT)) {
+                rva |= PAGE_SIZE - 8;
+                continue;
+            }
+            ULONG64 q[3];
+            for (ULONG k = 0; k < 3; k++)
+                q[k] = MiSectionPage(s, (rva + k * 8) >> PAGE_SHIFT) ? *(PULONG64)AT(rva + k * 8) : 0;
+            /* the pages may hold the addresses of another base, which differs by whole 64 KB. */
+            if (q[1] - q[0] != 0x80 || q[2] - q[0] != 0x40 || ((q[1] ^ def) & 0xffff))
+                continue;
+            for (ULONG k = 0; k < MIME_NTUSER_PFN_COUNT; k++)
+                found[k] = *(PULONG64)AT(rva + k * 8) - q[1] + def;
+            done = TRUE;
+        }
+#undef AT
+    }
+    if (!done)
+        return STATUS_ENTRYPOINT_NOT_FOUND;
+    memcpy(procedures, found, sizeof(found));
+    return STATUS_SUCCESS;
+}
+
 /* the offset of an export of the 32-bit ntdll from its base, or 0. */
 ULONG PspWow64NtdllExport(const char *name)
 {
     PUCHAR at = PspWow64NtdllSection ? section_export(PspWow64NtdllSection, name) : nullptr;
-    return at ? (ULONG)(at - (PUCHAR)PspWow64NtdllSection->Image.ImageBase) : 0;
+    return at ? (ULONG)(at - (PUCHAR)PspWow64NtdllSection->BasedAddress) : 0;
 }
 
 PSP_SYSTEM_DLL PspNativeSystemDll;
@@ -686,7 +741,7 @@ static PSECTION guest_ntdll_section(PCWSTR name)
     return section;
 }
 
-/* creates a system dll's image section once; every process maps it at its preferred base. */
+/* creates a system dll's image section once; every process maps it at the base the section has. */
 static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
 {
     UNICODE_STRING path;
@@ -703,7 +758,7 @@ static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
         KiLogPrintf("invalid %wZ: %08x", &path, status);
         return status;
     }
-    dll->Base = (PVOID)dll->Section->Image.ImageBase;
+    dll->Base = (PVOID)dll->Section->BasedAddress;
     dll->LdrInitializeThunk = section_export(dll->Section, "LdrInitializeThunk");
     dll->RtlUserThreadStart = section_export(dll->Section, "RtlUserThreadStart");
     dll->KiUserExceptionDispatcher = section_export(dll->Section, "KiUserExceptionDispatcher");
@@ -728,6 +783,91 @@ NTSTATUS PspInitializeSystemDll(void)
     if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 && PspX86SystemDll.Section)
         PspX64NtdllSection = guest_ntdll_section(L"\\SystemRoot\\SysX64\\ntdll.dll");
     return STATUS_SUCCESS;
+}
+
+/*
+ * PS_SYSTEM_DLL_INIT_BLOCK, the export LdrSystemDllInitBlock of ntdll that the kernel fills in each process, read from
+ * PspPrepareSystemDllInitBlock of ntoskrnl 26300 and measured on windows 11 with initblk.c of
+ * scratch/dlls/wow in the research repository. the 32-bit ntdll of a wow64 process has a block of the same layout.
+ */
+typedef struct {
+    ULONG Size;
+    ULONG64 SystemDllWowRelocation;
+    ULONG64 SystemDllNativeRelocation;
+    ULONG64 Wow64SharedInformation[16];
+    ULONG RngData;
+    ULONG Flags;
+    ULONG64 MitigationOptionsMap[3];
+    ULONG64 CfgBitMap;
+    ULONG64 CfgBitMapSize;
+    ULONG64 Wow64CfgBitMap;
+    ULONG64 Wow64CfgBitMapSize;
+    ULONG64 MitigationAuditOptionsMap[3];
+    ULONG64 ScpCfgFunctions[7];
+} PS_SYSTEM_DLL_INIT_BLOCK;
+MIME_STATIC_ASSERT(sizeof(PS_SYSTEM_DLL_INIT_BLOCK) == 0x128, "the init block of 26300");
+MIME_STATIC_ASSERT(offsetof(PS_SYSTEM_DLL_INIT_BLOCK, RngData) == 0x98, "the init block of 26300");
+MIME_STATIC_ASSERT(offsetof(PS_SYSTEM_DLL_INIT_BLOCK, CfgBitMap) == 0xB8, "the init block of 26300");
+
+/*
+ * PsWowX86SharedInformation: where the 32-bit ntdll keeps what wow64.dll and the kernel call in it. the same in every
+ * process, since that ntdll has one base.
+ */
+static void wow64_shared_information(ULONG64 info[16])
+{
+    static const char *const names[] = {
+        "LdrInitializeThunk", "KiUserExceptionDispatcher", "KiUserApcDispatcher", "KiUserCallbackDispatcher",
+        "RtlUserThreadStart", "RtlpQueryProcessDebugInformationRemote", nullptr, "LdrSystemDllInitBlock",
+        "RtlpFreezeTimeBias",
+    };
+    memset(info, 0, 16 * sizeof(ULONG64));
+    if (!PspWow64NtdllSection)
+        return;
+    ULONG64 base = PspWow64NtdllSection->BasedAddress;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++) {
+        ULONG offset = names[i] ? PspWow64NtdllExport(names[i]) : 0;
+        info[i] = names[i] ? (offset ? base + offset : 0) : base;
+    }
+}
+
+#define STATUS_REVISION_MISMATCH ((NTSTATUS)0xC0000059L)
+
+static NTSTATUS write_init_block(PVOID at, const PS_SYSTEM_DLL_INIT_BLOCK *block)
+{
+    ULONG size = 0;
+    NTSTATUS status = KiCopyFromUser(&size, at, sizeof(size));
+    if (!NT_SUCCESS(status))
+        return status;
+    if (size != sizeof(*block))
+        return STATUS_REVISION_MISMATCH;
+    return KiCopyToUser(at, block, sizeof(*block));
+}
+
+/*
+ * like PspPrepareSystemDllInitBlock, in the address space of a new process with its system dlls mapped: the block of
+ * the native ntdll, then that of the 32-bit one of a wow64 process. the control flow guard bitmaps and the secure call
+ * functions stay zero, there are none here.
+ */
+NTSTATUS PspPrepareSystemDllInitBlocks(PEPROCESS process, PVOID ntdll32)
+{
+    if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64)
+        return STATUS_SUCCESS;
+    PS_SYSTEM_DLL_INIT_BLOCK block = {};
+    block.Size = sizeof(block);
+    PSECTION native = PspNativeSystemDll.Section;
+    block.SystemDllNativeRelocation = native->BasedAddress - native->Image.ImageBase;
+    if (PspWow64NtdllSection)
+        block.SystemDllWowRelocation = PspWow64NtdllSection->BasedAddress - PspWow64NtdllSection->Image.ImageBase;
+    wow64_shared_information(block.Wow64SharedInformation);
+    memcpy(block.MitigationOptionsMap, process->MitigationMap, sizeof(block.MitigationOptionsMap));
+    block.RngData = (ULONG)MiRandom();
+    PVOID at = section_export(native, "LdrSystemDllInitBlock");
+    NTSTATUS status = at ? write_init_block(at, &block) : STATUS_ENTRYPOINT_NOT_FOUND;
+    if (!NT_SUCCESS(status) || !ntdll32 || !PspIsWow64Process(process))
+        return status;
+    block.RngData = (ULONG)MiRandom();
+    ULONG offset = PspWow64NtdllExport("LdrSystemDllInitBlock");
+    return offset ? write_init_block((PUCHAR)ntdll32 + offset, &block) : STATUS_ENTRYPOINT_NOT_FOUND;
 }
 
 /* the system dll this machine's programs run on, or NULL. */

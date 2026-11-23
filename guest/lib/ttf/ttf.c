@@ -474,6 +474,22 @@ unsigned mime_ttf_gasp(const MimeTtfFont *font, int ppem)
     return 0xffff;
 }
 
+bool mime_ttf_gasp_any(const MimeTtfFont *font, unsigned mask)
+{
+    MimeTtfTable t = font->gasp;
+    if (t.size < 4)
+        return true;
+    uint32_t n = u16(t, 2);
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t r = 4 + 4ull * i;
+        if (!has(t, r, 4))
+            break;
+        if (u16(t, r + 2) & mask)
+            return true;
+    }
+    return false;
+}
+
 /* yMax of a glyph header, 0 when unavailable. */
 static int glyph_top(const MimeTtfFont *font, uint32_t codepoint)
 {

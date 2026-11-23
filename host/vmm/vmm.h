@@ -87,7 +87,6 @@ typedef struct MimeFsHandle {
     uint8_t frozen;        /* MIME_FS_TIME_* this handle no longer updates on its own. */
     bool no_access_update; /* reads leave the access time alone. */
     bool touch_failed;     /* the host refused to set the access time of this file. */
-    bool archived;         /* a write through this handle has put the archive attribute back. */
     int64_t touched_ns;    /* when this handle last set the access time. */
     int append_fd;         /* the file opened to append, once an append asked for it. */
     bool append_tried;
@@ -309,9 +308,10 @@ typedef struct MimeFsTimes {
 } MimeFsTimes;
 /*
  * hidden, system, archive, temporary, offline, not content indexed and no scrub data, which are the ones windows lets
- * a program set, and read only for a directory. the read only of a file is the host's permission to write it.
+ * a program set, read only for a directory, and sparse, which only FSCTL_SET_SPARSE changes. the read only of a file
+ * is the host's permission to write it.
  */
-#define MIME_FS_KEPT_ATTRIBUTES 0x23127u
+#define MIME_FS_KEPT_ATTRIBUTES 0x23327u
 uint64_t mime_fs_now(void);
 int mime_fs_stat(const char *path, MimeFsStat *out);
 int mime_fs_fstat(int fd, MimeFsStat *out);

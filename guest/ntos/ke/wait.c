@@ -273,7 +273,7 @@ void KiInsertTimer(PKTIMER timer, ULONG64 due_interrupt_time);
  */
 static ULONG64 round_to_tick(PKTHREAD thread, KPROCESSOR_MODE mode, ULONG64 due)
 {
-    if (mode != UserMode || !due || ((PEPROCESS)thread->Process)->TimerResolution || (KiOptions & KI_OPT_PRECISE_TIMERS))
+    if (mode != UserMode || !due || ((PEPROCESS)thread->Process)->TimerResolution)
         return due;
     return (due + KI_CLOCK_TICK_HNS - 1) / KI_CLOCK_TICK_HNS * KI_CLOCK_TICK_HNS;
 }

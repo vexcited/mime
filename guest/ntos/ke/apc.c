@@ -98,6 +98,314 @@ void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
         PspTerminateProcess(PsCurrentProcess(), STATUS_ACCESS_VIOLATION);
 }
 
+#ifdef __x86_64__
+/*
+ * the x64 contexts follow windows 11 26300 field by field, measured across threads with scratch/dlls/probe/xctx.c
+ * of the research repository: see KiContextRequest, KiCaptureThreadContext and KiApplyThreadContext.
+ */
+NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
+{
+    PKTHREAD thread = KiCurrentThread();
+    PKTRAP_FRAME frame = thread->TrapFrame;
+    CONTEXT ctx;
+    if ((ULONG_PTR)context & 15)
+        return STATUS_DATATYPE_MISALIGNMENT;
+    if (!NT_SUCCESS(KiCopyFromUser(&ctx, context, sizeof(ctx))))
+        return STATUS_ACCESS_VIOLATION;
+    KI_CONTEXT_REQUEST request;
+    KiContextRequest(ctx.ContextFlags, &request);
+    /*
+     * the frame of the service is the one the thread resumes with: without the integers it keeps the status in rax,
+     * the first argument in rcx, and in r8 to r11 and xmm0 to xmm5 what the frame last held, which a service does
+     * not save.
+     */
+    if ((request.Parts & CONTEXT_INTEGER) != CONTEXT_INTEGER) {
+        frame->Rax = STATUS_SUCCESS;
+        frame->Rcx = frame->R10;
+        frame->R8 = thread->ServiceStale[0];
+        frame->R9 = thread->ServiceStale[1];
+        frame->R10 = thread->ServiceStale[2];
+        frame->R11 = thread->ServiceStale[3];
+    }
+    if ((request.Parts & CONTEXT_FLOATING_POINT) != CONTEXT_FLOATING_POINT)
+        memcpy(frame->Xmm, thread->ServiceStaleXmm, sizeof(thread->ServiceStaleXmm));
+    KiApplyThreadContext(thread, frame, FALSE, &ctx, request.Parts);
+    /* a context that carries extended state resumes with it: a handler may have changed the upper halves. */
+    if (request.Xstate) {
+        KI_USER_XSTATE where;
+        UCHAR state[KI_XSTATE_MAXIMUM];
+        if (NT_SUCCESS(KiProbeUserXstate(context, &where)) && NT_SUCCESS(KiLoadUserXstate(&where, state)))
+            KiRestoreXstate(thread, state);
+    }
+    if (test_alert && !IsListEmpty(&thread->ApcListHead[UserMode]))
+        thread->UserApcPending = TRUE;
+    /* a continue resumes the context as it is, without the instrumentation callback. */
+    thread->InstrumentReturn = FALSE;
+    KiExitToUserMode(frame);
+    KiEnterUserMode(frame);
+}
+
+/*
+ * like PspGetSetContextSpecialApc: a thread that runs is asked for its context by a kernel apc, which it takes the
+ * next time it enters the kernel, at the latest on the processor's next interrupt. the routine reads or writes the
+ * user frame the thread entered with, then wakes the caller.
+ */
+typedef struct CONTEXT_REQUEST {
+    KAPC Apc;
+    KEVENT Done;
+    CONTEXT *Context;
+    ULONG Parts;
+    BOOLEAN Set;
+    BOOLEAN InService;
+    NTSTATUS Status;
+    PUCHAR Xstate; /* the extended state to read or to set with the context, or none. */
+} CONTEXT_REQUEST;
+
+/* a thread in a system service: one that never ran has the frame of its start, which is none. */
+static BOOLEAN frame_in_service(PETHREAD thread, PKTRAP_FRAME frame)
+{
+    return !thread->FirstEntryContext && KI_TRAP_IN_SERVICE(frame);
+}
+
+static void apply_context(PETHREAD thread, PKTRAP_FRAME frame, const CONTEXT *ctx, ULONG parts)
+{
+    /* the caller's own frame is that of this service: it returns with its status and what a service leaves. */
+    BOOLEAN in_service = frame_in_service(thread, frame);
+    KiApplyThreadContext(&thread->Tcb, frame, in_service, ctx, parts);
+    if (in_service)
+        thread->Tcb.ContextSetInService |= KI_CONTEXT_SET_ANY;
+}
+
+static void NTAPI context_apc(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, PVOID *arg1, PVOID *arg2)
+{
+    CONTEXT_REQUEST *r = CONTAINING_RECORD(apc, CONTEXT_REQUEST, Apc);
+    PKTHREAD thread = KiCurrentThread();
+    PKTRAP_FRAME frame = thread->TrapFrame;
+    if (!frame || !KI_TRAP_FROM_USER(frame)) {
+        r->Status = STATUS_UNSUCCESSFUL;
+    } else {
+        r->Status = STATUS_SUCCESS;
+        r->InService = frame_in_service((PETHREAD)thread, frame);
+        if (r->Set) {
+            /* the thread itself is in the service, so its frame is marked like one another thread wrote. */
+            KiApplyThreadContext(thread, frame, r->InService, r->Context, r->Parts);
+            if (r->InService)
+                thread->ContextSetInService |= KI_CONTEXT_SET_ANY;
+            if (r->Xstate)
+                KiRestoreXstate(thread, r->Xstate);
+        } else {
+            KiCaptureThreadContext(thread, frame, r->InService, r->Context);
+            if (r->Xstate)
+                KiCaptureXstate(thread, ~0ull, r->Xstate);
+        }
+    }
+    KeSetEvent(&r->Done, 0, FALSE);
+}
+
+static NTSTATUS context_by_apc(PETHREAD thread, CONTEXT *context, ULONG parts, BOOLEAN set, PUCHAR xstate,
+                               BOOLEAN *in_service)
+{
+    CONTEXT_REQUEST r;
+    KeInitializeEvent(&r.Done, NotificationEvent, FALSE);
+    r.Context = context;
+    r.Parts = parts;
+    r.Set = set;
+    r.Xstate = xstate;
+    r.InService = FALSE;
+    r.Status = STATUS_UNSUCCESSFUL;
+    KeInitializeApc(&r.Apc, &thread->Tcb, OriginalApcEnvironment, context_apc, nullptr, nullptr, KernelMode, nullptr);
+    if (!KeInsertQueueApc(&r.Apc, nullptr, nullptr, 0))
+        return STATUS_UNSUCCESSFUL;
+    PVOID objects[2] = {&r.Done, thread};
+    NTSTATUS status = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, nullptr);
+    if (in_service)
+        *in_service = r.InService;
+    return status == STATUS_WAIT_0 ? r.Status : STATUS_UNSUCCESSFUL;
+}
+
+/* the frame a thread that does not run left its user state in, or none when it runs and must be asked. */
+static PKTRAP_FRAME stopped_frame(PETHREAD thread, NTSTATUS *status)
+{
+    PKTRAP_FRAME frame = thread->Tcb.TrapFrame;
+    if (!frame)
+        *status = STATUS_UNSUCCESSFUL;
+    return frame && (thread == PsCurrentThread() || thread->Tcb.State != Running) ? frame : nullptr;
+}
+
+/* a thread that ended has no context: windows answers both ways with the same status. */
+static NTSTATUS wait_for_context(PETHREAD thread)
+{
+    NTSTATUS status = PspWaitForSuspension(thread);
+    return status == STATUS_THREAD_IS_TERMINATING ? STATUS_UNSUCCESSFUL : status;
+}
+
+static NTSTATUS get_context(PETHREAD thread, PCONTEXT context)
+{
+    if ((ULONG_PTR)context & 15)
+        return STATUS_DATATYPE_MISALIGNMENT;
+    /* like PspGetContext, only the parts the flags ask for are written, the rest of the caller's record stays. */
+    CONTEXT out;
+    NTSTATUS status = KiCopyFromUser(&out, context, sizeof(out));
+    if (!NT_SUCCESS(status))
+        return status;
+    KI_CONTEXT_REQUEST request;
+    status = KiContextRequest(out.ContextFlags, &request);
+    if (!NT_SUCCESS(status))
+        return status;
+    KI_USER_XSTATE where;
+    UCHAR area[KI_XSTATE_MAXIMUM];
+    PUCHAR xstate = nullptr;
+    if (request.Xstate) {
+        status = KiProbeUserXstate(context, &where);
+        if (!NT_SUCCESS(status))
+            return status;
+        xstate = area;
+    }
+    status = wait_for_context(thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    CONTEXT ctx;
+    BOOLEAN in_service = FALSE, never_ran = FALSE;
+    ULONG64 state = KiAcquireDispatcherLock();
+    PKTRAP_FRAME frame = stopped_frame(thread, &status);
+    if (frame) {
+        never_ran = thread->FirstEntryContext != 0;
+        in_service = frame_in_service(thread, frame);
+        KiCaptureThreadContext(&thread->Tcb, frame, in_service, &ctx);
+        if (xstate && thread != PsCurrentThread())
+            KiCaptureXstate(&thread->Tcb, ~0ull, xstate);
+    }
+    KiReleaseDispatcherLock(state);
+    if (frame && xstate && thread == PsCurrentThread())
+        KiCaptureXstate(&thread->Tcb, ~0ull, xstate);
+    if (NT_SUCCESS(status) && !frame)
+        status = context_by_apc(thread, &ctx, request.Parts, FALSE, xstate, &in_service);
+    if (!NT_SUCCESS(status))
+        return status;
+    KiMergeContext(&out, &ctx, request.Parts);
+    out.ContextFlags = request.Out;
+    if (request.Report)
+        out.ContextFlags |= CONTEXT_EXCEPTION_REPORTING |
+                            (never_ran ? CONTEXT_EXCEPTION_ACTIVE : in_service ? CONTEXT_SERVICE_ACTIVE : 0);
+    status = KiCopyToUser(context, &out, sizeof(out));
+    if (NT_SUCCESS(status) && xstate)
+        status = KiStoreUserXstate(&where, xstate);
+    return status;
+}
+
+/* the caller's own user context, or that of another thread, stopped or asked by an apc. */
+NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_GET_CONTEXT, &thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = get_context(thread, context);
+    ObDereferenceObject(thread);
+    return status;
+}
+
+static NTSTATUS set_context(PETHREAD thread, PCONTEXT context)
+{
+    if ((ULONG_PTR)context & 15)
+        return STATUS_DATATYPE_MISALIGNMENT;
+    CONTEXT ctx;
+    NTSTATUS status = KiCopyFromUser(&ctx, context, sizeof(ctx));
+    if (!NT_SUCCESS(status))
+        return status;
+    KI_CONTEXT_REQUEST request;
+    KiContextRequest(ctx.ContextFlags, &request);
+    UCHAR area[KI_XSTATE_MAXIMUM];
+    PUCHAR xstate = nullptr;
+    if (request.Xstate) {
+        KI_USER_XSTATE where;
+        status = KiProbeUserXstate(context, &where);
+        if (!NT_SUCCESS(status))
+            return status;
+        /* the shadow stack state is not a thread's to set. */
+        if (KiUserXstateDenied(&where))
+            return STATUS_SET_CONTEXT_DENIED;
+        status = KiLoadUserXstate(&where, area);
+        if (!NT_SUCCESS(status))
+            return status;
+        xstate = area;
+    }
+    status = wait_for_context(thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG64 state = KiAcquireDispatcherLock();
+    PKTRAP_FRAME frame = stopped_frame(thread, &status);
+    if (frame) {
+        apply_context(thread, frame, &ctx, request.Parts);
+        if (xstate && thread != PsCurrentThread())
+            KiRestoreXstate(&thread->Tcb, xstate);
+    }
+    KiReleaseDispatcherLock(state);
+    if (frame && xstate && thread == PsCurrentThread())
+        KiRestoreXstate(&thread->Tcb, xstate);
+    if (NT_SUCCESS(status) && !frame)
+        status = context_by_apc(thread, &ctx, request.Parts, TRUE, xstate, nullptr);
+    return status;
+}
+
+NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_SET_CONTEXT, &thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    /*
+     * the caller's own context is the frame of this service, measured on windows 11 26300 with
+     * scratch/dlls/probe/icb.c of the research repository: it returns there with its status in rax and what a
+     * service leaves in the volatile registers, through the instrumentation callback, and a trap flag steps at once.
+     */
+    status = set_context(thread, context);
+    ObDereferenceObject(thread);
+    return status;
+}
+
+/*
+ * the whole user context of a thread into a kernel record, as NtGetContextThread reads it, for the wow64 context
+ * classes: what PspGetContextThreadInternal gives PspWow64GetContextThread. report gets the context flags that tell
+ * whether the thread is in a service or never ran.
+ */
+NTSTATUS PsGetUserContextThread(PETHREAD thread, CONTEXT *ctx, PULONG report)
+{
+    NTSTATUS status = wait_for_context(thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    BOOLEAN in_service = FALSE, never_ran = FALSE;
+    ULONG64 state = KiAcquireDispatcherLock();
+    PKTRAP_FRAME frame = stopped_frame(thread, &status);
+    if (frame) {
+        never_ran = thread->FirstEntryContext != 0;
+        in_service = frame_in_service(thread, frame);
+        KiCaptureThreadContext(&thread->Tcb, frame, in_service, ctx);
+    }
+    KiReleaseDispatcherLock(state);
+    if (NT_SUCCESS(status) && !frame)
+        status = context_by_apc(thread, ctx, CONTEXT_ALL, FALSE, nullptr, &in_service);
+    ctx->ContextFlags = CONTEXT_ALL;
+    *report = CONTEXT_EXCEPTION_REPORTING | (never_ran ? CONTEXT_EXCEPTION_ACTIVE : in_service ? CONTEXT_SERVICE_ACTIVE : 0);
+    return status;
+}
+
+/* the parts of a context a thread takes from a kernel record, as NtSetContextThread gives them. */
+NTSTATUS PsSetUserContextThread(PETHREAD thread, const CONTEXT *ctx, ULONG parts)
+{
+    NTSTATUS status = wait_for_context(thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG64 state = KiAcquireDispatcherLock();
+    PKTRAP_FRAME frame = stopped_frame(thread, &status);
+    if (frame)
+        apply_context(thread, frame, ctx, parts);
+    KiReleaseDispatcherLock(state);
+    if (NT_SUCCESS(status) && !frame)
+        status = context_by_apc(thread, (CONTEXT *)ctx, parts, TRUE, nullptr, nullptr);
+    return status;
+}
+#else
 NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
 {
     PKTHREAD thread = KiCurrentThread();
@@ -129,6 +437,8 @@ typedef struct CONTEXT_REQUEST {
     ULONG Flags;
     BOOLEAN Set;
     NTSTATUS Status;
+    PUCHAR Xstate; /* x64: the extended state to read or to set with the context, or none. */
+    ULONG64 Asked;
 } CONTEXT_REQUEST;
 
 static void NTAPI context_apc(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *context, PVOID *arg1, PVOID *arg2)
@@ -149,17 +459,25 @@ static void NTAPI context_apc(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *contex
             if (debug)
                 KiGetThreadDebug(KiCurrentThread(), r->Context);
         }
+#ifdef __x86_64__
+        if (r->Xstate && r->Set)
+            KiRestoreXstate(KiCurrentThread(), r->Xstate);
+        else if (r->Xstate)
+            KiCaptureXstate(KiCurrentThread(), r->Asked, r->Xstate);
+#endif
     }
     KeSetEvent(&r->Done, 0, FALSE);
 }
 
-static NTSTATUS context_by_apc(PETHREAD thread, CONTEXT *context, ULONG flags, BOOLEAN set)
+static NTSTATUS context_by_apc(PETHREAD thread, CONTEXT *context, ULONG flags, BOOLEAN set, PUCHAR xstate, ULONG64 asked)
 {
     CONTEXT_REQUEST r;
     KeInitializeEvent(&r.Done, NotificationEvent, FALSE);
     r.Context = context;
     r.Flags = flags;
     r.Set = set;
+    r.Xstate = xstate;
+    r.Asked = asked;
     r.Status = STATUS_UNSUCCESSFUL;
     KeInitializeApc(&r.Apc, &thread->Tcb, OriginalApcEnvironment, context_apc, nullptr, nullptr, KernelMode, nullptr);
     if (!KeInsertQueueApc(&r.Apc, nullptr, nullptr, 0))
@@ -189,6 +507,16 @@ NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
     CONTEXT out;
     status = KiCopyFromUser(&out, context, sizeof(out));
     ULONG flags = out.ContextFlags;
+    /* x64: the extended state goes with a context that asks for it, the features its area names. */
+    PUCHAR xstate = nullptr;
+    ULONG64 asked = 0;
+#ifdef __x86_64__
+    UCHAR area[KI_XSTATE_MAXIMUM];
+    if (NT_SUCCESS(status) && (flags & CONTEXT_AMD64_XSTATE) == CONTEXT_AMD64_XSTATE && KiReadUserXstate(context, area)) {
+        xstate = area;
+        asked = ((XSAVE_AREA_HEADER *)area)->Mask;
+    }
+#endif
     if (NT_SUCCESS(status))
         status = PspWaitForSuspension(thread);
     CONTEXT ctx;
@@ -199,14 +527,26 @@ NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
             KiTrapFrameToContext(frame, &ctx, flags & CONTEXT_ALL);
             if ((flags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS)
                 KiGetThreadDebug(&thread->Tcb, &ctx);
+#ifdef __x86_64__
+            if (xstate && thread != PsCurrentThread())
+                KiCaptureXstate(&thread->Tcb, asked, xstate);
+#endif
         }
         KiReleaseDispatcherLock(state);
+#ifdef __x86_64__
+        if (frame && xstate && thread == PsCurrentThread())
+            KiCaptureXstate(&thread->Tcb, asked, xstate);
+#endif
         if (NT_SUCCESS(status) && !frame)
-            status = context_by_apc(thread, &ctx, flags, FALSE);
+            status = context_by_apc(thread, &ctx, flags, FALSE, xstate, asked);
     }
     if (NT_SUCCESS(status)) {
         KiMergeContext(&out, &ctx, flags);
         status = KiCopyToUser(context, &out, sizeof(out));
+#ifdef __x86_64__
+        if (NT_SUCCESS(status) && xstate)
+            KiWriteUserXstate(context, xstate);
+#endif
     }
     ObDereferenceObject(thread);
     return status;
@@ -220,6 +560,13 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
         return status;
     CONTEXT ctx;
     status = KiCopyFromUser(&ctx, context, sizeof(ctx));
+    PUCHAR xstate = nullptr;
+#ifdef __x86_64__
+    UCHAR area[KI_XSTATE_MAXIMUM];
+    if (NT_SUCCESS(status) && (ctx.ContextFlags & CONTEXT_AMD64_XSTATE) == CONTEXT_AMD64_XSTATE &&
+        KiReadUserXstate(context, area))
+        xstate = area;
+#endif
     if (NT_SUCCESS(status))
         status = PspWaitForSuspension(thread);
     PKTRAP_FRAME frame = nullptr;
@@ -232,10 +579,18 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
                 KiSetThreadDebug(&thread->Tcb, &ctx);
             if (thread != PsCurrentThread() && !thread->FirstEntryContext && KI_TRAP_IN_SERVICE(frame))
                 thread->Tcb.ContextSetInService = TRUE;
+#ifdef __x86_64__
+            if (xstate && thread != PsCurrentThread())
+                KiRestoreXstate(&thread->Tcb, xstate);
+#endif
         }
         KiReleaseDispatcherLock(state);
+#ifdef __x86_64__
+        if (frame && xstate && thread == PsCurrentThread())
+            KiRestoreXstate(&thread->Tcb, xstate);
+#endif
         if (NT_SUCCESS(status) && !frame)
-            status = context_by_apc(thread, &ctx, ctx.ContextFlags, TRUE);
+            status = context_by_apc(thread, &ctx, ctx.ContextFlags, TRUE, xstate, 0);
     }
     /* the caller's own registers resume at once; its breakpoints alone take effect without, and it gets the status. */
     if (NT_SUCCESS(status) && frame && thread == PsCurrentThread() && (ctx.ContextFlags & 0xB)) {
@@ -246,6 +601,8 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
     ObDereferenceObject(thread);
     return status;
 }
+
+#endif
 
 NTSTATUS NTAPI NtTestAlert(void)
 {
@@ -264,17 +621,17 @@ NTSTATUS NTAPI NtTestAlert(void)
         thread->Alerted[UserMode] = FALSE;
         return STATUS_ALERTED;
     }
-    /* the status survives apc delivery, so the caller learns that apcs ran. */
-    return apcs ? STATUS_USER_APC : STATUS_SUCCESS;
+    /* like windows, the apcs run as the service returns and its status tells nothing of them. */
+    return STATUS_SUCCESS;
 }
+
+/* every exception dispatched since boot, which SystemExceptionInformation tells. */
+volatile LONG KeExceptionDispatchCount;
 
 /* first chance: hand the exception to ntdll!KiUserExceptionDispatcher. */
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame)
 {
-    extern BOOLEAN KiTraceUserExceptions;
-    if (KiTraceUserExceptions)
-        KiLogPrintf("dispatch %08x at %p to thread %u of %s", record->ExceptionCode, record->ExceptionAddress,
-                    (ULONG)(ULONG_PTR)PsGetCurrentThreadId(), PsCurrentProcess()->ImageFileName);
+    __atomic_add_fetch(&KeExceptionDispatchCount, 1, __ATOMIC_RELAXED);
     PPSP_SYSTEM_DLL dll = current_system_dll();
     if (!dll || !dll->KiUserExceptionDispatcher)
         return FALSE;
@@ -291,6 +648,11 @@ NTSTATUS NTAPI NtRaiseException(PEXCEPTION_RECORD record, PCONTEXT context, BOOL
     PKTHREAD thread = KiCurrentThread();
     PKTRAP_FRAME frame = thread->TrapFrame;
     KiContextToTrapFrame(&ctx, frame, CONTEXT_FULL, UserMode);
+#ifdef __x86_64__
+    KiNativeCodeSegment(thread, frame, CONTEXT_FULL);
+#endif
+    if (!first_chance)
+        __atomic_add_fetch(&KeExceptionDispatchCount, 1, __ATOMIC_RELAXED);
     if (first_chance && KiDispatchUserException(&rec, frame)) {
         KiExitToUserMode(frame);
         KiEnterUserMode(frame);

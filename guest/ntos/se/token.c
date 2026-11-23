@@ -91,6 +91,12 @@ ULONG SepIntegrityRid(const TOKEN *t)
     return t->IntegrityIndex < 0 ? 0 : sid_rid(t->Groups[t->IntegrityIndex].Sid);
 }
 
+/* the level of any token, for the label of what it is the token of. */
+ULONG SeTokenIntegrityRid(PVOID token)
+{
+    return SepIntegrityRid(token);
+}
+
 /* ------------------------------------------------------------------ privileges */
 
 static ULONG64 privilege_bit(ULONG luid)
@@ -182,24 +188,24 @@ static BOOLEAN token_groups(PTOKEN t, const GROUP_SPEC *user, const GROUP_SPEC *
     return TRUE;
 }
 
-/* an acl of two aces granting everything to the given sids. */
-static void token_dacl(PTOKEN t, const void *first, const void *second)
+/* an acl of an ace granting everything to the first sid, the given rights to the second, and read and execute to a third. */
+static void token_dacl(PTOKEN t, const void *first, const void *second, ULONG second_rights, const void *reader)
 {
     ULONG a = SepSidLength(first), b = SepSidLength(second);
-    ULONG size = 8 + (8 + a) + (8 + b);
+    ULONG size = 8 + (8 + a) + (8 + b) + (reader ? 8 + SepSidLength(reader) : 0);
     PUCHAR acl = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, TAG_ACL);
     if (!acl)
         return;
     acl[0] = 2;
     *(PUSHORT)(acl + 2) = (USHORT)size;
-    *(PUSHORT)(acl + 4) = 2;
+    *(PUSHORT)(acl + 4) = reader ? 3 : 2;
     PUCHAR ace = acl + 8;
-    const void *sids[2] = {first, second};
-    for (int i = 0; i < 2; i++) {
+    const void *sids[3] = {first, second, reader};
+    for (int i = 0; i < (reader ? 3 : 2); i++) {
         ULONG length = SepSidLength(sids[i]);
         ace[0] = 0; /* ACCESS_ALLOWED_ACE_TYPE. */
         *(PUSHORT)(ace + 2) = (USHORT)(8 + length);
-        *(PULONG)(ace + 4) = 0x10000000; /* GENERIC_ALL. */
+        *(PULONG)(ace + 4) = i == 2 ? 0xA0000000 : i == 1 ? second_rights : 0x10000000; /* GENERIC_READ, GENERIC_EXECUTE, GENERIC_ALL. */
         memcpy(ace + 8, sids[i], length);
         ace += 8 + length;
     }
@@ -223,8 +229,10 @@ static const ULONG g_admin_privileges[] = {5, 8, 9, 10, 11, 12, 13, 14, 15, 17, 
                                           33, 34, 35, 36};
 static const ULONG g_admin_enabled[] = {23, 29, 30};
 
-static const ULONG g_system_privileges[] = {2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                                           25, 28, 29, 30, 32, 33, 34, 35, 36};
+/* the system's privileges and the ones it has enabled, as smss.exe holds them on windows 11. */
+static const ULONG g_system_privileges[] = {2,  3,  4,  5,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                           19, 20, 21, 22, 23, 25, 28, 29, 30, 31, 32, 33, 34, 35, 36};
+static const ULONG g_system_enabled[] = {4, 7, 11, 13, 14, 15, 16, 20, 21, 23, 29, 30, 33, 34, 35, 36};
 
 #define LOGON_SESSION_ID 0x3E8D2
 #define SYSTEM_LUID 0x3E7
@@ -234,7 +242,7 @@ static PTOKEN make_system_token(void)
 {
     static const GROUP_SPEC user = {5, 1, {18}, 0};
     static const GROUP_SPEC groups[] = {
-        {5, 2, {32, 544}, SE_GROUP_NORMAL | SE_GROUP_OWNER},
+        {5, 2, {32, 544}, (SE_GROUP_NORMAL | SE_GROUP_OWNER) & ~SE_GROUP_MANDATORY},
         {1, 1, {0}, SE_GROUP_NORMAL},
         {5, 1, {11}, SE_GROUP_NORMAL},
         {16, 1, {0x4000}, SE_GROUP_LABEL},
@@ -250,7 +258,7 @@ static PTOKEN make_system_token(void)
     t->MandatoryPolicy = 1;
     t->Flags = TOKEN_VIRTUALIZE_ALLOWED | TOKEN_NOT_LOW;
     t->Present = privilege_set(g_system_privileges, RTL_NUMBER_OF(g_system_privileges));
-    t->Enabled = t->EnabledByDefault = t->Present & ~privilege_bit(2);
+    t->Enabled = t->EnabledByDefault = privilege_set(g_system_enabled, RTL_NUMBER_OF(g_system_enabled));
     if (!token_groups(t, &user, groups, RTL_NUMBER_OF(groups))) {
         ObDereferenceObject(t);
         return nullptr;
@@ -258,14 +266,18 @@ static PTOKEN make_system_token(void)
     t->OwnerIndex = 1; /* the administrators group owns what the system creates. */
     memcpy(t->PrimaryGroup, t->Groups[0].Sid, SepSidLength(t->Groups[0].Sid));
     static const UCHAR system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
-    token_dacl(t, system_sid, t->Groups[1].Sid);
+    /* measured: administrators read, execute and read the descriptor of what the system makes. */
+    token_dacl(t, system_sid, t->Groups[1].Sid, 0xA0020000, nullptr);
     return t;
 }
 
 /* the logged on user: filtered when limited, whole when elevated. */
 static PTOKEN make_user_token(BOOLEAN elevated)
 {
-    static const GROUP_SPEC common[] = {
+    /* as windows 11 26300 makes it for a local administrator, measured with scratch/dlls/probe/token.c. */
+    GROUP_SPEC common[] = {
+        {5, 5, {21, HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2], 513},
+         SE_GROUP_NORMAL},                                              /* None, the group of the machine's users */
         {1, 1, {0}, SE_GROUP_NORMAL},                                   /* Everyone */
         {5, 1, {114}, SE_GROUP_USE_FOR_DENY_ONLY},                      /* Local account and member of Administrators */
         {5, 2, {32, 544}, SE_GROUP_USE_FOR_DENY_ONLY},                  /* BUILTIN\Administrators */
@@ -283,19 +295,28 @@ static PTOKEN make_user_token(BOOLEAN elevated)
     GROUP_SPEC groups[RTL_NUMBER_OF(common)];
     memcpy(groups, common, sizeof(common));
     if (elevated) {
-        groups[1].Attributes = SE_GROUP_NORMAL;
-        groups[2].Attributes = SE_GROUP_NORMAL | SE_GROUP_OWNER;
-        groups[12].Sub[0] = 0x3000; /* High Mandatory Level */
+        groups[2].Attributes = SE_GROUP_NORMAL;
+        groups[3].Attributes = SE_GROUP_NORMAL | SE_GROUP_OWNER;
+        groups[13].Sub[0] = 0x3000; /* High Mandatory Level */
     }
     GROUP_SPEC user = {5, 5, {21, HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2], 1001}, 0};
     PTOKEN t = token_new();
     if (!t)
         return nullptr;
-    memcpy(t->Source, "User32  ", 8);
+    /* measured on windows 11 26300: seven characters and a nul, then a luid the logon took, the same for both tokens. */
+    static ULONG64 source;
+    if (!source)
+        source = SepAllocateLuid();
+    memcpy(t->Source, "User32 ", 8);
+    memcpy(t->Source + 8, &source, sizeof(source));
     t->AuthenticationId = LOGON_SESSION_ID;
     t->Type = TokenPrimary;
     t->SessionId = 1;
-    t->MandatoryPolicy = 1;
+    /* no write up, and a new process takes the lower of the levels of its token and its image. */
+    t->MandatoryPolicy = 3;
+    /* the logon came from the system's session, and the token has a page for its owner group and acl. */
+    t->Origin = SYSTEM_LUID;
+    t->DynamicCharged = 0x1000;
     t->ElevationType = elevated ? SEP_ELEVATION_FULL : SEP_ELEVATION_LIMITED;
     t->Flags = TOKEN_VIRTUALIZE_ALLOWED | TOKEN_NOT_LOW | (elevated ? 0 : TOKEN_IS_FILTERED);
     if (elevated) {
@@ -310,11 +331,11 @@ static PTOKEN make_user_token(BOOLEAN elevated)
         return nullptr;
     }
     /* the owner is the user, or the administrators when elevated. */
-    t->OwnerIndex = elevated ? 3 : 0;
+    t->OwnerIndex = elevated ? 4 : 0;
     ULONG primary[5] = {21, HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2], 513};
     SepMakeSid(t->PrimaryGroup, 5, 5, primary); /* None */
     UCHAR system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
-    token_dacl(t, elevated ? t->Groups[3].Sid : t->Groups[0].Sid, system_sid);
+    token_dacl(t, elevated ? t->Groups[4].Sid : t->Groups[0].Sid, system_sid, 0x10000000, t->Groups[11].Sid);
     return t;
 }
 
@@ -821,6 +842,20 @@ PTOKEN SepCreateElevatedUserToken(void)
 }
 
 /* a process's session is its token's. */
+/*
+ * the logon session RtlEncryptMemory's same logon option keys by: the one of the token the calling thread acts with,
+ * so a server that impersonates its client reads what the client sealed.
+ */
+ULONG64 SepTokenAuthenticationId(PEPROCESS process)
+{
+    PETHREAD thread = PsCurrentThread();
+    ExAcquireFastMutex(&SeLock);
+    PTOKEN t = process == PsCurrentProcess() && thread->ImpersonationToken ? thread->ImpersonationToken : process->Token;
+    ULONG64 id = t ? t->AuthenticationId : 0;
+    ExReleaseFastMutex(&SeLock);
+    return id;
+}
+
 ULONG SepTokenSessionId(PEPROCESS process)
 {
     ExAcquireFastMutex(&SeLock);

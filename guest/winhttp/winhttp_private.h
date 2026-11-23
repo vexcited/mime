@@ -59,8 +59,9 @@ typedef struct WH_CONN {
     DWORD Start;
     DWORD End;
     DWORD Size;
-    /* tls. */
+    /* tls, with the credential of the server's slot it holds a reference on. */
     BOOL Tls;
+    struct WH_CRED *Cred;
     CredHandle Credentials;
     CtxtHandle Context;
     DWORD HeaderSize;
@@ -97,6 +98,9 @@ typedef struct WH_OBJECT {
     DWORD DisableFeatures;
     DWORD SecurityFlags;
     DWORD SecureProtocols;
+    /* WINHTTP_OPTION_CLIENT_CERT_CONTEXT: set at all, and the certificate, none for WINHTTP_NO_CLIENT_CERT_CONTEXT. */
+    BOOL ClientCertSet;
+    const void *ClientCert;
     DWORD ReadBufferSize;
     DWORD WriteBufferSize;
     PWSTR Agent;
@@ -109,6 +113,8 @@ typedef struct WH_OBJECT {
     DWORD MaxConnsPer10Server;
     WH_CONN *Idle;
     DWORD IdleCount;
+    /* the schannel credential of each server, webio's SSL credential slots. */
+    struct WH_CRED_SLOT *CredSlots;
     /* connection. */
     PWSTR Server;
     INTERNET_PORT Port;
@@ -156,6 +162,8 @@ typedef struct WH_OBJECT {
     DWORD MemoryOffset;
     DWORD Redirects;
     BOOL UpgradeRequested;
+    /* option 207, the upgrade to a protocol of the program, which excludes the websocket one. */
+    BOOL ProtocolRequested;
     /* serialize asynchronous operations on the request worker. */
     HANDLE Worker;
     HANDLE Wake;
@@ -235,7 +243,12 @@ BOOL WhConnAppend(WH_CONN *conn, const void *data, DWORD size);
 DWORD WhConnRecv(WH_CONN *conn, void *data, DWORD size, DWORD *got, int timeout);
 
 /* tls.c. */
-DWORD WhTlsHandshake(WH_CONN *conn, LPCWSTR host, DWORD security_flags, int timeout, DWORD *failure);
+DWORD WhTlsHandshake(WH_OBJECT *session, WH_CONN *conn, LPCWSTR host, DWORD security_flags, DWORD protocols,
+                     BOOL cert_set, const void *cert, int timeout, DWORD *failure);
+/* the credentials a session keeps for its servers. */
+void WhTlsSessionCleanup(WH_OBJECT *session);
+const void *WhTlsCertDuplicate(const void *cert);
+void WhTlsCertFree(const void *cert);
 DWORD WhTlsSend(WH_CONN *conn, const void *data, DWORD size, int timeout);
 DWORD WhTlsFill(WH_CONN *conn, int timeout);
 void WhTlsClose(WH_CONN *conn);
@@ -248,6 +261,52 @@ BOOL WhReadDefaultProxy(WINHTTP_PROXY_INFO *info);
 /* select the URL and scheme proxy; FALSE means direct connection. */
 BOOL WhPickProxy(WH_OBJECT *request, LPCWSTR host, BOOL secure, PWSTR proxy_host, DWORD capacity,
                  INTERNET_PORT *proxy_port);
+
+/* automatic proxy of a url, by the entries WinHttpFreeProxyResult frees. */
+DWORD WhAutoProxy(LPCWSTR url, const WINHTTP_AUTOPROXY_OPTIONS *options, WINHTTP_PROXY_RESULT *result);
+BOOL WhValidAutoProxyOptions(const WINHTTP_AUTOPROXY_OPTIONS *options);
+
+/* internal.c. */
+DWORD WhReferenceOfType(HINTERNET handle, DWORD type, WH_OBJECT **object);
+void WhNotifyProxyConfigChange(void);
+
+/* settings.c: the proxy settings wininet and winhttp exchange, whose strings are task memory. */
+typedef struct {
+    DWORD StructSize;
+    DWORD Flags;
+    DWORD CurrentSettingsVersion;
+    PWSTR ConnectionName;
+    PWSTR Proxy;
+    PWSTR ProxyBypass;
+    PWSTR AutoconfigUrl;
+    PWSTR AutoconfigSecondaryUrl;
+    DWORD AutoDiscoveryFlags;
+    PWSTR LastKnownGoodAutoConfigUrl;
+    DWORD AutoconfigReloadDelayMins;
+    FILETIME LastKnownDetectTime;
+    DWORD DetectedInterfaceIpCount;
+    PDWORD DetectedInterfaceIp;
+    DWORD NetworkKeyCount;
+    PVOID NetworkKeys;
+} WH_PROXY_SETTINGS;
+
+#define WH_OPTION_UPGRADE_TO_PROTOCOL 207
+#define WH_PROXY_SETTINGS_SIZE ((DWORD)sizeof(WH_PROXY_SETTINGS))
+#define WH_NETWORK_KEY_SIZE 128
+
+#define WH_SETTINGS_DIRECT 0x1
+#define WH_SETTINGS_PROXY 0x2
+#define WH_SETTINGS_CONFIG_URL 0x4
+#define WH_SETTINGS_AUTO_DETECT 0x8
+
+void *WhTaskAlloc(SIZE_T size);
+void WhTaskFree(void *memory);
+/* a copy in task memory, nothing for no string. */
+DWORD WhTaskDupW(LPCWSTR text, PWSTR *copy);
+void WhFreeProxySettings(WH_PROXY_SETTINGS *settings);
+DWORD WhCopyProxySettings(const WH_PROXY_SETTINGS *from, WH_PROXY_SETTINGS *to);
+DWORD WhReadProxySettings(LPCWSTR connection, BOOL fall_back, BOOL auto_discover, DWORD *version, BOOL *defaults,
+                          WH_PROXY_SETTINGS *settings);
 
 /* websocket.c. */
 void WhWebSocketReleased(WH_OBJECT *socket);

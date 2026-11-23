@@ -291,7 +291,8 @@ NTSYSAPI void NTAPI RtlDeactivateActivationContextUnsafeFast(
 /*
  * mime's own: builds activation context data from a manifest for CreateActCtx, the job of sxs.dll inside csrss
  * on windows. the source is a manifest file, or an image when module or resource are set. the data comes from
- * NtAllocateVirtualMemory; free it with RtlFreeActivationContextData.
+ * NtAllocateVirtualMemory; free it with SxsFreeActivationContextData. ntdll and kernelbase each
+ * compile the generator, since the ntdll of windows exports none.
  */
 typedef struct _MIME_SXS_GENERATE {
     ULONG Flags;               /* ACTCTX_FLAG_*, already checked by CreateActCtxW. */
@@ -302,11 +303,12 @@ typedef struct _MIME_SXS_GENERATE {
     USHORT ProcessorArchitecture;
     LANGID LangId;
     BOOLEAN ApplicationConfig; /* the program's <Source>.config adds private paths for probing. */
+    PCWSTR Config;             /* the configuration file when the caller found it, in place of <Source>.config. */
 } MIME_SXS_GENERATE, *PMIME_SXS_GENERATE;
 
-NTSYSAPI NTSTATUS NTAPI RtlGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data);
-NTSYSAPI void NTAPI RtlFreeActivationContextData(PVOID data);
-/* gives a context to a suspended thread of this process, activated when it starts, like CreateRemoteThreadEx. */
-NTSYSAPI NTSTATUS NTAPI RtlInheritActivationContext(HANDLE thread_id, PACTIVATION_CONTEXT context);
+NTSTATUS SxsGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data);
+/* the same from a manifest the caller read itself, as csrss is sent it. */
+NTSTATUS SxsGenerateFromStream(const MIME_SXS_GENERATE *request, const void *text, SIZE_T size, PVOID *data);
+void SxsFreeActivationContextData(PVOID data);
 
 #endif

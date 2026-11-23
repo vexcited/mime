@@ -1,10 +1,10 @@
 1 VERSIONINFO
-FILEVERSION 10, 0, 26100, 7019
-PRODUCTVERSION 10, 0, 26100, 7019
+FILEVERSION 10, 0, 26100, 9278
+PRODUCTVERSION 10, 0, 26100, 9278
 FILEFLAGSMASK 0x3F
 FILEFLAGS 0x0
 FILEOS 0x40004
-FILETYPE 2
+FILETYPE 1
 FILESUBTYPE 0
 BEGIN
     BLOCK "StringFileInfo"
@@ -12,13 +12,13 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "Microsoft Corporation"
-            VALUE "FileDescription", "Load and Unload Performance Counters"
-            VALUE "FileVersion", "10.0.26100.7019 (WinBuild.160101.0800)"
-            VALUE "InternalName", "loadperf.dll"
+            VALUE "FileDescription", "Load & Unload Performance Counters"
+            VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
+            VALUE "InternalName", "LOADPERF.DLL"
             VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
-            VALUE "OriginalFilename", "loadperf.dll"
+            VALUE "OriginalFilename", "LOADPERF.DLL"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
-            VALUE "ProductVersion", "10.0.26100.7019"
+            VALUE "ProductVersion", "10.0.26100.9278"
         END
     END
     BLOCK "VarFileInfo"

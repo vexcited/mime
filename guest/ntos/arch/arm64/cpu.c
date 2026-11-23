@@ -56,6 +56,17 @@ void KiSetProcessorFeatures(BOOLEAN *features)
     features[45] = field(p->Isar1, 20) != 0;                           /* PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE */
 }
 
+PCSTR KiProcessorBrand(void)
+{
+    return HalBootInfo->cpu_name;
+}
+
+/* the counter of the architected timer says nothing of the processor, so its speed is the one of the model. */
+ULONG KiProcessorMhz(void)
+{
+    return HalBootInfo->cpu_mhz;
+}
+
 /* the vendor name windows shows for the implementer code. */
 PCSTR KiProcessorVendor(void)
 {
@@ -83,6 +94,12 @@ USHORT KiProcessorModel(void)
 USHORT KiProcessorRevision(void)
 {
     return (USHORT)(((KiProcessorIds.Midr >> 20) & 0xF) << 8 | (KiProcessorIds.Midr & 0xF));
+}
+
+ULONG KiProcessorFeatureBits(void)
+{
+    /* arm64 keeps no x86 KF_ bitmask; the field windows fills on this class is left clear. */
+    return 0;
 }
 
 void KiFormatProcessorIdentifier(PWCHAR text, ULONG chars)
@@ -175,4 +192,17 @@ void KiIdentifyToHypervisor(void)
     request->Register.Value[0] = 0x0001040A00000000ull | MIME_NT_BUILD_NUMBER;
     ULONG64 input = MIME_HV_CALL_SET_VP_REGISTERS | MIME_HV_REP_VALUE(1, 0);
     HalHyperVCall(input, HalPhysicalOf(request), 0);
+}
+
+/* two l1 caches for each core and an l2 for the package. */
+ULONG KiQueryCaches(KI_CACHE *caches, ULONG room)
+{
+    static const KI_CACHE fixed[] = {
+        {1, 8, 64, 64 * 1024, 2, FALSE},
+        {1, 8, 64, 64 * 1024, 1, FALSE},
+        {2, 16, 128, 4 * 1024 * 1024, 0, TRUE},
+    };
+    ULONG n = RTL_NUMBER_OF(fixed) < room ? RTL_NUMBER_OF(fixed) : room;
+    memcpy(caches, fixed, n * sizeof(fixed[0]));
+    return n;
 }

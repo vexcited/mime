@@ -15,9 +15,6 @@ NTSTATUS CmpJournalReadBytes(void *data, ULONG bytes, ULONG64 offset);
 
 PVOID CmpCompactBegin(void)
 {
-    /* the nocompaction kernel option keeps the journal as is, to compare what a replay builds. */
-    if (strstr(HalBootInfo->cmdline, "nocompaction"))
-        return nullptr;
     return cm_compact_create();
 }
 

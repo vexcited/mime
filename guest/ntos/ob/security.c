@@ -142,12 +142,40 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *at
 }
 
 /* takes ownership of a descriptor made by ObComputeSecurity. */
+/*
+ * a token carries its integrity level as a label, a process and a thread the level of the token of the process,
+ * measured on windows 11 with label.c of the research repository: no write up for a token, no write up and no read
+ * up for the two others. chromium reads the label of its own token without asking whether there is one.
+ */
+static SD_BLOB *with_object_label(PVOID object, SD_BLOB *sd)
+{
+    const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
+    PVOID token;
+    ULONG policy = SYSTEM_MANDATORY_LABEL_NO_WRITE_UP | SYSTEM_MANDATORY_LABEL_NO_READ_UP;
+    if (type == SeTokenObjectType) {
+        token = object;
+        policy = SYSTEM_MANDATORY_LABEL_NO_WRITE_UP;
+    } else if (type == PsProcessTypeObject) {
+        token = ((PEPROCESS)object)->Token;
+    } else if (type == PsThreadTypeObject) {
+        PEPROCESS process = (PEPROCESS)((PETHREAD)object)->Tcb.Process;
+        token = process ? process->Token : nullptr;
+    } else {
+        return sd;
+    }
+    SD_BLOB *labelled;
+    if (!NT_SUCCESS(SeSdAddObjectLabel(sd, token ? SeTokenIntegrityRid(token) : SeThreadIntegrityRid(), policy, &labelled)))
+        return sd;
+    SeSdDereference(sd);
+    return labelled;
+}
+
 void ObAttachSecurity(PVOID object, SD_BLOB *sd)
 {
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
     h->Flags &= ~OB_SD_PENDING;
     if (sd)
-        h->Reserved = (ULONG_PTR)sd;
+        h->Reserved = (ULONG_PTR)with_object_label(object, sd);
 }
 
 /* the directories programs create named objects in. */
@@ -157,7 +185,7 @@ static BOOLEAN creatable_directory(PVOID object)
     UNICODE_STRING name;
     if (!NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))))
         return FALSE;
-    static const PCWSTR creatable[] = {L"\\BaseNamedObjects", L"\\RPC Control", L"\\Windows\\WindowStations"};
+    static const PCWSTR creatable[] = {L"\\BaseNamedObjects", L"\\Windows\\WindowStations"};
     static const WCHAR sessions[] = L"\\Sessions\\";
     for (ULONG i = 0; i < RTL_NUMBER_OF(creatable); i++)
         if (!_wcsicmp(buffer, creatable[i]))
@@ -172,6 +200,21 @@ static BOOLEAN creatable_directory(PVOID object)
     return FALSE;
 }
 
+static BOOLEAN rpc_directory(PVOID object)
+{
+    WCHAR buffer[128];
+    UNICODE_STRING name;
+    return NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))) && !_wcsicmp(buffer, L"\\RPC Control");
+}
+
+/* measured on windows 11 26300: \Driver opens for the system and the administrators, and a plain token gets c0000022. */
+static BOOLEAN system_directory(PVOID object)
+{
+    WCHAR buffer[128];
+    UNICODE_STRING name;
+    return NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))) && !_wcsicmp(buffer, L"\\Driver");
+}
+
 /* for objects the kernel put in the namespace, see SeSdBootDefault. */
 NTSTATUS ObAssignBootSecurity(PVOID object)
 {
@@ -182,8 +225,11 @@ NTSTATUS ObAssignBootSecurity(PVOID object)
         return STATUS_SUCCESS;
     SD_BLOB *sd;
     NTSTATUS status = SeSdBootDefault(mapping_of(type), type == ObDirectoryType,
-                                      type == ObDirectoryType && creatable_directory(object) ? SE_BOOT_CREATABLE
-                                                                                              : SE_BOOT_PLAIN,
+                                      type != ObDirectoryType       ? SE_BOOT_PLAIN
+                                      : rpc_directory(object)       ? SE_BOOT_RPC_CONTROL
+                                      : creatable_directory(object) ? SE_BOOT_CREATABLE
+                                      : system_directory(object)    ? SE_BOOT_PLAIN_SYSTEM
+                                                                    : SE_BOOT_PLAIN,
                                       &sd);
     if (NT_SUCCESS(status))
         h->Reserved = (ULONG_PTR)sd;
@@ -235,19 +281,6 @@ NTSTATUS ObReplaceSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, KP
 
 /* ---------------------------------------------------------------- checks on open */
 
-static void trace_open_denial(PVOID object, ACCESS_MASK desired, NTSTATUS status)
-{
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    char what[24];
-    ULONG n = 0;
-    if (h->Type == SeTokenObjectType)
-        KiLogPrintf("  the token is %llx", ((PTOKEN)object)->TokenId);
-    for (; n < sizeof(what) - 1 && n < h->Type->Name.Length / sizeof(WCHAR); n++)
-        what[n] = (char)h->Type->Name.Buffer[n];
-    what[n] = 0;
-    SeTraceDenial(what, &h->Name, desired, status);
-}
-
 /*
  * kernel mode callers, types that keep no descriptor and objects without one are not checked, and then
  * *granted is the access asked for. the file system and the registry check their own during the open.
@@ -256,18 +289,15 @@ NTSTATUS ObCheckOpenAccessEx(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE 
 {
     const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
     *granted = desired;
-    if (mode != UserMode || !SeAccessEnforced || !type->Init.GenericMapping[3] || type->Init.GetSecurity)
+    if (mode != UserMode || !type->Init.GenericMapping[3] || type->Init.GetSecurity)
         return STATUS_SUCCESS;
     SD_BLOB *sd;
     ObReferenceSecurity(object, &sd);
     if (!sd)
         return STATUS_SUCCESS;
     NTSTATUS status = SeCheckAccess(sd, type->Init.GenericMapping, desired, 0, flags, granted);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status))
         *granted = 0;
-        trace_open_denial(object, desired, status);
-        SeTraceDescriptor(sd);
-    }
     SeSdDereference(sd);
     return status;
 }
@@ -283,7 +313,7 @@ NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mo
 NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
 {
     ACCESS_MASK granted;
-    if (mode != UserMode || !SeAccessEnforced)
+    if (mode != UserMode)
         return STATUS_SUCCESS;
     SD_BLOB *sd;
     ObReferenceSecurity(directory, &sd);
@@ -291,8 +321,6 @@ NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
         return STATUS_SUCCESS;
     NTSTATUS status = SeCheckAccess(sd, ObDirectoryType->Init.GenericMapping, DIRECTORY_CREATE_OBJECT_, 0, 0, &granted);
     SeSdDereference(sd);
-    if (!NT_SUCCESS(status))
-        trace_open_denial(directory, DIRECTORY_CREATE_OBJECT_, status);
     return status;
 }
 
@@ -350,11 +378,6 @@ NTSTATUS NTAPI NtSetSecurityObject(HANDLE handle, ULONG info, PVOID descriptor)
             SeSdDereference(old);
         if (NT_SUCCESS(status)) {
             status = ObStoreSecurity(object, next);
-            if (SeTraceAccess) {
-                KiLogPrintf("security set on a %ws %llx, status %08x", type->Name.Buffer,
-                            type == SeTokenObjectType ? ((PTOKEN)object)->TokenId : 0, status);
-                SeTraceDescriptor(next);
-            }
             SeSdDereference(next);
         }
         ExReleaseFastMutex(&set_lock);

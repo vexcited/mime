@@ -1,17 +1,28 @@
 ; the default user, the template of every profile, and the settings of the system account. the kernel writes the locale of
 ; the user at each boot, see guest/ntos/cm/boot.c.
 
-; the places of the user's folders, read by shell32 and by every program that asks for a known folder.
+; the places of the user's folders, read by windows.storage and by every program that asks for a known folder, as the
+; default user of the pinned image has them.
 [HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders]
 "AppData"=expand:"%USERPROFILE%\\AppData\\Roaming"
+"Cache"=expand:"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\INetCache"
+"Cookies"=expand:"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\INetCookies"
 "Desktop"=expand:"%USERPROFILE%\\Desktop"
+"Favorites"=expand:"%USERPROFILE%\\Favorites"
+"History"=expand:"%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\History"
 "Local AppData"=expand:"%USERPROFILE%\\AppData\\Local"
 "My Music"=expand:"%USERPROFILE%\\Music"
 "My Pictures"=expand:"%USERPROFILE%\\Pictures"
 "My Video"=expand:"%USERPROFILE%\\Videos"
+"NetHood"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Network Shortcuts"
 "Personal"=expand:"%USERPROFILE%\\Documents"
-"Programs"=expand:"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs"
-"Start Menu"=expand:"%APPDATA%\\Microsoft\\Windows\\Start Menu"
+"PrintHood"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Printer Shortcuts"
+"Programs"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs"
+"Recent"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Recent"
+"SendTo"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\SendTo"
+"Start Menu"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu"
+"Startup"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+"Templates"=expand:"%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Templates"
 "{374DE290-123F-4565-9164-39C4925E467B}"=expand:"%USERPROFILE%\\Downloads"
 
 ; the region of a machine in the United States, 244 is its geographic identifier. the language is written at each boot.
@@ -22,9 +33,6 @@
 [HKU\.DEFAULT\Control Panel\International\Geo]
 "Name"="US"
 "Nation"="244"
-
-[HKCU\Control Panel\Cursors]
-"CursorBaseSize"=dword:00000020
 
 ; keys that programs open and that are empty on a new profile.
 [HKCU\Control Panel\Accessibility]

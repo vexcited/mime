@@ -1514,6 +1514,8 @@ static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
         memcpy(slice.mapped, table.entries, count * sizeof(UINT));
         D3dRingTrim(device, &slice, sizeof(table), D3D_ALIGN(count * sizeof(UINT), 16));
         s->table_valid = TRUE;
+        /* before the restart below, which keeps this stage's table and must bind it where it is. */
+        c->table_offsets[stage] = (UINT)slice.chunk_offset;
         if (slice.chunk != c->table_chunk) {
             /* a new chunk needs its own set, and the other stages' tables uploaded into it again. */
             c->table_chunk = slice.chunk;
@@ -1527,7 +1529,6 @@ static BOOL emit_tables(D3dContext *c, VkCommandBuffer cmd, BOOL compute)
                 return emit_tables(c, cmd, compute);
             }
         }
-        c->table_offsets[stage] = (UINT)slice.chunk_offset;
         changed = TRUE;
     }
     VkPipelineBindPoint point = compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;

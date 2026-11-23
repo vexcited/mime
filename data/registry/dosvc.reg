@@ -1,0 +1,94 @@
+; delivery optimization: Mime's own dosvc.dll in svchost -k NetworkService, downloading over http only. The class is
+; served by the service and its interfaces are marshaled by onecorecommonproxystub.dll, as on windows 11 26300.
+[HKLM\SYSTEM\CurrentControlSet\Services\DoSvc]
+"DependOnService"=multi:"RpcSs"
+"Description"="Performs content delivery optimization tasks"
+"DisplayName"="Delivery Optimization"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,60,ea,00,00,01,00,00,00,60,ea,00,00,00,00,00,00,00,00,00,00
+"ImagePath"=expand:"%SystemRoot%\\System32\\svchost.exe -k NetworkService -p"
+"LaunchProtected"=dword:00000002
+"ObjectName"="NT Authority\\NetworkService"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000002
+"DelayedAutostart"=dword:00000001
+"Type"=dword:00000010
+
+[HKLM\SYSTEM\CurrentControlSet\Services\DoSvc\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\dosvc.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+
+[HKCR\CLSID\{5B99FA76-721C-423C-ADAC-56D03C8A8007}]
+@="Delivery Optimization Class"
+"AppID"="{379001DE-7108-4A45-8A74-6CD0A9FBEF2C}"
+
+[HKCR\AppID\{379001DE-7108-4A45-8A74-6CD0A9FBEF2C}]
+@="Delivery Optimization"
+"AccessPermission"=hex:01,00,04,80,5c,00,00,00,6c,00,00,00,00,00,00,00,14,00,00,00,02,00,48,00,03,00,00,00,00,00,14,00,03,00,00,00,01,01,00,00,00,00,00,05,0a,00,00,00,00,00,14,00,03,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,03,00,00,00,01,02,00,00,00,00,00,05,20,00,00,00,21,02,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00
+"LaunchPermission"=hex:01,00,04,80,60,00,00,00,70,00,00,00,00,00,00,00,14,00,00,00,02,00,4c,00,03,00,00,00,00,00,14,00,0b,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,0b,00,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,18,00,0b,00,00,00,01,02,00,00,00,00,00,05,20,00,00,00,21,02,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00
+"LocalService"="dosvc"
+
+[HKCR\Interface\{FBBD7FC0-C147-4727-A38D-827EF071EE77}]
+@="IDODownload"
+[HKCR\Interface\{FBBD7FC0-C147-4727-A38D-827EF071EE77}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{770B2511-4ADD-47F0-B75F-D8E5E47794B5}]
+@="IDODownloadInternal"
+[HKCR\Interface\{770B2511-4ADD-47F0-B75F-D8E5E47794B5}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{D166E8E3-A90E-4392-8E87-05E996D3747D}]
+@="IDODownloadStatusCallback"
+[HKCR\Interface\{D166E8E3-A90E-4392-8E87-05E996D3747D}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{400E2D4A-1431-4C1A-A748-39CA472CFDB1}]
+@="IDOManager"
+[HKCR\Interface\{400E2D4A-1431-4C1A-A748-39CA472CFDB1}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{B76B9699-E99E-4101-803F-A20E325D93E2}]
+@="IDeliveryOptimizationFile"
+[HKCR\Interface\{B76B9699-E99E-4101-803F-A20E325D93E2}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{3A87296F-6EC2-4126-AB29-E3F8DC4CC390}]
+@="IDeliveryOptimizationFile2"
+[HKCR\Interface\{3A87296F-6EC2-4126-AB29-E3F8DC4CC390}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{EE2584CF-A69C-4848-B633-2649962B3EF7}]
+@="IDeliveryOptimizationJob"
+[HKCR\Interface\{EE2584CF-A69C-4848-B633-2649962B3EF7}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{18995A26-BF59-4ABE-9F8B-D5092D5A2405}]
+@="IDeliveryOptimizationJob2"
+[HKCR\Interface\{18995A26-BF59-4ABE-9F8B-D5092D5A2405}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{6692FD56-3B9B-433A-AC04-3FFB442556DD}]
+@="IDeliveryOptimizationMgrInternal"
+[HKCR\Interface\{6692FD56-3B9B-433A-AC04-3FFB442556DD}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{6A1C005C-EC79-4BBB-88B5-188BC45611CA}]
+@="IDeliveryOptimizationPolicy"
+[HKCR\Interface\{6A1C005C-EC79-4BBB-88B5-188BC45611CA}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{42DD02AB-DF13-4761-A5F2-B9E13264A831}]
+@="IDeliveryOptimizationUsage"
+[HKCR\Interface\{42DD02AB-DF13-4761-A5F2-B9E13264A831}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{9D7DDA4D-AC17-4132-BBB8-5B8A6553872F}]
+@="IDeliveryOptimizationUsageCallback"
+[HKCR\Interface\{9D7DDA4D-AC17-4132-BBB8-5B8A6553872F}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"
+
+[HKCR\Interface\{8863F93E-77EA-4C67-A86F-7638E3A568A6}]
+@="IDeliveryOptimizationUser"
+[HKCR\Interface\{8863F93E-77EA-4C67-A86F-7638E3A568A6}\ProxyStubClsid32]
+@="{A6FF50C0-56C0-71CA-5732-BED303A59628}"

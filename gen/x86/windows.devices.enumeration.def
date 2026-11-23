@@ -1,0 +1,5 @@
+LIBRARY Windows.Devices.Enumeration.dll
+EXPORTS
+    DllCanUnloadNow=_DllCanUnloadNow@0 @3 PRIVATE
+    DllGetActivationFactory=_DllGetActivationFactory@8 @4 PRIVATE
+    DllGetClassObject=_DllGetClassObject@12 @5 PRIVATE

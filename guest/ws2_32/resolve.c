@@ -439,6 +439,19 @@ const char *WsServiceByPort(USHORT port, const char *proto)
     return s ? s->name : nullptr;
 }
 
+BOOL WsServiceEntry(const char *name, USHORT port, const char *proto, WS_SERVICE_ENTRY *entry)
+{
+    const WS_SERVICE *s = name ? find_service_name(name, proto) : find_service_port(port, proto);
+    if (!s)
+        return FALSE;
+    entry->name = s->name;
+    entry->port = s->port;
+    entry->proto = s->proto;
+    for (int i = 0; i < 3; i++)
+        entry->aliases[i] = s->aliases[i];
+    return TRUE;
+}
+
 static void copy_name(char *dst, SIZE_T size, const char *src)
 {
     _snprintf(dst, size - 1, "%s", src);

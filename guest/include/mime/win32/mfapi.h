@@ -3,6 +3,7 @@
 #define MIME_WIN32_MFAPI_H
 
 #include <mime/win32/mfidl.h>
+#include <mime/win32/amvideo.h>
 
 #ifdef MIME_BUILD_MFPLAT
 #define MFAPI
@@ -106,11 +107,29 @@ MIME_DEFINE_GUID(MFSampleExtension_CleanPoint, 0x9CDF01D8, 0xA0F0, 0x43BA, 0xB0,
 MIME_DEFINE_GUID(MFSampleExtension_Discontinuity, 0x9CDF01D9, 0xA0F0, 0x43BA, 0xB0, 0x77, 0xEA, 0xA0, 0x6C, 0xBD,
                  0x72, 0x8A);
 /* MF_MT_INTERLACE_MODE and MF_MT_VIDEO_NOMINAL_RANGE values. */
-#define MFVideoInterlace_Progressive 2
+typedef enum _MFVideoInterlaceMode {
+    MFVideoInterlace_Unknown = 0,
+    MFVideoInterlace_Progressive = 2,
+    MFVideoInterlace_FieldInterleavedUpperFirst = 3,
+    MFVideoInterlace_FieldInterleavedLowerFirst = 4,
+    MFVideoInterlace_FieldSingleUpper = 5,
+    MFVideoInterlace_FieldSingleLower = 6,
+    MFVideoInterlace_MixedInterlaceOrProgressive = 7,
+} MFVideoInterlaceMode;
+#define MFVideoInterlace_SingleFieldUpper MFVideoInterlace_FieldSingleUpper
+#define MFVideoInterlace_SingleFieldLower MFVideoInterlace_FieldSingleLower
 #define MFNominalRange_Unknown 0
 #define MFNominalRange_0_255 1
 #define MFNominalRange_16_235 2
 #define MFNominalRange_48_208 3
+#define MFNominalRange_Normal MFNominalRange_0_255
+#define MFNominalRange_Wide MFNominalRange_16_235
+#define MFVideoTransFunc_Unknown 0
+#define MFVideoTransFunc_709 5
+#define MFVideoPrimaries_BT709 2
+#define MFVideoTransferMatrix_Unknown 0
+#define MFVideoLighting_Unknown 0
+#define MFVideoLighting_dim 3
 
 /* when the device captured a sample on the MFGetSystemTime clock, and whether it came damaged. */
 MIME_DEFINE_GUID(MFSampleExtension_DeviceReferenceSystemTime, 0x6523775A, 0xBA2D, 0x405F, 0xB2, 0xC5, 0x01, 0xFF, 0x88,
@@ -252,5 +271,90 @@ MFAPI HRESULT WINAPI MFTEnum2(GUID category, UINT32 flags, const MFT_REGISTER_TY
                               IMFActivate ***activates, UINT32 *count);
 MFAPI HRESULT WINAPI MFTEnum(GUID category, UINT32 flags, MFT_REGISTER_TYPE_INFO *input,
                              MFT_REGISTER_TYPE_INFO *output, IMFAttributes *attributes, CLSID **clsids, UINT32 *count);
+
+/* ------------------------------------------------------------------ the video format block */
+
+typedef struct MFRatio {
+    DWORD Numerator, Denominator;
+} MFRatio;
+typedef struct MFOffset {
+    WORD fract;
+    SHORT value;
+} MFOffset;
+typedef struct MFVideoArea {
+    MFOffset OffsetX, OffsetY;
+    SIZE Area;
+} MFVideoArea;
+typedef struct MFVIDEOINFO {
+    DWORD dwWidth, dwHeight;
+    MFRatio PixelAspectRatio;
+    DWORD SourceChromaSubsampling, InterlaceMode, TransferFunction, ColorPrimaries, TransferMatrix, SourceLighting;
+    MFRatio FramesPerSecond;
+    DWORD NominalRange;
+    MFVideoArea GeometricAperture, MinimumDisplayAperture, PanScanAperture;
+    unsigned __int64 VideoFlags;
+} MFVIDEOINFO;
+typedef struct MFVideoCompressedInfo {
+    LONGLONG AvgBitrate, AvgBitErrorRate;
+    DWORD MaxKeyFrameSpacing;
+} MFVideoCompressedInfo;
+typedef struct MFVideoSurfaceInfo {
+    DWORD Format, PaletteEntries;
+    DWORD Palette[1];
+} MFVideoSurfaceInfo;
+typedef struct MFVIDEOFORMAT {
+    DWORD dwSize;
+    MFVIDEOINFO videoInfo;
+    GUID guidFormat;
+    MFVideoCompressedInfo compressedInfo;
+    MFVideoSurfaceInfo surfaceInfo;
+} MFVIDEOFORMAT;
+
+MIME_DEFINE_GUID(MF_MT_PALETTE, 0x6D283F42, 0x9846, 0x4410, 0xAF, 0xD9, 0x65, 0x4D, 0x50, 0x3B, 0x1A, 0x54);
+MIME_DEFINE_GUID(MF_MT_GEOMETRIC_APERTURE, 0x66758743, 0x7E5F, 0x400D, 0x98, 0x0A, 0xAA, 0x85, 0x96, 0xC8, 0x56, 0x96);
+MIME_DEFINE_GUID(MF_MT_MINIMUM_DISPLAY_APERTURE, 0xD7388766, 0x18FE, 0x48C6, 0xA1, 0x77, 0xEE, 0x89, 0x48, 0x67, 0xC8,
+                 0xC4);
+MIME_DEFINE_GUID(MF_MT_PAN_SCAN_APERTURE, 0x79614DDE, 0x9187, 0x48FB, 0xB8, 0xC7, 0x4D, 0x52, 0x68, 0x9D, 0xE6, 0x49);
+MIME_DEFINE_GUID(MF_MT_VIDEO_CHROMA_SITING, 0x65DF2370, 0xC773, 0x4C33, 0xAA, 0x64, 0x84, 0x3E, 0x06, 0x8E, 0xFB, 0x0C);
+MIME_DEFINE_GUID(MF_MT_VIDEO_LIGHTING, 0x53A0529C, 0x890B, 0x4216, 0x8B, 0xF9, 0x59, 0x93, 0x67, 0xAD, 0x6D, 0x20);
+MIME_DEFINE_GUID(MF_MT_PAD_CONTROL_FLAGS, 0x4D0E73E5, 0x80EA, 0x4354, 0xA9, 0xD0, 0x11, 0x76, 0xCE, 0xB0, 0x28, 0xEA);
+MIME_DEFINE_GUID(MF_MT_SOURCE_CONTENT_HINT, 0x68ACA3CC, 0x22D0, 0x44E6, 0x85, 0xF8, 0x28, 0x16, 0x71, 0x97, 0xFA, 0x38);
+MIME_DEFINE_GUID(MF_MT_DRM_FLAGS, 0x8772F323, 0x355A, 0x4CC7, 0xBB, 0x78, 0x6D, 0x61, 0xA0, 0x48, 0xAE, 0x82);
+MIME_DEFINE_GUID(MF_MT_PAN_SCAN_ENABLED, 0x4B7F6BC3, 0x8B13, 0x40B2, 0xA9, 0x93, 0xAB, 0xF6, 0x30, 0xB8, 0x20, 0x4E);
+MIME_DEFINE_GUID(MF_MT_AVG_BIT_ERROR_RATE, 0x799CABD6, 0x3508, 0x4DB4, 0xA3, 0xC7, 0x56, 0x9C, 0xD5, 0x33, 0xDE, 0xB1);
+MIME_DEFINE_GUID(MF_MT_MAX_KEYFRAME_SPACING, 0xC16EB52B, 0x73A1, 0x476F, 0x8D, 0x62, 0x83, 0x9D, 0x6A, 0x02, 0x06, 0x52);
+
+MFAPI HRESULT WINAPI MFInitMediaTypeFromMFVideoFormat(IMFMediaType *type, const MFVIDEOFORMAT *format, UINT32 size);
+MFAPI HRESULT WINAPI MFInitMediaTypeFromVideoInfoHeader(IMFMediaType *type, const VIDEOINFOHEADER *vih, UINT32 size,
+                                                        const GUID *subtype);
+MFAPI HRESULT WINAPI MFInitMediaTypeFromVideoInfoHeader2(IMFMediaType *type, const VIDEOINFOHEADER2 *vih, UINT32 size,
+                                                         const GUID *subtype);
+MFAPI HRESULT WINAPI MFCreateVideoMediaTypeFromVideoInfoHeader(const VIDEOINFOHEADER *vih, DWORD size, DWORD par_x,
+                                                               DWORD par_y, MFVideoInterlaceMode interlace,
+                                                               QWORD flags, const GUID *subtype, IMFMediaType **out);
+MFAPI HRESULT WINAPI MFCreateVideoMediaTypeFromVideoInfoHeader2(const VIDEOINFOHEADER2 *vih, DWORD size, QWORD flags,
+                                                                const GUID *subtype, IMFMediaType **out);
+MFAPI HRESULT WINAPI MFCreateVideoMediaTypeFromBitMapInfoHeaderEx(const BITMAPINFOHEADER *header, UINT32 size,
+                                                                  DWORD par_x, DWORD par_y,
+                                                                  MFVideoInterlaceMode interlace, QWORD flags,
+                                                                  DWORD fps_numerator, DWORD fps_denominator,
+                                                                  DWORD max_bitrate, IMFMediaType **out);
+MFAPI HRESULT WINAPI MFCreate2DMediaBuffer(DWORD width, DWORD height, DWORD format, BOOL bottom_up, IMFMediaBuffer **buffer);
+MFAPI HRESULT WINAPI MFCreateDXSurfaceBuffer(REFIID riid, IUnknown *surface, BOOL bottom_up, IMFMediaBuffer **buffer);
+MFAPI HRESULT WINAPI MFCalculateImageSize(REFGUID subtype, UINT32 width, UINT32 height, UINT32 *size);
+MFAPI HRESULT WINAPI MFCreateMFVideoFormatFromMFMediaType(IMFMediaType *type, MFVIDEOFORMAT **format, UINT32 *size);
+MFAPI HRESULT WINAPI MFCreateVideoMediaType(const MFVIDEOFORMAT *format, IMFMediaType **type);
+MFAPI HRESULT WINAPI MFCreateVideoMediaTypeFromSubtype(const GUID *subtype, IMFMediaType **type);
+MFAPI HRESULT WINAPI MFGetStrideForBitmapInfoHeader(DWORD format, DWORD width, LONG *stride);
+MFAPI HRESULT WINAPI MFGetPlaneSize(DWORD format, DWORD width, DWORD height, DWORD *size);
+MFAPI HRESULT WINAPI MFCopyImage(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width,
+                                 DWORD lines);
+MFAPI HRESULT WINAPI MFConvertToFP16Array(WORD *dest, const float *src, DWORD count);
+MFAPI HRESULT WINAPI MFConvertFromFP16Array(float *dest, const WORD *src, DWORD count);
+MFAPI HRESULT WINAPI MFConvertColorInfoToDXVA(DWORD *dxva, const MFVIDEOFORMAT *format);
+MFAPI HRESULT WINAPI MFConvertColorInfoFromDXVA(MFVIDEOFORMAT *format, DWORD dxva);
+MFAPI HRESULT WINAPI MFInitVideoFormat_RGB(MFVIDEOFORMAT *format, DWORD width, DWORD height, DWORD d3dfmt);
+MFAPI HRESULT WINAPI MFInitVideoFormat(MFVIDEOFORMAT *format, DWORD type);
+MFAPI DWORD WINAPI MFGetUncompressedVideoFormat(const MFVIDEOFORMAT *format);
 
 #endif

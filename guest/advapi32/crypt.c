@@ -165,11 +165,46 @@ typedef struct CONTAINER {
 
 static SRWLOCK g_container_lock = SRWLOCK_INIT;
 
+NTSYSAPI NTSTATUS NTAPI RtlConvertSidToUnicodeString(PUNICODE_STRING out, PSID sid, BOOLEAN allocate);
+
+/*
+ * the roaming application data of the user the thread acts for: an impersonated user's is in its profile, which a
+ * service reaches its callers' keys through, as windows finds the folder from the token. the process's otherwise.
+ */
+static DWORD user_appdata(WCHAR *base, DWORD size)
+{
+    HANDLE token;
+    /* as the service where it may, else as the user it acts for, whose token a service account cannot always open. */
+    if (NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), 0x0008 /* TOKEN_QUERY */, TRUE, &token)) ||
+        NT_SUCCESS(NtOpenThreadToken(NtCurrentThread(), 0x0008 /* TOKEN_QUERY */, FALSE, &token))) {
+        BYTE buffer[sizeof(PSID) * 2 + 68];
+        ULONG got = 0;
+        WCHAR text[96], key[200];
+        UNICODE_STRING sid = {0, sizeof(text), text};
+        BOOL found = FALSE;
+        if (NT_SUCCESS(NtQueryInformationToken(token, 1 /* TokenUser */, buffer, sizeof(buffer), &got)) &&
+            NT_SUCCESS(RtlConvertSidToUnicodeString(&sid, *(PSID *)buffer, FALSE))) {
+            text[sid.Length / sizeof(WCHAR)] = 0;
+            _snwprintf(key, RTL_NUMBER_OF(key), L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%ls", text);
+            key[RTL_NUMBER_OF(key) - 1] = 0;
+            DWORD bytes = size * sizeof(WCHAR);
+            found = !RegGetValueW(HKEY_LOCAL_MACHINE, key, L"ProfileImagePath", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                                  nullptr, base, &bytes);
+        }
+        NtClose(token);
+        if (found && wcslen(base) + 17 < size) {
+            wcscat(base, L"\\AppData\\Roaming");
+            return (DWORD)wcslen(base);
+        }
+    }
+    return GetEnvironmentVariableW(L"APPDATA", base, size);
+}
+
 static BOOL container_dir(const PROVIDER *p, WCHAR *dir)
 {
     WCHAR base[MAX_PATH];
     BOOL machine = (p->Flags & CRYPT_MACHINE_KEYSET) != 0;
-    DWORD n = GetEnvironmentVariableW(machine ? L"ProgramData" : L"APPDATA", base, MAX_PATH);
+    DWORD n = machine ? GetEnvironmentVariableW(L"ProgramData", base, MAX_PATH) : user_appdata(base, MAX_PATH);
     if (!n || n >= MAX_PATH - 64)
         return FALSE;
     _snwprintf(dir, MAX_PATH, L"%ls\\Microsoft\\Crypto\\RSA\\%ls", base, machine ? L"MachineKeys" : L"Keys");
@@ -1806,21 +1841,6 @@ ADVAPI BOOL WINAPI CryptSignHashA(HCRYPTHASH handle, DWORD spec, LPCSTR descript
 }
 
 /* ---------------------------------------------------------------- signatures */
-
-void *mime_crypto_alloc(size_t size)
-{
-    return AdvAlloc(size);
-}
-
-void mime_crypto_free(void *p)
-{
-    AdvFree(p);
-}
-
-bool mime_crypto_random(void *out, size_t size)
-{
-    return AdvGenRandom(out, size);
-}
 
 #define NTE_BAD_SIGNATURE ((DWORD)0x80090006L)
 

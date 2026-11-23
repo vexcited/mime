@@ -22,23 +22,51 @@
 #define SP_PROT_TLS1_3_CLIENT 0x00002000
 
 #define WH_TLS_RAW 65536
+#define ISC_REQ_USE_SUPPLIED_CREDS_ 0x00000080
+#define ERROR_WINHTTP_CLIENT_CERT_NO_ACCESS_PRIVATE_KEY_ 12186
+
+/* SCH_CREDENTIALS and TLS_PARAMETERS: only this form gets tls 1.3 from schannel. */
+typedef struct {
+    DWORD cAlpnIds;
+    void *rgstrAlpnIds;
+    DWORD grbitDisabledProtocols;
+    DWORD cDisabledCrypto;
+    void *pDisabledCrypto;
+    DWORD dwFlags;
+} WH_TLS_PARAMETERS;
 
 typedef struct {
     DWORD dwVersion;
+    DWORD dwCredFormat;
     DWORD cCreds;
     void *paCred;
     void *hRootStore;
     DWORD cMappers;
     void *aphMappers;
-    DWORD cSupportedAlgs;
-    void *palgSupportedAlgs;
-    DWORD grbitEnabledProtocols;
-    DWORD dwMinimumCipherStrength;
-    DWORD dwMaximumCipherStrength;
     DWORD dwSessionLifespan;
     DWORD dwFlags;
-    DWORD dwCredFormat;
-} WH_SCHANNEL_CRED;
+    DWORD cTlsParameters;
+    WH_TLS_PARAMETERS *pTlsParameters;
+} WH_SCH_CREDENTIALS;
+
+#define SCH_CREDENTIALS_VERSION_ 5
+
+typedef struct WH_CRED {
+    LONG volatile Refs;
+    CredHandle Handle;
+    const CERT_CONTEXT *Cert;
+    DWORD Protocols;
+    DWORD Flags;
+} WH_CRED;
+
+typedef struct WH_CRED_SLOT {
+    struct WH_CRED_SLOT *Next;
+    WCHAR Host[INTERNET_MAX_HOST_NAME_LENGTH];
+    INTERNET_PORT Port;
+    WH_CRED *Current;
+} WH_CRED_SLOT;
+
+static SRWLOCK CredLock = SRWLOCK_INIT;
 
 typedef struct {
     ULONG cbHeader;
@@ -119,7 +147,7 @@ static DWORD SendToken(WH_CONN *conn, SecBuffer *token, int timeout)
 }
 
 /* continue InitializeSecurityContext with the bytes already received until the handshake ends. */
-static DWORD Negotiate(WH_CONN *conn, LPCWSTR host, BOOL initial, int timeout, DWORD *failure)
+static DWORD Negotiate(WH_CONN *conn, LPCWSTR host, BOOL initial, BOOL cert_set, int timeout, DWORD *failure)
 {
     ULONG flags = ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR |
                   ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM;
@@ -149,6 +177,23 @@ static DWORD Negotiate(WH_CONN *conn, LPCWSTR host, BOOL initial, int timeout, D
         DWORD error = SendToken(conn, &out[0], timeout);
         if (error)
             return error;
+        /*
+         * the server asked a certificate and the request has none: the program decides, as windows makes it, unless
+         * it said no certificate already. then the handshake goes on with an empty one.
+         */
+        if (status == SEC_I_INCOMPLETE_CREDENTIALS) {
+            if (!cert_set) {
+                *failure = 0;
+                return ERROR_WINHTTP_CLIENT_AUTH_CERT_NEEDED;
+            }
+            if (in[1].BufferType == SECBUFFER_EXTRA && in[1].cbBuffer) {
+                memmove(conn->Raw, conn->Raw + conn->RawUsed - in[1].cbBuffer, in[1].cbBuffer);
+                conn->RawUsed = in[1].cbBuffer;
+            } else
+                conn->RawUsed = 0;
+            flags |= ISC_REQ_USE_SUPPLIED_CREDS_;
+            continue;
+        }
         if (status != SEC_E_OK && status != SEC_I_CONTINUE_NEEDED)
             return MapFailure(status, failure);
         if (in[1].BufferType == SECBUFFER_EXTRA && in[1].cbBuffer) {
@@ -170,6 +215,10 @@ static struct {
     typeof(CertFreeCertificateChain) *FreeChain;
     typeof(CertVerifyCertificateChainPolicy) *VerifyPolicy;
     typeof(CertFreeCertificateContext) *FreeContext;
+    typeof(CertDuplicateCertificateContext) *Duplicate;
+    BOOL(WINAPI *AcquireKey)(const void *cert, DWORD flags, void *reserved, ULONG_PTR *key, DWORD *spec, BOOL *release);
+    LONG(WINAPI *NFree)(ULONG_PTR key);
+    BOOL(WINAPI *LRelease)(ULONG_PTR key, DWORD flags);
 } Crypt;
 
 static BOOL CALLBACK LoadCrypt(PINIT_ONCE once, PVOID parameter, PVOID *context)
@@ -180,6 +229,48 @@ static BOOL CALLBACK LoadCrypt(PINIT_ONCE once, PVOID parameter, PVOID *context)
         Crypt.FreeChain = (void *)GetProcAddress(module, "CertFreeCertificateChain");
         Crypt.VerifyPolicy = (void *)GetProcAddress(module, "CertVerifyCertificateChainPolicy");
         Crypt.FreeContext = (void *)GetProcAddress(module, "CertFreeCertificateContext");
+        Crypt.Duplicate = (void *)GetProcAddress(module, "CertDuplicateCertificateContext");
+        Crypt.AcquireKey = (void *)GetProcAddress(module, "CryptAcquireCertificatePrivateKey");
+    }
+    HMODULE ncrypt = LoadLibraryW(L"ncrypt.dll"), advapi = LoadLibraryW(L"advapi32.dll");
+    if (ncrypt)
+        Crypt.NFree = (void *)GetProcAddress(ncrypt, "NCryptFreeObject");
+    if (advapi)
+        Crypt.LRelease = (void *)GetProcAddress(advapi, "CryptReleaseContext");
+    return TRUE;
+}
+
+const void *WhTlsCertDuplicate(const void *cert)
+{
+    InitOnceExecuteOnce(&CryptOnce, LoadCrypt, nullptr, nullptr);
+    return Crypt.Duplicate ? Crypt.Duplicate(cert) : nullptr;
+}
+
+void WhTlsCertFree(const void *cert)
+{
+    InitOnceExecuteOnce(&CryptOnce, LoadCrypt, nullptr, nullptr);
+    if (Crypt.FreeContext)
+        Crypt.FreeContext(cert);
+}
+
+/* a client certificate is only one with a private key the process can use, which windows checks before it connects. */
+static BOOL CertHasKey(const void *cert)
+{
+    InitOnceExecuteOnce(&CryptOnce, LoadCrypt, nullptr, nullptr);
+    if (!Crypt.AcquireKey)
+        return FALSE;
+    ULONG_PTR key = 0;
+    DWORD spec = 0;
+    BOOL release = FALSE;
+    /* CRYPT_ACQUIRE_SILENT_FLAG | CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG */
+    if (!Crypt.AcquireKey(cert, 0x40 | 0x10000, nullptr, &key, &spec, &release))
+        return FALSE;
+    if (release) {
+        if (spec == 0xFFFFFFFF) {
+            if (Crypt.NFree)
+                Crypt.NFree(key);
+        } else if (Crypt.LRelease)
+            Crypt.LRelease(key, 0);
     }
     return TRUE;
 }
@@ -284,7 +375,111 @@ DWORD WhTlsServerChain(WH_CONN *conn, const void **out)
     return error;
 }
 
-DWORD WhTlsHandshake(WH_CONN *conn, LPCWSTR host, DWORD security_flags, int timeout, DWORD *failure)
+static void ReleaseCred(WH_CRED *cred)
+{
+    if (!cred || InterlockedDecrement(&cred->Refs))
+        return;
+    Table->FreeCredentialsHandle(&cred->Handle);
+    if (cred->Cert)
+        WhTlsCertFree(cred->Cert);
+    WhFree(cred);
+}
+
+static BOOL SameCert(const CERT_CONTEXT *a, const CERT_CONTEXT *b)
+{
+    return a == b || (a->cbCertEncoded == b->cbCertEncoded && !memcmp(a->pbCertEncoded, b->pbCertEncoded, a->cbCertEncoded));
+}
+
+/* the new credential, with SCH_CREDENTIALS as webio's WapSslAcquireCredentialsHandle builds it. */
+static WH_CRED *NewCred(const CERT_CONTEXT *cert, DWORD protocols, DWORD flags)
+{
+    WH_CRED *cred = WhAllocZero(sizeof(*cred));
+    if (!cred)
+        return nullptr;
+    WH_TLS_PARAMETERS parameters = {0};
+    parameters.grbitDisabledProtocols = ~protocols;
+    WH_SCH_CREDENTIALS credentials = {0};
+    credentials.dwVersion = SCH_CREDENTIALS_VERSION_;
+    credentials.dwFlags = flags;
+    credentials.cTlsParameters = 1;
+    credentials.pTlsParameters = &parameters;
+    if (cert) {
+        credentials.cCreds = 1;
+        credentials.paCred = (void *)&cert;
+    }
+    if (Table->AcquireCredentialsHandleW(nullptr, (SEC_WCHAR *)UNISP_NAME_W, SECPKG_CRED_OUTBOUND, nullptr,
+                                         &credentials, nullptr, nullptr, &cred->Handle, nullptr) != SEC_E_OK) {
+        WhFree(cred);
+        return nullptr;
+    }
+    cred->Refs = 1;
+    cred->Cert = cert ? WhTlsCertDuplicate(cert) : nullptr;
+    cred->Protocols = protocols;
+    cred->Flags = flags;
+    return cred;
+}
+
+/*
+ * webio's WaSslRetrieveCredentialsHandle: each server of a session has one current credential. a request with no
+ * certificate takes it, certificate and all, so the server sees the last certificate again and the session resumes. a
+ * request with another certificate, or other protocols, makes a new one that becomes the current one.
+ */
+static WH_CRED *TakeCred(WH_OBJECT *session, WH_CONN *conn, const CERT_CONTEXT *cert, DWORD protocols, DWORD flags)
+{
+    AcquireSRWLockExclusive(&CredLock);
+    WH_CRED_SLOT *slot = session->CredSlots;
+    while (slot && (slot->Port != conn->Port || _wcsicmp(slot->Host, conn->Host)))
+        slot = slot->Next;
+    if (!slot && (slot = WhAllocZero(sizeof(*slot)))) {
+        wcscpy(slot->Host, conn->Host);
+        slot->Port = conn->Port;
+        slot->Next = session->CredSlots;
+        session->CredSlots = slot;
+    }
+    WH_CRED *current = slot ? slot->Current : nullptr, *taken = nullptr;
+    const CERT_CONTEXT *carried = nullptr;
+    if (current) {
+        BOOL fits = !(current->Protocols & ~protocols) && current->Flags == flags;
+        if (fits && (!cert || (current->Cert && SameCert(cert, current->Cert)))) {
+            InterlockedIncrement(&current->Refs);
+            taken = current;
+        } else if (!cert && current->Cert) {
+            carried = WhTlsCertDuplicate(current->Cert);
+        }
+    }
+    ReleaseSRWLockExclusive(&CredLock);
+    if (taken)
+        return taken;
+    WH_CRED *cred = NewCred(cert ? cert : carried, protocols, flags);
+    if (carried)
+        WhTlsCertFree(carried);
+    if (!cred || !slot)
+        return cred;
+    InterlockedIncrement(&cred->Refs);
+    AcquireSRWLockExclusive(&CredLock);
+    WH_CRED *old = slot->Current;
+    slot->Current = cred;
+    ReleaseSRWLockExclusive(&CredLock);
+    ReleaseCred(old);
+    return cred;
+}
+
+void WhTlsSessionCleanup(WH_OBJECT *session)
+{
+    AcquireSRWLockExclusive(&CredLock);
+    WH_CRED_SLOT *slot = session->CredSlots;
+    session->CredSlots = nullptr;
+    ReleaseSRWLockExclusive(&CredLock);
+    while (slot) {
+        WH_CRED_SLOT *next = slot->Next;
+        ReleaseCred(slot->Current);
+        WhFree(slot);
+        slot = next;
+    }
+}
+
+DWORD WhTlsHandshake(WH_OBJECT *session, WH_CONN *conn, LPCWSTR host, DWORD security_flags, DWORD protocols,
+                     BOOL cert_set, const void *cert, int timeout, DWORD *failure)
 {
     *failure = 0;
     InitOnceExecuteOnce(&TableOnce, LoadTable, nullptr, nullptr);
@@ -297,29 +492,33 @@ DWORD WhTlsHandshake(WH_CONN *conn, LPCWSTR host, DWORD security_flags, int time
         return ERROR_NOT_ENOUGH_MEMORY;
     conn->RawSize = WH_TLS_RAW;
     conn->RawUsed = 0;
-    WH_SCHANNEL_CRED credentials = {0};
-    credentials.dwVersion = SCHANNEL_CRED_VERSION;
-    credentials.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
-    credentials.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_IGNORE_NO_REVOCATION_CHECK |
-                          SCH_CRED_IGNORE_REVOCATION_OFFLINE |
-                          ((security_flags & SECURITY_FLAG_IGNORE_ALL_CERT_ERRORS) ? SCH_CRED_MANUAL_CRED_VALIDATION
-                                                                                    : SCH_CRED_AUTO_CRED_VALIDATION);
+    /* the winhttp protocol flags are the schannel client ones, among which mime speaks tls 1.2 and 1.3. */
+    protocols &= SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
+    if (!protocols)
+        protocols = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
+    if (cert && !CertHasKey(cert)) {
+        *failure = WINHTTP_CALLBACK_STATUS_FLAG_SECURITY_CHANNEL_ERROR;
+        return ERROR_WINHTTP_CLIENT_CERT_NO_ACCESS_PRIVATE_KEY_;
+    }
+    DWORD flags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_IGNORE_NO_REVOCATION_CHECK | SCH_CRED_IGNORE_REVOCATION_OFFLINE |
+                  ((security_flags & SECURITY_FLAG_IGNORE_ALL_CERT_ERRORS) ? SCH_CRED_MANUAL_CRED_VALIDATION
+                                                                           : SCH_CRED_AUTO_CRED_VALIDATION);
     BOOL check = (security_flags & SECURITY_FLAG_IGNORE_ALL_CERT_ERRORS) &&
                  (security_flags & SECURITY_FLAG_IGNORE_ALL_CERT_ERRORS) != SECURITY_FLAG_IGNORE_ALL_CERT_ERRORS;
-    SECURITY_STATUS status = Table->AcquireCredentialsHandleW(nullptr, (SEC_WCHAR *)UNISP_NAME_W, SECPKG_CRED_OUTBOUND,
-                                                              nullptr, &credentials, nullptr, nullptr,
-                                                              &conn->Credentials, nullptr);
-    if (status != SEC_E_OK) {
+    conn->Cred = TakeCred(session, conn, cert, protocols, flags);
+    if (!conn->Cred) {
         *failure = WINHTTP_CALLBACK_STATUS_FLAG_SECURITY_CHANNEL_ERROR;
         return ERROR_WINHTTP_SECURE_CHANNEL_ERROR;
     }
+    conn->Credentials = conn->Cred->Handle;
     DWORD value = timeout <= 0 ? 0 : (DWORD)timeout;
     setsockopt(conn->Socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&value, sizeof(value));
-    DWORD error = Negotiate(conn, host, TRUE, timeout, failure);
+    DWORD error = Negotiate(conn, host, TRUE, cert_set, timeout, failure);
     if (error) {
-        if (!conn->Tls)
-            Table->FreeCredentialsHandle(&conn->Credentials);
-        else
+        if (!conn->Tls) {
+            ReleaseCred(conn->Cred);
+            conn->Cred = nullptr;
+        } else
             WhTlsClose(conn);
         conn->Tls = FALSE;
         return error;
@@ -414,7 +613,7 @@ DWORD WhTlsFill(WH_CONN *conn, int timeout)
                 }
                 if (status == SEC_I_RENEGOTIATE) {
                     DWORD failure;
-                    DWORD error = Negotiate(conn, nullptr, FALSE, timeout, &failure);
+                    DWORD error = Negotiate(conn, nullptr, FALSE, TRUE, timeout, &failure);
                     if (error)
                         return error;
                 }
@@ -422,8 +621,11 @@ DWORD WhTlsFill(WH_CONN *conn, int timeout)
                     return ERROR_SUCCESS;
                 continue;
             }
-            if (status != SEC_E_INCOMPLETE_MESSAGE)
-                return ERROR_WINHTTP_SECURE_CHANNEL_ERROR;
+            /* a tls 1.3 server refuses the client's certificate after the handshake, as an alert of the first read. */
+            if (status != SEC_E_INCOMPLETE_MESSAGE) {
+                DWORD failure;
+                return MapFailure(status, &failure);
+            }
         }
         DWORD got;
         if (conn->RawUsed == conn->RawSize)
@@ -444,6 +646,7 @@ void WhTlsClose(WH_CONN *conn)
     if (!conn->Tls || !Table)
         return;
     Table->DeleteSecurityContext(&conn->Context);
-    Table->FreeCredentialsHandle(&conn->Credentials);
+    ReleaseCred(conn->Cred);
+    conn->Cred = nullptr;
     conn->Tls = FALSE;
 }

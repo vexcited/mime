@@ -51,8 +51,17 @@ WND *WndDesktop(void)
 /* the dpi of the monitor a window is mostly on. */
 UINT WndMonitorDpi(const WND *w)
 {
+    WND *top = WndTopLevel((WND *)w) ? WndTopLevel((WND *)w) : (WND *)w;
+    /* a window told to follow another takes its monitor, a few links deep at most. */
+    for (int depth = 0; depth < 4 && top->InheritMonitor; depth++) {
+        WND *source = WndLookup(top->InheritMonitor);
+        WND *next = source ? (WndTopLevel(source) ? WndTopLevel(source) : source) : nullptr;
+        if (!next || next == top)
+            break;
+        top = next;
+    }
     RECT physical;
-    WndPhysicalRect(WndTopLevel((WND *)w) ? WndTopLevel((WND *)w) : w, &physical);
+    WndPhysicalRect(top, &physical);
     return MonitorDpiOfRect(&physical);
 }
 
@@ -134,6 +143,28 @@ BOOLEAN WndIsVisible(WND *w)
         if (!(w->Style & WS_VISIBLE))
             return FALSE;
     return w != nullptr;
+}
+
+/*
+ * a message window is kept among the children of the desktop and marked. windows keeps those under a parent of their
+ * own, so the two kinds never see each other as siblings, and the walks of the top level windows leave them out.
+ */
+static BOOLEAN is_message_window(const WND *w)
+{
+    return w->Parent && w->Parent == g_desktop && (w->ExStyle & 0x80000000u);
+}
+
+static BOOLEAN same_list(const WND *a, const WND *b)
+{
+    return a->Parent != g_desktop || is_message_window(a) == is_message_window(b);
+}
+
+static WND *first_top_level(void)
+{
+    WND *c = g_desktop ? g_desktop->FirstChild : nullptr;
+    while (c && is_message_window(c))
+        c = c->Next;
+    return c;
 }
 
 BOOLEAN WndIsChildOf(WND *child, WND *parent)
@@ -507,7 +538,14 @@ WND *WndFindNeedsPaint(W32THREAD *t, HWND filter)
             return f;
         return find_paint(f->FirstChild, t);
     }
-    return find_paint(g_desktop->FirstChild, t);
+    /* an empty queue is asked again and again with nothing changed in between. */
+    ULONG serial = DeskCleanSerial();
+    if (serial && t->NoPaintSerial == serial)
+        return nullptr;
+    WND *w = find_paint(g_desktop->FirstChild, t);
+    if (!w && serial)
+        t->NoPaintSerial = serial;
+    return w;
 }
 
 /* host configuration. */
@@ -618,7 +656,8 @@ void WndGetMinMaxInfo(WND *w, MINMAXINFO *mmi)
 }
 
 /* computes the client rectangle for a window rectangle given in parent coordinates. */
-static void calc_client(WND *w, const RECT *window, const RECT *old_window, RECT *client, BOOLEAN full)
+static void calc_client(WND *w, const RECT *window, const RECT *old_window, RECT *client, BOOLEAN full,
+                        const WINDOWPOS *pos)
 {
     /* the default processing of the message tells the window how much of the top the menu bar takes. */
     WND *saved = MenuBarCalcWindow;
@@ -642,6 +681,16 @@ static void calc_client(WND *w, const RECT *window, const RECT *old_window, RECT
     screen_to_parent(w, &old_client);
     data.p.rgrc[2] = old_client;
     data.pos.hwnd = WndHandle(w);
+    /* the flags of the change so far: what does not move or change size is marked as such before the answer. */
+    if (pos) {
+        data.pos.hwndInsertAfter = pos->hwndInsertAfter;
+        data.pos.flags = pos->flags | SWP_NOCLIENTMOVE | SWP_NOCLIENTSIZE;
+        if (window->left == old_window->left && window->top == old_window->top)
+            data.pos.flags |= SWP_NOMOVE;
+        if (window->right - window->left == old_window->right - old_window->left &&
+            window->bottom - window->top == old_window->bottom - old_window->top)
+            data.pos.flags |= SWP_NOSIZE;
+    }
     data.pos.x = window->left;
     data.pos.y = window->top;
     data.pos.cx = window->right - window->left;
@@ -699,6 +748,10 @@ static void copy_surface_bits(SURFACE *s, const REGION *dst, LONG dx, LONG dy)
     SurfaceMarkDirty(s, &dst->Extents);
 }
 
+/* the window DestroyWindow hides, whose activation and focus leave it after it is hidden. */
+static WND *g_hiding_destroyed;
+static void WndDeactivate(void);
+
 void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT flags)
 {
     if (!w || w == g_desktop)
@@ -709,14 +762,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     WINDOWPOS pos = {WndHandle(w), after, x, y, cx, cy, flags};
     RECT old_window = w->WindowRect;
     screen_to_parent(w, &old_window);
-    if (pos.flags & SWP_NOMOVE) {
-        pos.x = old_window.left;
-        pos.y = old_window.top;
-    }
-    if (pos.flags & SWP_NOSIZE) {
-        pos.cx = old_window.right - old_window.left;
-        pos.cy = old_window.bottom - old_window.top;
-    }
+    /* WM_WINDOWPOSCHANGING gets the place and size as the caller gave them, whatever the flags keep. */
     if ((pos.flags & SWP_SHOWWINDOW) && (w->Style & WS_VISIBLE))
         pos.flags &= ~SWP_SHOWWINDOW;
     if ((pos.flags & SWP_HIDEWINDOW) && !(w->Style & WS_VISIBLE))
@@ -731,6 +777,16 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
          */
         old_window = w->WindowRect;
         screen_to_parent(w, &old_window);
+        if (pos.flags & SWP_NOMOVE) {
+            pos.x = old_window.left;
+            pos.y = old_window.top;
+        }
+        if (pos.flags & SWP_NOSIZE) {
+            pos.cx = old_window.right - old_window.left;
+            pos.cy = old_window.bottom - old_window.top;
+        }
+    }
+    if (pos.flags & SWP_NOSENDCHANGING) {
         if (pos.flags & SWP_NOMOVE) {
             pos.x = old_window.left;
             pos.y = old_window.top;
@@ -765,7 +821,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     if (moved || sized || (pos.flags & SWP_FRAMECHANGED)) {
         RECT client;
         if (sized || (pos.flags & SWP_FRAMECHANGED)) {
-            calc_client(w, &new_window, &old_window, &client, TRUE);
+            calc_client(w, &new_window, &old_window, &client, TRUE, &pos);
             if (!alive(w))
                 goto done;
         } else {
@@ -851,8 +907,22 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             RgnFree(&kept);
             RgnFree(&new_vis);
         } else if (changed) {
-            if (was_visible)
+            /*
+             * the parent draws again what the window uncovered, not what it still covers: a combo box of user32
+             * takes the height of its field, draws itself at once with UpdateWindow, and is not drawn again after
+             * its parent.
+             */
+            if (was_visible && visible && !(w->ExStyle & WS_EX_TRANSPARENT) && w->Parent && w->Parent != g_desktop) {
+                REGION left;
+                RgnInit(&left);
+                RgnSetRect(&left, &old_screen);
+                RgnCombineRect(&left, &left, &w->WindowRect, RGN_DIFF);
+                if (!RgnIsEmpty(&left))
+                    WndInvalidateRegion(w->Parent, &left, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+                RgnFree(&left);
+            } else if (was_visible) {
                 invalidate_screen_rect(w->Parent, &old_screen);
+            }
             if (visible) {
                 if (sized || (pos.flags & (SWP_SHOWWINDOW | SWP_FRAMECHANGED)) || !(pos.flags & SWP_NOZORDER) ||
                     !(pos.flags & SWP_NOCOPYBITS) || moved)
@@ -866,7 +936,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     if (!(pos.flags & SWP_NOACTIVATE) && WndIsTopLevel(w) && visible && !(w->ExStyle & WS_EX_NOACTIVATE) &&
         (pos.flags & SWP_SHOWWINDOW))
         WndActivate(w, FALSE);
-    if ((pos.flags & SWP_HIDEWINDOW) && WndIsTopLevel(w) && InputForeground == w) {
+    if ((pos.flags & SWP_HIDEWINDOW) && WndIsTopLevel(w) && InputForeground == w && w != g_hiding_destroyed) {
         /* hand activation to the owner or the next visible window. */
         WND *next = w->Owner && WndIsVisible(w->Owner) ? w->Owner : nullptr;
         for (WND *c = g_desktop->FirstChild; !next && c; c = c->Next)
@@ -877,7 +947,11 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         else
             InputSetForeground(nullptr);
     }
-    if ((!visible || (w->Style & WS_MINIMIZE)) && w->Thread) {
+    /*
+     * a window that is hidden gives the focus it or a child holds to its parent. one that was hidden already keeps
+     * it: a dialog page sets the focus to one of its controls, is moved in place and only then shown.
+     */
+    if (((was_visible && !visible) || (w->Style & WS_MINIMIZE)) && w->Thread && w != g_hiding_destroyed) {
         W32THREAD *t = w->Thread;
         WND *focus = WndLookup(t->Focus);
         if (focus && (focus == w || WndIsChildOf(focus, w)))
@@ -899,6 +973,12 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     pos.y = final.top;
     pos.cx = final.right - final.left;
     pos.cy = final.bottom - final.top;
+    if (WndIsTopLevel(w) && !(pos.flags & SWP_DEFERERASE) &&
+        ((pos.flags & SWP_SHOWWINDOW) || sized || (pos.flags & SWP_FRAMECHANGED))) {
+        PaintSync(w);
+        if (!alive(w))
+            goto done;
+    }
     /* Windows does not tell a window of a call that changed nothing. */
     BOOLEAN same = !moved && !sized && !client_moved && !client_sized && (pos.flags & SWP_NOZORDER) &&
                    !(pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_HIDEWINDOW));
@@ -934,15 +1014,17 @@ static void post_theme_change(WND *w)
             post_theme_change(c);
 }
 
-void WndSystemChanged(void)
+void WndSystemChanged(BOOLEAN theme)
 {
+    OemBitmapsInvalidate();
     WND *desktop = WndDesktop();
     for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
         if (c->Flags & WNDF_DESTROYING)
             continue;
         if (c->Thread)
             QueuePost(c->Thread, WndHandle(c), WM_SYSCOLORCHANGE, 0, 0);
-        post_theme_change(c);
+        if (theme)
+            post_theme_change(c);
         if (c->Style & WS_VISIBLE)
             WndInvalidateRegion(c, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_FRAME);
     }
@@ -1107,7 +1189,7 @@ void WndCheckMonitorDpi(WND *w)
     if (!WndIsTopLevel(w) || w->Awareness < DPI_AWARE_PER_MONITOR ||
         (w->Flags & WNDF_DESTROYING) || (w->Style & WS_MINIMIZE) || (w->ExStyle & 0x80000000u))
         return;
-    UINT dpi = MonitorDpiOfRect(&w->WindowRect), old = w->Dpi ? w->Dpi : W32SystemDpi();
+    UINT dpi = WndMonitorDpi(w), old = w->Dpi ? w->Dpi : W32SystemDpi();
     /* only a move to a monitor of another dpi counts, not the dpi a test gave the window. */
     if (!dpi || dpi == w->MonitorDpi)
         return;
@@ -1129,6 +1211,35 @@ void WndCheckMonitorDpi(WND *w)
     if (alive(w))
         WndUpdateHostConfig(w, FALSE);
     UserDereference(&w->Header);
+}
+
+/*
+ * NtUserInheritWindowMonitor: a window takes the monitor of another and follows it from then on, as the list of a
+ * combo box takes the monitor of its box, or its own again for none. xxxInheritWindowMonitor of win32kfull 26300
+ * keeps the other window in a property of the window; the desktop and message windows are left alone.
+ */
+BOOL NTAPI NtUserInheritWindowMonitor(HWND hwnd, HWND from)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = FALSE;
+    ULONG fnid = w && w->Class ? w->Class->Fnid & 0x2FFF : 0;
+    if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    } else if (w == g_desktop || fnid == FNID_DESKTOP || fnid == FNID_MESSAGEWND) {
+    } else if (!w->Thread || w->Thread->Process != W32GetProcess()) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    } else if (from && !WndLookup(from)) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    } else {
+        w->InheritMonitor = from != hwnd ? from : nullptr;
+        UserReference(&w->Header);
+        WndCheckMonitorDpi(w);
+        UserDereference(&w->Header);
+        ok = TRUE;
+    }
+    UserLeave();
+    return ok;
 }
 
 /* the scales a display can have: 100 to 250 percent in steps of 25, then 300 to 500 in steps of 50. */
@@ -1328,9 +1439,22 @@ void WndHostSize(WND *w, LONG width, LONG height)
     cx = window.right - window.left;
     cy = window.bottom - window.top;
     UserReference(&w->Header);
-    WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    /* the drag loop of windows places the window with its position and these flags, seen in WM_WINDOWPOSCHANGING. */
+    if (MoveSizeHostStep(w, &cx, &cy)) {
+        if (alive(w))
+            WndSetPos(w, nullptr, window.left, window.top, cx, cy, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    } else {
+        WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     if (alive(w))
         keep_on_monitor(w);
+    /*
+     * a step of a border that is dragged. windows paints the windows of the thread right after it gives the window
+     * its size (xxxDrawDragRectEx: xxxMoveSizeSetWindowPos, then xxxUpdateThreadsWindows), so a program draws itself
+     * at each size and not when its queue is next empty, which it is not while the sizes keep coming.
+     */
+    if (alive(w))
+        PaintUpdateNow(w);
     /*
      * a maximized window that keeps the size of the work area, as FL Studio's does, does not fit the place the
      * compositor gave it, a tile. it is restored there, as a maximized window dragged off the top of the screen is.
@@ -1366,12 +1490,24 @@ static void deactivate_minimized(WND *w)
         MsgSendEvent(w, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, TRUE), 0);
 }
 
+BOOLEAN WndCanMinimize(WND *w)
+{
+    return !(W32Display.NoMinimize && WndIsTopLevel(w));
+}
+
 void WndShow(WND *w, int cmd)
 {
     if (!w || w == g_desktop || (UINT)cmd > SW_FORCEMINIMIZE)
         return;
     if (cmd == SW_SHOWDEFAULT)
         cmd = SW_SHOWNORMAL;
+    if (!WndCanMinimize(w) && !(w->Style & WS_MINIMIZE) &&
+        (cmd == SW_MINIMIZE || cmd == SW_SHOWMINIMIZED || cmd == SW_SHOWMINNOACTIVE || cmd == SW_FORCEMINIMIZE)) {
+        /* a window that is there stays as it is, one that opens as an icon opens as a window. */
+        if (w->Style & WS_VISIBLE)
+            return;
+        cmd = cmd == SW_SHOWMINIMIZED ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE;
+    }
     UserReference(&w->Header);
     if ((w->Flags & WNDF_FULLSCREEN) && cmd != SW_SHOW && cmd != SW_SHOWNA) {
         WndFullscreen(w, FALSE, nullptr);
@@ -1380,8 +1516,10 @@ void WndShow(WND *w, int cmd)
     }
     BOOLEAN was_visible = (w->Style & WS_VISIBLE) != 0;
     BOOLEAN show = cmd != SW_HIDE;
+    /* a child is shown where it is in the z order and does not become active. */
     BOOLEAN noactivate = cmd == SW_HIDE || cmd == SW_SHOWNOACTIVATE || cmd == SW_SHOWNA ||
-                         cmd == SW_SHOWMINNOACTIVE || cmd == SW_MINIMIZE || cmd == SW_FORCEMINIMIZE;
+                         cmd == SW_SHOWMINNOACTIVE || cmd == SW_MINIMIZE || cmd == SW_FORCEMINIMIZE ||
+                         (w->Style & WS_CHILD);
     DWORD old_state = w->Style & (WS_MINIMIZE | WS_MAXIMIZE);
     DWORD new_state = old_state;
     switch (cmd) {
@@ -1452,11 +1590,35 @@ void WndShow(WND *w, int cmd)
         if (!alive(w))
             goto done;
         flags |= show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+        /* a child of a hidden window only changes its style: nothing of it is on the screen to place. */
+        if (!state_changed && !WndIsTopLevel(w) && w->Parent && !WndIsVisible(w->Parent)) {
+            if (show)
+                w->Style |= WS_VISIBLE;
+            else
+                w->Style &= ~WS_VISIBLE;
+            goto done;
+        }
     }
     if (state_changed || show != was_visible) {
         if (show && !noactivate && WndIsTopLevel(w))
             flags &= ~SWP_NOZORDER;
-        WndSetPos(w, (WND *)HWND_TOP, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, flags);
+        /* what SetWindowPos is told to keep reaches WM_WINDOWPOSCHANGING as 0, as windows gives it. */
+        LONG x = flags & SWP_NOMOVE ? 0 : rect.left, y = flags & SWP_NOMOVE ? 0 : rect.top;
+        LONG cx = flags & SWP_NOSIZE ? 0 : rect.right - rect.left, cy = flags & SWP_NOSIZE ? 0 : rect.bottom - rect.top;
+        WndSetPos(w, (WND *)HWND_TOP, x, y, cx, cy, flags);
+        if (!alive(w))
+            goto done;
+    }
+    if (show && (w->Flags & WNDF_SENDSIZEMOVE)) {
+        w->Flags &= ~WNDF_SENDSIZEMOVE;
+        WPARAM kind = (w->Style & WS_MINIMIZE) ? SIZE_MINIMIZED : (w->Style & WS_MAXIMIZE) ? SIZE_MAXIMIZED : SIZE_RESTORED;
+        MsgSend(w, WM_SIZE, kind, kind == SIZE_MINIMIZED ? 0 :
+                MAKELPARAM(w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top));
+        if (!alive(w))
+            goto done;
+        RECT c = w->ClientRect;
+        screen_to_parent(w, &c);
+        MsgSend(w, WM_MOVE, 0, MAKELPARAM(c.left, c.top));
         if (!alive(w))
             goto done;
     }
@@ -1608,6 +1770,28 @@ done:
     UserDereference(&w->Header);
 }
 
+/* the foreground goes to no window: the one that had it is told, as when the host takes its focus away. */
+static void WndDeactivate(void)
+{
+    WND *old = InputForeground;
+    W32THREAD *t = W32GetThread();
+    if (t && (!old || old->Thread != t))
+        t->Active = nullptr;
+    if (!old || !alive(old))
+        return;
+    UserReference(&old->Header);
+    InputSetForeground(nullptr);
+    if (old->Thread)
+        old->Thread->Active = nullptr;
+    ImeFocusChanged();
+    MsgSendEvent(old, WM_NCACTIVATE, FALSE, 0);
+    if (alive(old))
+        MsgSendEvent(old, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, (old->Style & WS_MINIMIZE) != 0), 0);
+    if (alive(old))
+        WndSendActivateApp(old->Thread, FALSE, nullptr);
+    UserDereference(&old->Header);
+}
+
 void WndSetFocus(WND *w)
 {
     W32THREAD *t = w ? w->Thread : W32GetThread();
@@ -1688,6 +1872,57 @@ WND *WndFromPoint(WND *top, POINT pt)
     }
 }
 
+/*
+ * ChildWindowFromPoint and ChildWindowFromPointEx, as win32kfull 26300 does it. the point is in the client area of the
+ * parent, packed in one argument like the one of WindowFromPoint. outside that area or the shape of the parent there
+ * is no window. inside, the answer is the first direct child from the top whose window rectangle holds the point and
+ * the flags let through, else the parent itself.
+ */
+HWND NTAPI NtUserChildWindowFromPointEx(HWND hwnd, ULONG_PTR point, UINT flags)
+{
+    POINT pt = {(LONG)(ULONG)point, (LONG)(ULONG)(point >> 32)};
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    HWND found = nullptr;
+    if (w) {
+        size_from_caller(w, &pt);
+        if (w != g_desktop) {
+            pt.x = (w->ExStyle & WS_EX_LAYOUTRTL) ? w->ClientRect.right - pt.x : w->ClientRect.left + pt.x;
+            pt.y += w->ClientRect.top;
+        }
+        if (RectContains(&w->ClientRect, pt.x, pt.y) && LayerHitTest(w, pt)) {
+            found = WndHandle(w);
+            for (WND *c = w->FirstChild; c; c = c->Next) {
+                POINT at = pt;
+                if (w == g_desktop)
+                    DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
+                if (((flags & CWP_SKIPINVISIBLE) && !(c->Style & WS_VISIBLE)) ||
+                    ((flags & CWP_SKIPDISABLED) && (c->Style & WS_DISABLED)) ||
+                    ((flags & CWP_SKIPTRANSPARENT) && (c->ExStyle & WS_EX_TRANSPARENT)))
+                    continue;
+                if (RectContains(&c->WindowRect, at.x, at.y) && LayerHitTest(c, at)) {
+                    found = WndHandle(c);
+                    break;
+                }
+            }
+        }
+    }
+    UserLeave();
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return found;
+}
+
+/* the processes SetAdditionalForegroundBoostProcesses named for the window, which it lets go of. */
+static void release_boost(WND *w)
+{
+    for (ULONG i = 0; i < w->BoostCount; i++)
+        ObDereferenceObject(w->BoostProcesses[i]);
+    W32Free(w->BoostProcesses);
+    w->BoostProcesses = nullptr;
+    w->BoostCount = 0;
+}
+
 /* destruction. */
 
 static void free_window(WND *w)
@@ -1711,12 +1946,17 @@ static void free_window(WND *w)
     if (InputForeground == w)
         InputSetForeground(nullptr);
     MenuWindowDestroyed(w);
+    ScrollWindowDestroyed(w);
     ClipboardWindowDestroyed(w);
     DndWindowDestroyed(w);
     TrayWindowDestroyed(w);
     ImeWindowDestroyed(w);
     PropFreeWindow(w);
     W32Free(w->ShutdownReason);
+    W32Free(w->MessageFilter);
+    w->MessageFilter = nullptr;
+    w->MessageFilterCount = w->MessageFilterCapacity = 0;
+    release_boost(w);
     if (w->Flags & WNDF_HOST_WINDOW) {
         HostWindowDestroy(w);
         w->Flags &= ~WNDF_HOST_WINDOW;
@@ -1739,6 +1979,16 @@ static void free_window(WND *w)
     w->Text = nullptr;
     W32Free(w->Extra);
     w->Extra = nullptr;
+    W32Free(w->Scroll);
+    w->Scroll = nullptr;
+    /*
+     * user32 frees its copy of the extra bytes when its own thread lets the window go. a thread that ends is not
+     * called back: a call that never returns would leave the window half freed, with the thread gone under it.
+     */
+    PVOID user_extra = w->UserExtra;
+    w->UserExtra = nullptr;
+    if (user_extra && w->Thread == PsGetCurrentThreadWin32Thread() && !w->Thread->Destroying)
+        ClientFreeExtraBytes(w, user_extra);
     RgnFree(&w->Update);
     w->Header.Destroyed = TRUE;
     UserFreeHandle(&w->Header);
@@ -1787,9 +2037,38 @@ void WndDestroy(WND *w)
             WndDestroy(owned);
         }
     }
-    if (w->Style & WS_VISIBLE)
-        WndSetPos(w, nullptr, 0, 0, 0, 0,
-                  SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | (WndIsTopLevel(w) ? 0 : SWP_NOACTIVATE));
+    /*
+     * xxxDestroyWindow: the menu bar of a top level window is let go first, then the window is hidden without
+     * activating anything, and only then does the activation and the focus leave it.
+     */
+    if (WndIsTopLevel(w)) {
+        MsgSend(w, 0x0090, 0, 0); /* WM_UAHDESTROYWINDOW */
+        if (!alive(w) || (w->Flags & WNDF_DESTROYING))
+            goto done;
+    }
+    if (w->Style & WS_VISIBLE) {
+        g_hiding_destroyed = w;
+        WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        g_hiding_destroyed = nullptr;
+        if (!alive(w) || (w->Flags & WNDF_DESTROYING))
+            goto done;
+    }
+    if (WndIsTopLevel(w) && InputForeground == w) {
+        WND *next = w->Owner && WndIsVisible(w->Owner) ? w->Owner : nullptr;
+        for (WND *c = g_desktop->FirstChild; !next && c; c = c->Next)
+            if (c != w && (c->Style & WS_VISIBLE) && c->Thread == w->Thread && !(c->ExStyle & WS_EX_NOACTIVATE) &&
+                !(c->Flags & WNDF_DESTROYING))
+                next = c;
+        if (next)
+            WndActivate(next, FALSE);
+        else
+            WndDeactivate();
+    }
+    if (alive(w) && w->Thread) {
+        WND *focus = WndLookup(w->Thread->Focus);
+        if (focus && (focus == w || WndIsChildOf(focus, w)))
+            WndSetFocus(w->Parent && w->Parent != g_desktop ? w->Parent : nullptr);
+    }
     if (alive(w) && !(w->Flags & WNDF_DESTROYING))
         destroy_tree(w);
 done:
@@ -1867,6 +2146,71 @@ void WndDestroyThreadWindows(W32THREAD *t)
 
 /* creation. */
 
+/*
+ * the strings of NtUserCreateWindowEx: a LARGE_STRING, a length and a room in bytes of which the top bit says the
+ * buffer is ansi, then the buffer, or an atom in place of its address. a name of a resource is 0xffff and its
+ * number, or 0xff and its number in an ansi one.
+ */
+typedef struct LARGE_STRING_X {
+    ULONG Length;
+    ULONG MaximumLength; /* bit 31 is bAnsi. */
+    ULONG64 Buffer;
+} LARGE_STRING_X;
+
+static NTSTATUS capture_large_string(const void *user, PWSTR *out, SIZE_T *chars, ATOM *atom)
+{
+    *out = nullptr;
+    if (chars)
+        *chars = 0;
+    if (atom)
+        *atom = 0;
+    if ((ULONG_PTR)user < 0x10000) {
+        if (atom)
+            *atom = (ATOM)(ULONG_PTR)user;
+        return user || atom ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    }
+    LARGE_STRING_X s;
+    if (!NT_SUCCESS(MimeCopyFromUser(&s, user, sizeof(s))))
+        return STATUS_ACCESS_VIOLATION;
+    BOOLEAN ansi = (s.MaximumLength & 0x80000000u) != 0;
+    ULONG bytes = s.Length;
+    if (bytes > 0x10000)
+        bytes = 0x10000;
+    if (!s.Buffer)
+        bytes = 0;
+    UCHAR *raw = W32Alloc(bytes + 2);
+    PWSTR text = W32Alloc(((SIZE_T)bytes + 2) * sizeof(WCHAR));
+    if (!raw || !text) {
+        W32Free(raw);
+        W32Free(text);
+        return STATUS_NO_MEMORY;
+    }
+    if (bytes && !NT_SUCCESS(MimeCopyFromUser(raw, (PVOID)(ULONG_PTR)s.Buffer, bytes))) {
+        W32Free(raw);
+        W32Free(text);
+        return STATUS_ACCESS_VIOLATION;
+    }
+    SIZE_T n;
+    if (ansi && bytes >= 3 && raw[0] == 0xFF) {
+        text[0] = 0xFFFF;
+        text[1] = (WCHAR)(raw[1] | raw[2] << 8);
+        n = 2;
+    } else if (ansi) {
+        ULONG written = 0;
+        RtlMultiByteToUnicodeN(text, bytes * sizeof(WCHAR), &written, (const CHAR *)raw, bytes);
+        n = written / sizeof(WCHAR);
+    } else {
+        n = bytes / sizeof(WCHAR);
+        memcpy(text, raw, n * sizeof(WCHAR));
+    }
+    text[n] = 0;
+    W32Free(raw);
+    *out = text;
+    if (chars)
+        *chars = n;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS capture_class_name(PUNICODE_STRING user, PWSTR *name, ATOM *atom)
 {
     UNICODE_STRING s;
@@ -1887,8 +2231,10 @@ static NTSTATUS capture_class_name(PUNICODE_STRING user, PWSTR *name, ATOM *atom
 static PVOID build_createstruct(WND *w, LPVOID param, HWND parent, int x, int y, int cx, int cy, PCWSTR name,
                                 PCWSTR class_name, ULONG *size)
 {
+    /* a class given by its atom is that atom in the structure. */
+    BOOLEAN class_atom = (ULONG_PTR)class_name < 0x10000;
     SIZE_T name_bytes = name ? (wcslen(name) + 1) * sizeof(WCHAR) : 0;
-    SIZE_T class_bytes = (wcslen(class_name) + 1) * sizeof(WCHAR);
+    SIZE_T class_bytes = class_atom ? 0 : (wcslen(class_name) + 1) * sizeof(WCHAR);
     SIZE_T total = sizeof(CREATESTRUCTW) + name_bytes + class_bytes;
     PUCHAR buf = W32Alloc(total);
     if (!buf)
@@ -1902,7 +2248,7 @@ static PVOID build_createstruct(WND *w, LPVOID param, HWND parent, int x, int y,
     cs->y = y;
     cs->cx = cx;
     cs->cy = cy;
-    cs->style = (LONG)w->Style;
+    cs->style = (LONG)w->CreateStyle;
     cs->dwExStyle = w->ExStyle;
     SIZE_T off = sizeof(CREATESTRUCTW);
     if (name) {
@@ -1910,8 +2256,12 @@ static PVOID build_createstruct(WND *w, LPVOID param, HWND parent, int x, int y,
         cs->lpszName = (LPCWSTR)off;
         off += name_bytes;
     }
-    memcpy(buf + off, class_name, class_bytes);
-    cs->lpszClass = (LPCWSTR)off;
+    if (class_atom) {
+        cs->lpszClass = class_name;
+    } else {
+        memcpy(buf + off, class_name, class_bytes);
+        cs->lpszClass = (LPCWSTR)off;
+    }
     *size = (ULONG)total;
     return buf;
 }
@@ -1947,41 +2297,50 @@ static BOOLEAN cbt_create(WND *w, LPVOID param, HWND parent, int placed[4], PCWS
     return !refused;
 }
 
-HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNICODE_STRING user_name, DWORD style,
-                                int x, int y, int cx, int cy, HWND parent_h, HMENU menu, HINSTANCE instance,
-                                LPVOID param, DWORD flags)
+/*
+ * the creation as user32 of 26300.9457 asks for it: the class as the caller named it and the name user32 found for
+ * its version in the activation context, each a LARGE_STRING or an atom, the name of the window, the usual
+ * parameters, then the band of the window, the version of windows the caller was made for with the flags of
+ * CreateWindowInternal in its top bits, a value user32 always gives as 0 and the activation context. bit 31 of the
+ * extended style says the caller is ansi.
+ */
+HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const void *user_version,
+                                const void *user_name, DWORD style, int x, int y, int cx, int cy, HWND parent_h,
+                                HMENU menu, HINSTANCE instance, LPVOID param, DWORD band, DWORD flags, DWORD unknown,
+                                PVOID actctx)
 {
-    PWSTR class_name = nullptr, name = nullptr;
-    ATOM atom;
+    PWSTR class_name = nullptr, version_name = nullptr, name = nullptr;
+    ATOM atom, version_atom;
     SIZE_T name_chars = 0;
     HWND result = nullptr;
-    if (!NT_SUCCESS(capture_class_name(user_class, &class_name, &atom)))
+    (void)band, (void)unknown, (void)actctx, (void)flags;
+    ex_style &= ~0x80000000u;
+    DWORD requested_style = style;
+    if (!NT_SUCCESS(capture_large_string(user_class, &class_name, nullptr, &atom)) ||
+        !NT_SUCCESS(capture_large_string(user_version ? user_version : user_class, &version_name, nullptr,
+                                         &version_atom))) {
+        DbgPrint("win32k: CreateWindowEx pid %u: bad class pointer\n", (ULONG)(ULONG_PTR)PsGetCurrentProcessId());
+        W32Free(class_name);
+        W32SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
-    if (user_name) {
-        UNICODE_STRING s;
-        if (!NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s)))) {
-            W32Free(class_name);
-            return nullptr;
-        }
-        if (!s.Length && s.Buffer && (ULONG_PTR)s.Buffer < 0x10000) {
-            /* dialog templates may name a resource with 0xFFFF followed by its ordinal. */
-            name = W32Alloc(3 * sizeof(WCHAR));
-            if (name) {
-                name[0] = 0xFFFF;
-                name[1] = (WCHAR)(ULONG_PTR)s.Buffer;
-                name_chars = 2;
-            }
-        } else if (!NT_SUCCESS(W32CaptureString(user_name, &name, &name_chars))) {
-            W32Free(class_name);
-            return nullptr;
-        }
+    }
+    if (user_name && !NT_SUCCESS(capture_large_string(user_name, &name, &name_chars, nullptr))) {
+        W32Free(class_name);
+        W32Free(version_name);
+        W32SetLastError(ERROR_NOACCESS);
+        return nullptr;
+    }
+    /* the caption of a window is drawn here, with a font no program asked for. */
+    if ((style & WS_CAPTION) == WS_CAPTION && !(style & WS_CHILD)) {
+        LOGFONTW caption = W32CaptionFontForDpi(96);
+        FontAskFor(caption.lfFaceName);
     }
     UserEnter();
     W32THREAD *t = W32GetThread();
     WND *desktop = WndDesktop();
-    WND_CLASS *cls = t ? ClassFind(t->Process, class_name, atom, instance) : nullptr;
+    WND_CLASS *cls = t ? ClassFind(t->Process, version_name, version_atom, instance) : nullptr;
     if (!cls || !desktop) {
-        DbgPrint("win32k: CreateWindowEx: class %ws (%x) not found\n", class_name ? class_name : L"", atom);
+        W32SetLastError(1407); /* ERROR_CANNOT_FIND_WND_CLASS */
         goto out;
     }
 
@@ -2016,6 +2375,15 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     w->Class = cls;
     cls->Windows++;
     w->Proc = ClassProc(cls, t->Process);
+    /*
+     * the list of a combo box has a class of its own, yet ListBoxWndProcWorker of user32 26300 takes a window of
+     * no kind or a list box alone, and refuses WM_NCCREATE for any other.
+     */
+    w->Fnid = (USHORT)(cls->Fnid == FNID_COMBOLISTBOX ? FNID_LISTBOX : cls->Fnid);
+    if (w->ExtraSize) {
+        w->UserExtra = ClientAllocExtraBytes(w->ExtraSize);
+        WndExtraChanged(w, 0, w->ExtraSize);
+    }
     w->Ansi = cls->Ansi;
     w->Instance = instance;
     w->Owner = owner;
@@ -2031,7 +2399,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         w->Flags |= WNDF_DPI_CHILDREN;
     w->Icon = cls->Icon;
     w->IconSmall = cls->IconSmall;
-    if (cls->Fnid == MIME_FNID_DIALOG)
+    if (cls->Fnid == FNID_DIALOG)
         w->Flags |= WNDF_DIALOG;
     if (message_only)
         ex_style |= 0x80000000u; /* private marker: message only window, never visible. */
@@ -2045,6 +2413,10 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     if (ex_style & WS_EX_DLGMODALFRAME)
         ex_style |= WS_EX_WINDOWEDGE;
     w->Style = style & ~(WS_VISIBLE | WS_MINIMIZE | WS_MAXIMIZE);
+    /* the structures of WM_NCCREATE and WM_CREATE carry the style the caller asked for. */
+    w->CreateStyle = requested_style;
+    if (name)
+        w->Flags |= WNDF_HASNAME;
     w->MinPosition = (POINT){-1, -1};
     w->MaxPosition = (POINT){-1, -1};
     w->ExStyle = ex_style;
@@ -2055,7 +2427,8 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         /* the keyboard cues of a top level window are hidden until the keyboard is used. */
         w->UiState = MetricsKeyboardCues() ? 0 : UISF_HIDEFOCUS | UISF_HIDEACCEL;
     }
-    if (name)
+    /* a name that is 0xffff and the number of a resource reaches WM_CREATE and is not the text of the window. */
+    if (name && name[0] != 0xFFFF)
         w->Text = W32StrDup(name, name_chars), w->TextLength = w->Text ? (ULONG)name_chars : 0;
 
     /* default positions for overlapped windows. */
@@ -2104,7 +2477,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     UserReference(&w->Header);
 
     if (HookActive(WH_CBT, t)) {
-        PCWSTR hook_class = cls->Name ? cls->Name : L"";
+        PCWSTR hook_class = class_name ? class_name : (PCWSTR)(ULONG_PTR)atom;
         int placed[4] = {x, y, cx, cy};
         if (!cbt_create(w, param, parent_h, placed, name, hook_class, &after) || !alive(w))
             goto fail;
@@ -2139,7 +2512,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     }
 
     ULONG cs_size;
-    PCWSTR real_class = cls->Name ? cls->Name : L"";
+    PCWSTR real_class = class_name ? class_name : (PCWSTR)(ULONG_PTR)atom;
     PVOID cs = build_createstruct(w, param, parent_h, x, y, cx, cy, name, real_class, &cs_size);
     if (!cs)
         goto fail;
@@ -2149,15 +2522,16 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         goto fail;
     }
 
-    /* the window may have been placed again while it handled WM_NCCREATE, the client area follows where it is now. */
+    /*
+     * the window may have been placed again while it handled WM_NCCREATE, the client area follows where it is now.
+     * windows gives this first WM_NCCALCSIZE the rectangle on the screen, a child's included.
+     */
     RECT window = w->WindowRect, client;
-    screen_to_parent(w, &window);
-    calc_client(w, &window, &window, &client, FALSE);
+    calc_client(w, &window, &window, &client, FALSE, nullptr);
     if (!alive(w)) {
         W32Free(cs);
         goto fail;
     }
-    parent_to_screen(w->Parent, w->Awareness, &client);
     w->ClientRect = client;
 
     r = send_kernel(w, WM_CREATE, 0, cs, MIME_LPARAM_CREATESTRUCT, cs_size);
@@ -2166,7 +2540,10 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         goto fail;
     w->Flags |= WNDF_SENT_CREATE;
 
-    if (!(w->Flags & WNDF_DESTROYING)) {
+    /* an overlapped window is told of its size and place when it is first shown, the others now. */
+    if (!(style & (WS_CHILD | WS_POPUP)) && !message_only)
+        w->Flags |= WNDF_SENDSIZEMOVE;
+    else if (!(w->Flags & WNDF_DESTROYING)) {
         MsgSend(w, WM_SIZE, SIZE_RESTORED,
                 MAKELPARAM(w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top));
         RECT c = w->ClientRect;
@@ -2184,10 +2561,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     } else if (style & WS_MAXIMIZE) {
         WndShow(w, SW_MAXIMIZE);
     } else if (style & WS_VISIBLE) {
-        if (style & WS_CHILD)
-            WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        else
-            WndShow(w, SW_SHOW);
+        WndShow(w, SW_SHOW);
     }
     if (alive(w))
         result = WndHandle(w);
@@ -2200,6 +2574,7 @@ fail:
     UserDereference(&w->Header);
 out:
     UserLeave();
+    W32Free(version_name);
     W32Free(class_name);
     W32Free(name);
     return result;
@@ -2322,7 +2697,7 @@ static BOOLEAN host_takes_drag(WND *w, POINT at, POINT size, UINT flags)
         edge = edges[top ? 1 : bottom ? 2 : 0][left ? 1 : right ? 2 : 0];
     }
     /* a host that refuses is asked again at the next step: a window leaves the whole screen as it starts to move. */
-    return HostMoveSize(w, edge);
+    return HostMoveSize(w, edge, FALSE);
 }
 
 BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags)
@@ -2344,6 +2719,146 @@ BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int c
     }
     UserLeave();
     return ok;
+}
+
+/* MoveWindow: a SetWindowPos that keeps the z order and the activation, and leaves the painting out without repaint. */
+BOOL NTAPI NtUserMoveWindow(HWND hwnd, int x, int y, int cx, int cy, BOOL repaint)
+{
+    return NtUserSetWindowPos(hwnd, nullptr, x, y, cx, cy,
+                              SWP_NOZORDER | SWP_NOACTIVATE | (repaint ? 0 : SWP_NOREDRAW));
+}
+
+/*
+ * TransformPoint and TransformRect of user32, when the dpi awareness context of the thread is not the one of the
+ * window: the coordinates go from the dpi of one context, in bits 8 to 16, to the dpi of the other.
+ */
+static LONG context_dpi(DWORD context)
+{
+    LONG dpi = (LONG)((context >> 8) & 0x1FF);
+    return dpi ? dpi : 96;
+}
+
+BOOL NTAPI NtUserTransformPoint(POINT *user_point, DWORD from, DWORD to, HANDLE monitor)
+{
+    POINT p;
+    if (!NT_SUCCESS(MimeCopyFromUser(&p, user_point, sizeof(p))))
+        return FALSE;
+    (void)monitor;
+    p.x = W32MulDiv(p.x, context_dpi(to), context_dpi(from));
+    p.y = W32MulDiv(p.y, context_dpi(to), context_dpi(from));
+    return NT_SUCCESS(MimeCopyToUser(user_point, &p, sizeof(p)));
+}
+
+BOOL NTAPI NtUserTransformRect(RECT *user_rect, DWORD from, DWORD to, HANDLE monitor)
+{
+    RECT r;
+    if (!NT_SUCCESS(MimeCopyFromUser(&r, user_rect, sizeof(r))))
+        return FALSE;
+    (void)monitor;
+    r.left = W32MulDiv(r.left, context_dpi(to), context_dpi(from));
+    r.top = W32MulDiv(r.top, context_dpi(to), context_dpi(from));
+    r.right = W32MulDiv(r.right, context_dpi(to), context_dpi(from));
+    r.bottom = W32MulDiv(r.bottom, context_dpi(to), context_dpi(from));
+    return NT_SUCCESS(MimeCopyToUser(user_rect, &r, sizeof(r)));
+}
+
+/*
+ * SetWindowState and ClearWindowState of user32: the high byte of the flag is a byte of the window, 8 of state, 4 of
+ * extended style and 4 of style, and the low byte the bits in it. a control changes its own styles this way with no
+ * message, as a combo box gives up the scroll bar and the edge asked for it, which are those of its list. the
+ * state bytes are made anew for each window that is mirrored, so only the styles are kept.
+ */
+static BOOL window_state(HWND hwnd, DWORD flag, BOOLEAN set)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = w && w->Thread && w->Thread->Process == W32GetProcess();
+    if (ok) {
+        ULONG index = (flag >> 8) & 0xFF;
+        DWORD bits = (flag & 0xFF) << ((index & 3) * 8);
+        DWORD *word = index >= 8 && index < 12 ? &w->ExStyle : index >= 12 && index < 16 ? &w->Style : nullptr;
+        if (word)
+            *word = set ? *word | bits : *word & ~bits;
+    } else {
+        W32SetLastError(w ? ERROR_ACCESS_DENIED : ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtUserSetWindowState(HWND hwnd, DWORD flag)
+{
+    return window_state(hwnd, flag, TRUE);
+}
+
+BOOL NTAPI NtUserClearWindowState(HWND hwnd, DWORD flag)
+{
+    return window_state(hwnd, flag, FALSE);
+}
+
+/*
+ * AlterWindowStyle of user32 26300: the scroll bar bits and the low control bits of the style, 0x30023f, change by
+ * the mask with no message. a window of another process stays as it is and the call still succeeds.
+ */
+BOOL NTAPI NtUserAlterWindowStyle(HWND hwnd, DWORD mask, DWORD flags)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w && w->Thread && w->Thread->Process == W32GetProcess()) {
+        mask &= 0x30023F;
+        w->Style = (w->Style & ~mask) | (flags & mask);
+    } else if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return w != nullptr;
+}
+
+/*
+ * user32 names the procedure a window runs with when it takes over a window of no class of its own, as DefDlgProc
+ * makes a window a dialog. a window keeps the first one, of its own process; 0x4000 marks it cleaned up.
+ */
+BOOL NTAPI NtUserSetWindowFNID(HWND hwnd, WORD fnid)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = FALSE;
+    if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    } else if (!w->Thread || w->Thread->Process != W32GetProcess()) {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    } else if (fnid == 0x4000 || (!(w->Fnid & 0x3FFF) && fnid >= FNID_FIRST && fnid <= FNID_LAST_CLIENT)) {
+        w->Fnid = fnid == 0x4000 ? (USHORT)(w->Fnid | 0x4000) : fnid;
+        ok = TRUE;
+    } else {
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    }
+    UserLeave();
+    return ok;
+}
+
+/*
+ * SetDialogPointer: user32 keeps its structure of a dialog in the second pointer of the extra bytes of the window,
+ * which must hold DLGWINDOWEXTRA. the window becomes a dialog, or one cleaned up when the pointer is taken away.
+ */
+BOOL NTAPI NtUserSetDialogPointer(HWND hwnd, PVOID pointer)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w && w->Extra && w->ExtraSize >= 30 && w->Proc && w->Thread && w->Thread->Process == W32GetProcess()) {
+        memcpy(w->Extra + 8, &pointer, sizeof(pointer));
+        WndExtraChanged(w, 8, sizeof(pointer));
+        if (pointer) {
+            if (!w->Fnid)
+                w->Fnid = FNID_DIALOG;
+            w->Flags |= WNDF_DLGPOINTER;
+        } else {
+            w->Fnid |= 0x4000;
+            w->Flags &= ~WNDF_DLGPOINTER;
+        }
+    }
+    UserLeave();
+    return TRUE;
 }
 
 BOOL NTAPI NtUserEnableWindow(HWND hwnd, BOOL enable)
@@ -2436,7 +2951,7 @@ static WND *root_owner(WND *w)
 
 HWND NTAPI NtUserGetAncestor(HWND hwnd, UINT flags)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd), *r = nullptr;
     if (w && w != g_desktop) {
         switch (flags) {
@@ -2552,6 +3067,7 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
         old = 0;
         memcpy(&old, w->Extra + index, size);
         memcpy(w->Extra + index, &value, size);
+        WndExtraChanged(w, (ULONG)index, (ULONG)size);
         return old;
     }
     return 0;
@@ -2579,6 +3095,59 @@ LONG NTAPI NtUserSetWindowLong(HWND hwnd, int index, LONG value, BOOL ansi)
     }
     UserLeave();
     return old;
+}
+
+/*
+ * as xxxSetWindowWord of win32kfull: a word of the extra bytes, or the low words of the user data and of the style
+ * with no message. any other index is ERROR_INVALID_INDEX.
+ */
+WORD NTAPI NtUserSetWindowWord(HWND hwnd, int index, WORD value)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    WORD old = 0;
+    if (can_touch(w)) {
+        if (index == GWLP_USERDATA) {
+            old = (WORD)w->UserData;
+            w->UserData = (w->UserData & ~(LONG_PTR)0xFFFF) | value;
+        } else if (index == GWL_STYLE) {
+            old = (WORD)w->Style;
+            w->Style = (w->Style & 0xFFFF0000u) | value;
+        } else if (index >= 0 && w->Extra && (ULONG)index + sizeof(WORD) <= w->ExtraSize) {
+            memcpy(&old, w->Extra + index, sizeof(WORD));
+            memcpy(w->Extra + index, &value, sizeof(WORD));
+            WndExtraChanged(w, (ULONG)index, sizeof(WORD));
+        } else {
+            W32SetLastError(ERROR_INVALID_INDEX);
+        }
+    } else if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return old;
+}
+
+BOOL NTAPI NtUserSetWindowContextHelpId(HWND hwnd, DWORD id)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w)
+        w->ContextHelpId = id;
+    else
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    UserLeave();
+    return w != nullptr;
+}
+
+DWORD NTAPI NtUserGetWindowContextHelpId(HWND hwnd)
+{
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    DWORD id = w ? w->ContextHelpId : 0;
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    UserLeave();
+    return id;
 }
 
 BOOL NTAPI NtUserDefSetText(HWND hwnd, PUNICODE_STRING user_text)
@@ -2616,8 +3185,10 @@ static BOOLEAN class_name_matches(WND *w, PCWSTR name, ATOM atom)
 {
     if (!w->Class)
         return FALSE;
+    if (!atom)
+        atom = ClassIntegerAtom(name);
     if (atom)
-        return w->Class->Atom == atom;
+        return w->Class->Atom == atom || w->Class->PlainAtom == atom;
     return w->Class->Name && !_wcsicmp(w->Class->Name, name);
 }
 
@@ -2645,7 +3216,8 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
     UserEnter();
     HWND result = nullptr;
     WND *parent = parent_h ? WndLookup(parent_h) : WndDesktop();
-    if (parent_h == HWND_MESSAGE)
+    BOOLEAN message = parent_h == HWND_MESSAGE;
+    if (message)
         parent = WndDesktop();
     if (parent) {
         WND *c = parent->FirstChild;
@@ -2655,6 +3227,9 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
         }
         for (; c; c = c->Next) {
             if (c->Flags & WNDF_DESTROYING)
+                continue;
+            /* the message windows are found under HWND_MESSAGE alone, and nothing else is found there. */
+            if (parent == g_desktop && is_message_window(c) != message)
                 continue;
             if (have_class && !class_name_matches(c, class_name, atom))
                 continue;
@@ -2674,7 +3249,11 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
     return result;
 }
 
-/* windows' shape, with the flag that leaves out immersive windows, which mime has none of. */
+/*
+ * windows' shape, with the flag that leaves out immersive windows, which mime has none of. the list is the z order
+ * from the top, hidden, disabled and owned windows included, message windows left out. one entry past the windows
+ * closes it and is counted: user32 refuses a count of one and walks all but the last.
+ */
 NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, BOOL remove_immersive, ULONG thread,
                                    ULONG max, HWND *list, ULONG *count)
 {
@@ -2683,12 +3262,22 @@ NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, 
     ULONG n = 0;
     NTSTATUS status = STATUS_SUCCESS;
     if (!parent) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         UserLeave();
         return STATUS_INVALID_HANDLE;
+    }
+    if (thread && !W32LookupThread((HANDLE)(ULONG_PTR)thread)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        UserLeave();
+        return STATUS_INVALID_PARAMETER;
     }
     /* walk depth first when children are requested, siblings otherwise. */
     WND *c = parent->FirstChild;
     while (c) {
+        if (is_message_window(c)) {
+            c = c->Next;
+            continue;
+        }
         if (!(c->Flags & WNDF_DESTROYING) && (!thread || (c->Thread && (ULONG)(ULONG_PTR)c->Thread->Tid == thread))) {
             if (n < max) {
                 HWND h = WndHandle(c);
@@ -2707,11 +3296,18 @@ NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, 
             c = c->Parent;
         c = c ? c->Next : nullptr;
     }
+    if (NT_SUCCESS(status)) {
+        HWND end = (HWND)(ULONG_PTR)1;
+        if (n < max && !NT_SUCCESS(MimeCopyToUser(&list[n], &end, sizeof(end))))
+            status = STATUS_ACCESS_VIOLATION;
+        n++;
+    }
     if (NT_SUCCESS(status) && n > max)
         status = STATUS_BUFFER_TOO_SMALL;
     MimeCopyToUser(count, &n, sizeof(n));
     UserLeave();
     (void)desktop;
+    (void)remove_immersive;
     return status;
 }
 
@@ -2833,6 +3429,11 @@ HWND NTAPI NtUserSetFocus(HWND hwnd)
     HWND old = t ? t->Focus : nullptr;
     WND *w = hwnd ? WndLookup(hwnd) : nullptr;
     if (hwnd && (!can_touch(w) || (w->Style & WS_DISABLED) || w->Thread != t)) {
+        /* measured on windows: a handle that is no window is 1400, a disabled window is 87. */
+        if (!w)
+            W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        else if (w->Style & WS_DISABLED)
+            W32SetLastError(ERROR_INVALID_PARAMETER);
         UserLeave();
         return nullptr;
     }
@@ -2845,23 +3446,442 @@ HWND NTAPI NtUserSetFocus(HWND hwnd)
     return old;
 }
 
+/* SetForegroundWindow, which user32 26300 passes straight through. the rule is the one MIME_HWND_SETFOREGROUND had. */
+BOOL NTAPI NtUserSetForegroundWindow(HWND hwnd)
+{
+    UserEnter();
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
+    BOOL ok = FALSE;
+    if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    } else if (can_touch(w)) {
+        WndActivate(w, FALSE);
+        ok = TRUE;
+    } else {
+        /* the desktop takes the foreground and no window of the caller is active after it. */
+        WndDeactivate();
+        ok = TRUE;
+    }
+    UserLeave();
+    return ok;
+}
+
+/*
+ * AllowSetForegroundWindow and LockSetForegroundWindow, which user32 26300 passes straight through. every process may
+ * take the foreground here, so what is left is the answers windows 11 26300 gives a caller that may, measured with
+ * fgallow.c of the research repository: any process or one that has windows, and a lock that is taken or given once.
+ */
+#define ASFW_ANY ((DWORD)-1)
+#define LSFW_LOCK 1
+#define LSFW_UNLOCK 2
+
+static LONG g_foreground_locked;
+
+BOOL NTAPI NtUserAllowSetForegroundWindow(DWORD pid)
+{
+    if (pid == ASFW_ANY)
+        return TRUE;
+    PEPROCESS process = nullptr;
+    /* the system process of windows has no part in the window manager; the one of mime keeps the desktop. */
+    BOOL ok = pid && NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process)) &&
+              process != PsInitialSystemProcess && PsGetProcessWin32Process(process) != nullptr;
+    if (process)
+        ObDereferenceObject(process);
+    if (!ok)
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    return ok;
+}
+
+BOOL NTAPI NtUserLockSetForegroundWindow(UINT code)
+{
+    LONG expected = code == LSFW_LOCK ? 0 : 1;
+    BOOL ok = (code == LSFW_LOCK || code == LSFW_UNLOCK) &&
+              __atomic_compare_exchange_n(&g_foreground_locked, &expected, code == LSFW_LOCK, FALSE, __ATOMIC_SEQ_CST,
+                                          __ATOMIC_SEQ_CST);
+    if (!ok)
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    return ok;
+}
+
+/*
+ * SetProcessLaunchForegroundPolicy, as win32kbase 26300 checks it. 0 keeps the rule of a program a click launched, 1
+ * refuses the process the foreground and 2 grants it, and 4 added keeps the entry past the first start. the caller
+ * needs PROCESS_SET_INFORMATION and the process must not have started its windows. windows keeps ten entries for the
+ * start of the windows of their processes; every process may take the foreground here, so an entry only waits for
+ * that start or the end of its process.
+ */
+#define LAUNCH_POLICY_SLOTS 10
+#define SE_DEBUG_PRIVILEGE 20
+
+static struct LAUNCH_POLICY {
+    PEPROCESS Process; /* referenced. */
+    ULONG Policy;
+    BOOLEAN Keep;
+} g_launch_policies[LAUNCH_POLICY_SLOTS];
+
+BOOL NTAPI NtUserSetProcessLaunchForegroundPolicy(DWORD pid, DWORD policy)
+{
+    DWORD base = policy & ~4u;
+    if ((policy & 3) == 3 || base > 2) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PEPROCESS process = nullptr;
+    NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+    if (NT_SUCCESS(status) && !MimeCurrentHasPrivilege(SE_DEBUG_PRIVILEGE)) {
+        ACCESS_MASK granted;
+        status = ObCheckOpenAccess(process, PROCESS_SET_INFORMATION, UserMode, &granted);
+    }
+    if (!NT_SUCCESS(status)) {
+        if (process)
+            ObDereferenceObject(process);
+        W32SetLastError(status == STATUS_ACCESS_DENIED ? ERROR_ACCESS_DENIED : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    BOOL ok = PsGetProcessWin32Process(process) == nullptr;
+    if (ok) {
+        struct LAUNCH_POLICY *slot = nullptr;
+        for (ULONG i = 0; i < LAUNCH_POLICY_SLOTS && !slot; i++)
+            if (!g_launch_policies[i].Process || g_launch_policies[i].Process == process)
+                slot = &g_launch_policies[i];
+        /* with every entry taken windows keeps nothing and still says yes. */
+        if (slot) {
+            if (slot->Process)
+                ObDereferenceObject(slot->Process);
+            slot->Process = process;
+            slot->Policy = base;
+            slot->Keep = (policy & 4) != 0;
+            process = nullptr;
+        }
+    }
+    UserLeave();
+    if (process)
+        ObDereferenceObject(process);
+    if (!ok)
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    return ok;
+}
+
+/* a process started its windows, or ended: its entry is used up, or gone. the lock is held. */
+void WndLaunchPolicyDone(PEPROCESS process, BOOLEAN exited)
+{
+    for (ULONG i = 0; i < LAUNCH_POLICY_SLOTS; i++) {
+        struct LAUNCH_POLICY *slot = &g_launch_policies[i];
+        if (slot->Process == process && (exited || !slot->Keep)) {
+            ObDereferenceObject(slot->Process);
+            slot->Process = nullptr;
+        }
+    }
+}
+
+/*
+ * SetAdditionalForegroundBoostProcesses, as win32kbase 26300 checks it: a top level window of the caller names up to 32
+ * processes that share its foreground boost, each opened for PROCESS_SET_INFORMATION, and any failure is a wrong
+ * parameter. a new list replaces the old one and an empty list clears it, which fails when there was none. mime gives
+ * no process a foreground boost, so the list is only kept.
+ */
+#define BOOST_MAX 32
+
+BOOL NTAPI NtUserSetAdditionalForegroundBoostProcesses(HWND hwnd, DWORD count, HANDLE *user_handles)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE
+                  : !w->Thread || w->Thread->Process != W32GetProcess() || !WndIsTopLevel(w) || count > BOOST_MAX
+                      ? ERROR_INVALID_PARAMETER
+                      : 0;
+    if (!error && w)
+        UserReference(&w->Header);
+    UserLeave();
+    if (error) {
+        W32SetLastError(error);
+        return FALSE;
+    }
+    HANDLE handles[BOOST_MAX];
+    PEPROCESS *processes = nullptr;
+    ULONG taken = 0;
+    /* measured on windows 11: a list that cannot be read is a wrong parameter too. */
+    if (count && !NT_SUCCESS(MimeCopyFromUser(handles, user_handles, count * sizeof(HANDLE))))
+        error = ERROR_INVALID_PARAMETER;
+    if (!error && count && !(processes = W32Alloc(count * sizeof(PEPROCESS))))
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    for (; !error && taken < count; taken++) {
+        if (!NT_SUCCESS(ObReferenceObjectByHandle(handles[taken], PROCESS_SET_INFORMATION, PsProcessType, UserMode,
+                                                  (PVOID *)&processes[taken], nullptr)))
+            error = ERROR_INVALID_PARAMETER;
+    }
+    if (error && processes) {
+        /* the one that failed was not referenced. */
+        for (ULONG i = 0; i + 1 < taken; i++)
+            ObDereferenceObject(processes[i]);
+        W32Free(processes);
+        processes = nullptr;
+    }
+    UserEnter();
+    if (!error && !count && !w->BoostCount)
+        error = ERROR_INVALID_PARAMETER;
+    if (!error) {
+        release_boost(w);
+        /* a process named twice counts once. */
+        ULONG kept = 0;
+        for (ULONG i = 0; i < count; i++) {
+            BOOLEAN seen = FALSE;
+            for (ULONG k = 0; k < kept && !seen; k++)
+                seen = processes[k] == processes[i];
+            if (seen)
+                ObDereferenceObject(processes[i]);
+            else
+                processes[kept++] = processes[i];
+        }
+        w->BoostProcesses = kept ? processes : nullptr;
+        w->BoostCount = kept;
+        if (!kept)
+            W32Free(processes);
+        processes = nullptr;
+    }
+    UserDereference(&w->Header);
+    UserLeave();
+    if (processes) {
+        for (ULONG i = 0; i < count; i++)
+            ObDereferenceObject(processes[i]);
+        W32Free(processes);
+    }
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+/*
+ * SetWindowDisplayAffinity and GetWindowDisplayAffinity, as win32kfull 26300 checks them. a top level window of the
+ * caller's process takes 0 or a value with WDA_MONITOR or the bit of WDA_EXCLUDEFROMCAPTURE, and keeps it whole.
+ * windows also needs the window composed, which every top level window is here. any process may read the value of a
+ * top level window.
+ */
+#define WDA_BITS 0x11
+
+BOOL NTAPI NtUserSetWindowDisplayAffinity(HWND hwnd, DWORD affinity)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE
+                  : !w->Thread || w->Thread->Process != W32GetProcess() ? ERROR_ACCESS_DENIED
+                  : !WndIsTopLevel(w) || (affinity && !(affinity & WDA_BITS)) ? ERROR_INVALID_PARAMETER
+                                                                               : 0;
+    if (!error && (w->DisplayAffinity & WDA_BITS) != (affinity & WDA_BITS))
+        ScreenSerial++;
+    if (!error)
+        w->DisplayAffinity = affinity;
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+BOOL NTAPI NtUserGetWindowDisplayAffinity(HWND hwnd, DWORD *user_affinity)
+{
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE : !WndIsTopLevel(w) ? ERROR_INVALID_PARAMETER : 0;
+    DWORD affinity = error ? 0 : w->DisplayAffinity;
+    UserLeave();
+    if (!error && !NT_SUCCESS(MimeCopyToUser(user_affinity, &affinity, sizeof(affinity))))
+        error = ERROR_NOACCESS;
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+/*
+ * ChangeWindowMessageFilterEx, as win32kfull 26300 checks it. a window of the caller's process lets a message in from
+ * a process of lower integrity, stops letting it in, or forgets every message it let in. a caller of low integrity may
+ * not. the answer's status tells what the window already did, and when a message is refused but still comes in by a
+ * rule of the system. mime does not hold messages back between integrities, so the list is only kept.
+ */
+#define SECURITY_MANDATORY_LOW_RID 0x1000
+
+/* the messages every process may send across integrities, IsMessageAlwaysAllowedAcrossIL of win32kfull 26300. */
+static BOOLEAN always_allowed(UINT msg)
+{
+    static const USHORT list[] = {WM_NULL, WM_MOVE, WM_SIZE, WM_GETTEXT, WM_GETTEXTLENGTH, WM_GETHOTKEY, WM_GETICON,
+                                  0x305, 0x308, 0x30D, 0x313, 0x31A, 0x31B, 0x31F, 0x309, 0x30A, 0x30B, 0x30C, 0x30E};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(list); i++)
+        if (list[i] == msg)
+            return TRUE;
+    return FALSE;
+}
+
+/* where the message is in the list of the window, or where it goes. */
+static ULONG filter_find(const WND *w, USHORT msg, BOOLEAN *found)
+{
+    ULONG low = 0, high = w->MessageFilterCount;
+    while (low < high) {
+        ULONG mid = (low + high) / 2;
+        if (w->MessageFilter[mid] < msg)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    *found = low < w->MessageFilterCount && w->MessageFilter[low] == msg;
+    return low;
+}
+
+BOOL NTAPI NtUserChangeWindowMessageFilterEx(HWND hwnd, UINT msg, DWORD action, CHANGEFILTERSTRUCT *user_status)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    /* measured on windows 11: a handle that is no window fails with no error. */
+    if (!w) {
+        UserLeave();
+        return FALSE;
+    }
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE
+                  : !w->Thread || w->Thread->Process != W32GetProcess() ? ERROR_ACCESS_DENIED
+                  : (w->Flags & WNDF_DESTROYING) ? ERROR_INVALID_WINDOW_HANDLE
+                  : action > MSGFLT_DISALLOW || (action == MSGFLT_RESET) != (msg == 0) ? ERROR_INVALID_PARAMETER
+                                                                                       : 0;
+    BOOLEAN silent = FALSE;
+    CHANGEFILTERSTRUCT status = {sizeof(status), MSGFLTINFO_NONE};
+    if (!error && user_status) {
+        if (!NT_SUCCESS(MimeCopyFromUser(&status, user_status, sizeof(status))))
+            silent = TRUE;
+        else if (status.cbSize != sizeof(status))
+            error = ERROR_INVALID_PARAMETER;
+        status.ExtStatus = MSGFLTINFO_NONE;
+    }
+    if (!error && !silent)
+        error = SeThreadIntegrityRid() <= SECURITY_MANDATORY_LOW_RID ? ERROR_ACCESS_DENIED
+                : HIWORD(msg)                                         ? ERROR_INVALID_PARAMETER
+                                                                      : 0;
+    if (!error && !silent && action == MSGFLT_RESET) {
+        W32Free(w->MessageFilter);
+        w->MessageFilter = nullptr;
+        w->MessageFilterCount = w->MessageFilterCapacity = 0;
+    } else if (!error && !silent) {
+        BOOLEAN found;
+        ULONG at = filter_find(w, (USHORT)msg, &found);
+        if (action == MSGFLT_ALLOW && found) {
+            status.ExtStatus = MSGFLTINFO_ALREADYALLOWED_FORWND;
+        } else if (action == MSGFLT_ALLOW) {
+            if (w->MessageFilterCount == w->MessageFilterCapacity) {
+                ULONG capacity = w->MessageFilterCapacity ? w->MessageFilterCapacity * 2 : 8;
+                USHORT *grown = W32Alloc(capacity * sizeof(USHORT));
+                if (!grown) {
+                    error = ERROR_OUTOFMEMORY;
+                } else {
+                    if (w->MessageFilterCount)
+                        memcpy(grown, w->MessageFilter, w->MessageFilterCount * sizeof(USHORT));
+                    W32Free(w->MessageFilter);
+                    w->MessageFilter = grown;
+                    w->MessageFilterCapacity = capacity;
+                }
+            }
+            if (!error) {
+                memmove(&w->MessageFilter[at + 1], &w->MessageFilter[at],
+                        (w->MessageFilterCount - at) * sizeof(USHORT));
+                w->MessageFilter[at] = (USHORT)msg;
+                w->MessageFilterCount++;
+            }
+        } else {
+            if (found) {
+                memmove(&w->MessageFilter[at], &w->MessageFilter[at + 1],
+                        (w->MessageFilterCount - at - 1) * sizeof(USHORT));
+                w->MessageFilterCount--;
+            }
+            status.ExtStatus = always_allowed(msg) ? MSGFLTINFO_ALLOWED_HIGHER
+                               : !found            ? MSGFLTINFO_ALREADYDISALLOWED_FORWND
+                                                   : MSGFLTINFO_NONE;
+        }
+    }
+    UserLeave();
+    if (error) {
+        W32SetLastError(error);
+        return FALSE;
+    }
+    /* windows sets no error for a status it could not read or write, and keeps what it changed. */
+    if (silent || (user_status && !NT_SUCCESS(MimeCopyToUser(user_status, &status, sizeof(status)))))
+        return FALSE;
+    return TRUE;
+}
+
+/*
+ * WindowFromPoint, which user32 26300 passes straight through: the point comes by value, both halves in the first
+ * argument of a 64-bit caller. the answer is the deepest visible window there, in the units of the caller.
+ */
+HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
+{
+#ifdef _WIN64
+    (void)second;
+    POINT pt = {(LONG)(ULONG)point, (LONG)(ULONG)(point >> 32)};
+#else
+    POINT pt = {(LONG)point, (LONG)second};
+#endif
+    UserEnterRead();
+    HWND found = nullptr;
+    DpiPixelConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
+    WND *desktop = WndDesktop();
+    for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
+        POINT at = pt;
+        DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
+        if (!(c->Style & WS_VISIBLE) || (c->Style & WS_MINIMIZE) || (c->ExStyle & WS_EX_TRANSPARENT) ||
+            (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
+            continue;
+        found = WndHandle(WndFromPoint(c, at));
+        break;
+    }
+    UserLeave();
+    return found;
+}
+
 HWND NTAPI NtUserSetActiveWindow(HWND hwnd)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
     HWND old = t ? t->Active : nullptr;
     WND *w = hwnd ? WndLookup(hwnd) : nullptr;
-    if (w && can_touch(w) && WndIsTopLevel(w) && w->Thread == t)
+    /*
+     * measured on windows: a null window does nothing and answers null, a handle that is no window is 1400 and null,
+     * a child changes nothing and answers the active window, and a hidden or a disabled window is activated.
+     */
+    if (!w) {
+        if (hwnd)
+            W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        old = nullptr;
+    } else if (can_touch(w) && WndIsTopLevel(w) && w->Thread == t) {
         WndActivate(w, FALSE);
-    else if (!hwnd && t && InputForeground && InputForeground->Thread == t)
-        InputSetForeground(nullptr);
+    }
     UserLeave();
     return old;
 }
 
-HWND NTAPI NtUserGetForegroundWindow(void)
+/*
+ * what EndDialog calls once an ownerless dialog is hidden, as win32kfull 26300 does it: the input of the caller, and so
+ * every thread attached to it, has no active window and no focus any more, and no window is told.
+ */
+BOOL NTAPI NtUserZapActiveAndFocus(void)
 {
     UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t) {
+        W32THREAD *owner = W32InputOwner(t);
+        for (W32THREAD *x = W32NextThread(nullptr); x; x = W32NextThread(x)) {
+            if (W32InputOwner(x) == owner) {
+                x->Active = nullptr;
+                x->Focus = nullptr;
+            }
+        }
+        if (InputFocusOwner && W32InputOwner(InputFocusOwner) == owner)
+            InputFocusOwner = nullptr;
+        InputKeysChanged();
+        ImeFocusChanged();
+    }
+    UserLeave();
+    return TRUE;
+}
+
+HWND NTAPI NtUserGetForegroundWindow(void)
+{
+    UserEnterRead();
     HWND h = WndHandle(InputForeground);
     UserLeave();
     return h;
@@ -2879,11 +3899,16 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
     UserEnter();
     WND *w = WndLookup(hwnd);
     ULONG_PTR r = 0;
+    /* the queries user32 answers after validating the handle, which is what sets the error. */
+    if (!w && (routine == MIME_HWND_GETPARENT || routine == MIME_HWND_ISVISIBLE || routine == MIME_HWND_ISENABLED ||
+               routine == MIME_HWND_SETFOREGROUND))
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
     if (w) {
         switch (routine) {
         case MIME_HWND_GETPARENT:
             /* GetParent: the parent of a child, the owner of a popup. */
-            if (w->Style & WS_CHILD)
+            /* a window with both styles counts as a popup, as user32 reads the two bits. */
+            if ((w->Style & (WS_CHILD | WS_POPUP)) == WS_CHILD)
                 r = (ULONG_PTR)WndHandle(w->Parent);
             else if (w->Style & WS_POPUP)
                 r = (ULONG_PTR)WndHandle(w->Owner);
@@ -2903,6 +3928,10 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
         case MIME_HWND_SETFOREGROUND:
             if (can_touch(w)) {
                 WndActivate(w, FALSE);
+                r = 1;
+            } else {
+                /* the desktop takes the foreground and no window of the caller is active after it. */
+                WndDeactivate();
                 r = 1;
             }
             break;
@@ -2957,21 +3986,44 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
     return r;
 }
 
+/*
+ * GetWindow as user32 walks it: the desktop answers GW_CHILD alone, the siblings are the z order of the parent from
+ * the top, and nothing is skipped for being hidden, disabled or owned. a command past the known ones is an error.
+ */
 static WND *get_window_rel(WND *w, UINT cmd)
 {
+    if (w == g_desktop && cmd != GW_CHILD)
+        return nullptr;
+    WND *c;
     switch (cmd) {
     case GW_HWNDFIRST:
-        return w->Parent ? w->Parent->FirstChild : nullptr;
+        for (c = w->Parent ? w->Parent->FirstChild : nullptr; c && !same_list(c, w); c = c->Next)
+            ;
+        return c;
     case GW_HWNDLAST:
-        return w->Parent ? w->Parent->LastChild : nullptr;
+        for (c = w->Parent ? w->Parent->LastChild : nullptr; c && !same_list(c, w); c = c->Prev)
+            ;
+        return c;
     case GW_HWNDNEXT:
-        return w->Next;
+        for (c = w->Next; c && !same_list(c, w); c = c->Next)
+            ;
+        return c;
     case GW_HWNDPREV:
-        return w->Prev;
+        for (c = w->Prev; c && !same_list(c, w); c = c->Prev)
+            ;
+        return c;
     case GW_OWNER:
         return w->Owner;
     case GW_CHILD:
-        return w->FirstChild;
+        return w == g_desktop ? first_top_level() : w->FirstChild;
+    default:
+        if (cmd != GW_ENABLEDPOPUP) {
+            W32SetLastError(1443); /* ERROR_INVALID_GW_COMMAND */
+            return nullptr;
+        }
+        break;
+    }
+    switch (cmd) {
     case GW_ENABLEDPOPUP: {
         for (WND *c = g_desktop->FirstChild; c; c = c->Next)
             if (c->Owner == w && (c->Style & WS_VISIBLE) && !(c->Style & WS_DISABLED) && (c->Style & WS_POPUP))
@@ -3030,11 +4082,14 @@ ULONG_PTR NTAPI NtUserQueryWindow(HWND hwnd, ULONG klass)
     WND *w = WndLookup(hwnd);
     ULONG_PTR r = 0;
     W32THREAD *t = w ? w->Thread : nullptr;
-    if (w == g_desktop && InputThreadId) {
+    if (w == g_desktop) {
+        /* the window of the desktop is the subsystem process's, csrss on windows. */
+        HANDLE pid, tid;
+        PsQuerySubsystemIds(&pid, &tid);
         if (klass == 0 || klass == 1)
-            r = (ULONG_PTR)InputProcessId;
+            r = (ULONG_PTR)pid;
         else if (klass == 2)
-            r = (ULONG_PTR)InputThreadId;
+            r = (ULONG_PTR)tid;
     } else if (t) {
         switch (klass) {
         case 0: /* WindowProcess */
@@ -3069,8 +4124,11 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     UserEnter();
     WND *w = WndLookup(hwnd);
     ULONG_PTR r = 0;
-    if (!w && !((routine == MIME_HWNDPARAM_MAPPOINTS || routine == MIME_HWNDPARAM_DPICONVERT) && !hwnd))
+    if (!w && !((routine == MIME_HWNDPARAM_MAPPOINTS || routine == MIME_HWNDPARAM_DPICONVERT) && !hwnd)) {
+        if (routine == MIME_HWNDPARAM_GETWINDOW)
+            W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         goto out;
+    }
     switch (routine) {
     case MIME_HWNDPARAM_GETWINDOWLONG: {
         BOOLEAN ok;
@@ -3164,11 +4222,13 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         r = (ULONG_PTR)WndHandle(find_dlg_item(w, param));
         break;
     case MIME_HWNDPARAM_GETTHREADPROCESSID:
-        if (w == g_desktop && InputThreadId) {
-            DWORD pid = (DWORD)(ULONG_PTR)InputProcessId;
+        if (w == g_desktop) {
+            HANDLE owner, tid;
+            PsQuerySubsystemIds(&owner, &tid);
+            DWORD pid = (DWORD)(ULONG_PTR)owner;
             if (param)
                 MimeCopyToUser((PVOID)param, &pid, sizeof(pid));
-            r = (ULONG_PTR)InputThreadId;
+            r = (ULONG_PTR)tid;
         } else if (w->Thread) {
             DWORD pid = (DWORD)(ULONG_PTR)w->Thread->Process->Pid;
             if (param)

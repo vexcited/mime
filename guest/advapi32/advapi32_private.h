@@ -688,4 +688,10 @@ ADVAPI BOOL WINAPI LookupAccountSidW(LPCWSTR system, PSID sid, LPWSTR name, LPDW
 /* random.c: fills a buffer from the process random generator. */
 BOOL AdvGenRandom(PVOID buffer, SIZE_T length);
 
+/*
+ * a handle of its own to a predefined key. the kernelbase of windows exports no RegDuplicateHKey, so the 32-bit
+ * advapi32, which runs on microsoft's kernelbase, opens the key again.
+ */
+LSTATUS AdvOpenPredefinedKey(HKEY key, HKEY *result);
+
 #endif

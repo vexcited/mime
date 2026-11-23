@@ -3,6 +3,7 @@ EXPORTS
     BindMoniker=_BindMoniker@16
     CLSIDFromProgID=_CLSIDFromProgID@8
     CLSIDFromProgIDEx=_CLSIDFromProgIDEx@8
+    CLSIDFromOle1Class=_CLSIDFromOle1Class@12
     CLSIDFromString=_CLSIDFromString@8
     CoAddRefServerProcess=_CoAddRefServerProcess@0
     CoAllowSetForegroundWindow=_CoAllowSetForegroundWindow@8
@@ -39,6 +40,7 @@ EXPORTS
     CoGetObjectContext=_CoGetObjectContext@8
     CoGetPSClsid=_CoGetPSClsid@8
     CoGetStandardMarshal=_CoGetStandardMarshal@24
+    CoGetStdMarshalEx=_CoGetStdMarshalEx@12
     CoGetTreatAsClass=_CoGetTreatAsClass@8
     CoImpersonateClient=_CoImpersonateClient@0
     CoIncrementMTAUsage=_CoIncrementMTAUsage@4
@@ -47,6 +49,7 @@ EXPORTS
     CoInitializeSecurity=_CoInitializeSecurity@36
     CoIsHandlerConnected=_CoIsHandlerConnected@4
     CoIsOle1Class=_CoIsOle1Class@4
+    CoGetModuleType=_CoGetModuleType@8
     CoLoadLibrary=_CoLoadLibrary@8
     CoLockObjectExternal=_CoLockObjectExternal@12
     CoMarshalHresult=_CoMarshalHresult@8

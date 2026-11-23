@@ -301,7 +301,6 @@ static bool handle_exception(MimeVcpu *vcpu)
         uint32_t rt = (uint32_t)(syndrome >> 5) & 0x1F;
         bool read = syndrome & 1;
         vcpu->exits_sysreg++;
-        mime_debug("guest system register access trapped, iss %#llx", (unsigned long long)(syndrome & 0x1FFFFFF));
         if (read && rt != 31)
             set_reg(vcpu, (hv_reg_t)(HV_REG_X0 + rt), 0);
         set_reg(vcpu, HV_REG_PC, get_reg(vcpu, HV_REG_PC) + 4);
@@ -351,8 +350,8 @@ static void *vcpu_main(void *arg)
     hv_vcpu_set_vtimer_offset(handle, 0);
 
     /* reference processor identity reported to the guest. */
-    if (vm->boot->cpu_midr && hv_vcpu_set_sys_reg(handle, HV_SYS_REG_MIDR_EL1, vm->boot->cpu_midr) != HV_SUCCESS)
-        mime_debug("the framework keeps its own midr_el1; the kernel uses the boot information instead");
+    if (vm->boot->cpu_midr)
+        hv_vcpu_set_sys_reg(handle, HV_SYS_REG_MIDR_EL1, vm->boot->cpu_midr);
 
     set_sys(vcpu, HV_SYS_REG_MAIR_EL1, MAIR_EL1_VALUE);
     set_sys(vcpu, HV_SYS_REG_TCR_EL1, TCR_EL1_VALUE);

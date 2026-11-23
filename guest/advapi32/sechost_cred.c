@@ -290,6 +290,16 @@ ADVAPI BOOL WINAPI CredIsMarshaledCredentialW(LPCWSTR marshaled)
     return TRUE;
 }
 
+ADVAPI BOOL WINAPI CredIsMarshaledCredentialA(LPCSTR marshaled)
+{
+    PWSTR wide = marshaled ? AdvAnsiToWide(marshaled) : nullptr;
+    if (!wide)
+        return FALSE;
+    BOOL is = CredIsMarshaledCredentialW(wide);
+    AdvFree(wide);
+    return is;
+}
+
 ADVAPI BOOL WINAPI CredMarshalCredentialA(DWORD type, PVOID credential, LPSTR *marshaled)
 {
     LPWSTR wide = nullptr;

@@ -20,3 +20,10 @@ EXPORTS
     DnsValidateName_A=_DnsValidateName_A@8
     DnsValidateName_UTF8=_DnsValidateName_UTF8@8
     DnsValidateName_W=_DnsValidateName_W@8
+    DnsApiFree=_DnsApiFree@4
+    DnsFreeAdaptersInfo=_DnsFreeAdaptersInfo@8
+    DnsGetAdaptersInfo=_DnsGetAdaptersInfo@24
+    DnsGetInterfaceSettings=_DnsGetInterfaceSettings@8
+    DnsGetSettings=_DnsGetSettings@4
+    DnsSetInterfaceSettings=_DnsSetInterfaceSettings@8
+    DnsSetSettings=_DnsSetSettings@4

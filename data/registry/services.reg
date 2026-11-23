@@ -7,7 +7,10 @@
 "Group"="COM Infrastructure"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k DcomLaunch -p"
 "ObjectName"="LocalSystem"
+"RequiredPrivileges"=multi:"SeAssignPrimaryTokenPrivilege","SeAuditPrivilege","SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeDebugPrivilege","SeImpersonatePrivilege","SeIncreaseQuotaPrivilege","SeTcbPrivilege","SeBackupPrivilege","SeRestorePrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
+"SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\DcomLaunch\Parameters]
@@ -19,7 +22,10 @@
 "Group"="COM Infrastructure"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeImpersonatePrivilege","SeCreateGlobalPrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
+"SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\RpcEptMapper\Parameters]
@@ -32,32 +38,49 @@
 "Group"="COM Infrastructure"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
+"SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\RpcSs\Parameters]
 "ServiceDll"=expand:"%SystemRoot%\\System32\\rpcss.dll"
 
 [HKLM\SYSTEM\CurrentControlSet\Services\CoreMessagingRegistrar]
+"DependOnService"=multi:"rpcss"
 "DisplayName"="CoreMessaging"
 "ErrorControl"=dword:00000001
+"FailureActions"=hex:00,00,00,00,00,00,00,00,00,00,00,00,01,00,00,00,14,00,00,00,02,00,00,00,30,75,00,00
+"FailureActionsOnNonCrashFailures"=dword:00000001
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalServiceNoNetwork -p"
 "ObjectName"="NT AUTHORITY\\LocalService"
+"ServiceSidType"=dword:00000003
 "Start"=dword:00000002
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\CoreMessagingRegistrar\Parameters]
 "ServiceDll"=expand:"%SystemRoot%\\System32\\CoreMessaging.dll"
 
-; the dns client. the sechost test opens it as a service of the installation and finds it stopped, chrome reads its parameters
-; and those of the network stack, whose domain is empty on a machine outside a domain.
+; the dns client, dnsrslvr.dll: the lookups and the cache of the machine. chrome reads its parameters and those of the
+; network stack, whose domain is empty on a machine outside a domain.
 [HKLM\SYSTEM\CurrentControlSet\Services\Dnscache]
-"DisplayName"="DNS Client"
+"DependOnService"=multi:"nsi","Afd"
+"Description"="@%SystemRoot%\\System32\\dnsapi.dll,-102"
+"DisplayName"="@%SystemRoot%\\System32\\dnsapi.dll,-101"
 "ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,e8,03,00,00,01,00,00,00,e8,03,00,00,01,00,00,00,e8,03,00,00
+"Group"="TDI"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k NetworkService -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
-"Type"=dword:00000020
+"Type"=dword:00000010
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\dnsrslvr.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
 
 [HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\{DnsConnections,DnsConnectionsProxies,DnsPolicyConfig}]
 
@@ -88,7 +111,9 @@
 [HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters]
 "Domain"=""
 
+; the descriptor of windows 11: the dhcp client, S-1-5-80-2940520708..., keeps its dhcpv6 identifiers under this key.
 [HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters]
+#security O:SYG:SYD:PAI(A;CIIO;RC;;;OW)(A;CI;KA;;;SY)(A;CI;KR;;;LS)(A;CI;0x3003f;;;NS)(A;CI;KA;;;BA)(A;CI;KR;;;BU)(A;CI;0x3001f;;;S-1-5-32-556)(A;CI;0x3001f;;;S-1-5-80-2940520708-3855866260-481812779-327648279-1710889582)(A;CI;0x2001f;;;S-1-5-80-3981856537-581775623-1136376035-2066872258-409572886)(A;CI;KR;;;AC)(A;CI;KR;;;S-1-15-3-1)(A;CI;KR;;;S-1-15-3-2)(A;CI;KR;;;S-1-15-3-3)(A;CI;KR;;;S-1-15-3-4214768333-1334025770-122408079-3919188833)
 
 ; the workstation service, which netapi32 asks for the computer's name, workgroup and users, and what it needs to run. nsi and
 ; the redirector drivers are windows' own keys. the host does the work of the drivers, their objects tell the service
@@ -119,6 +144,30 @@
 "EnableSecuritySignature"=dword:00000001
 "ServiceDll"=expand:"%SystemRoot%\\System32\\wkssvc.dll"
 "ServiceDllUnloadOnStop"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NetBT]
+"DependOnService"=multi:"Tdx","tcpip"
+"Description"="@%SystemRoot%\\system32\\drivers\\netbt.sys,-1"
+"DisplayName"="@%SystemRoot%\\system32\\drivers\\netbt.sys,-2"
+"ErrorControl"=dword:00000001
+"Group"="PNP_TDI"
+"ImagePath"=expand:"System32\\DRIVERS\\netbt.sys"
+"Start"=dword:00000001
+"Type"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters]
+"BcastNameQueryCount"=dword:00000003
+"BcastQueryTimeout"=dword:000002ee
+"CacheTimeout"=dword:000927c0
+"EnableLMHOSTS"=dword:00000001
+"NameServerPort"=dword:00000089
+"NameSrvQueryCount"=dword:00000003
+"NameSrvQueryTimeout"=dword:000005dc
+"NbProvider"="_tcp"
+"SessionKeepAlive"=dword:0036ee80
+"Size/Small/Medium/Large"=dword:00000001
+"TransportBindName"="\\Device\\"
+"UseNewSmb"=dword:00000001
 
 [HKLM\SYSTEM\CurrentControlSet\Services\NSI]
 "DependOnService"=multi:"rpcss","nsiproxy"
@@ -211,6 +260,8 @@
 "ErrorControl"=dword:00000001
 "ImagePath"=expand:"%systemroot%\\system32\\msiexec.exe /V"
 "ObjectName"="LocalSystem"
+"RequiredPrivileges"=multi:"SeTcbPrivilege","SeCreatePagefilePrivilege","SeLockMemoryPrivilege","SeIncreaseBasePriorityPrivilege","SeCreatePermanentPrivilege","SeAuditPrivilege","SeSecurityPrivilege","SeChangeNotifyPrivilege","SeProfileSingleProcessPrivilege","SeImpersonatePrivilege","SeCreateGlobalPrivilege","SeAssignPrimaryTokenPrivilege","SeRestorePrivilege","SeIncreaseQuotaPrivilege","SeShutdownPrivilege","SeTakeOwnershipPrivilege","SeLoadDriverPrivilege","SeBackupPrivilege","SeCreateSymbolicLinkPrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000003
 "Type"=dword:00000010
 
@@ -221,19 +272,56 @@
 
 [HKLM\SYSTEM\CurrentControlSet\Services\EventLog\System]
 
-; the key isolation service, which services that use keys of cng depend on. it runs in svchost, not in the security authority.
+; the key isolation service of cng, microsoft's keyiso.dll in the process of the security authority, as windows 11
+; 26300 registers it: started when a client asks the endpoint mapper for one of its two rpc interfaces.
 [HKLM\SYSTEM\CurrentControlSet\Services\KeyIso]
-"Description"="The CNG key isolation service is hosted in the LSA process. It provides key process isolation to private keys and associated cryptographic operations as required by the Common Criteria."
-"DisplayName"="CNG Key Isolation"
+"DependOnService"=multi:"RpcSs"
+"Description"="@keyiso.dll,-101"
+"DisplayName"="@keyiso.dll,-100"
 "ErrorControl"=dword:00000001
-"ImagePath"=expand:"%systemroot%\\system32\\svchost.exe -k netsvcs -p"
+"ImagePath"=expand:"%SystemRoot%\\system32\\lsass.exe"
 "ObjectName"="LocalSystem"
 "Start"=dword:00000003
 "Type"=dword:00000020
 
 [HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\Parameters]
-"ServiceDll"=expand:"%systemroot%\\system32\\keyiso.dll"
+"ServiceDll"=expand:"%SystemRoot%\\system32\\keyiso.dll"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\Security]
+"Security"=hex:01,00,14,80,b4,00,00,00,c0,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,01,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,84,00,06,00,00,00,00,00,14,00,fd,01,02,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,ff,01,0f,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,05,04,00,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,05,06,00,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,06,00,00,00,00,00,14,00,00,01,00,00,01,01,00,00,00,00,00,05,0b,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\TriggerInfo\0]
+"Action"=dword:00000001
+"Data0"=hex:62,00,32,00,35,00,61,00,35,00,32,00,62,00,66,00,2d,00,65,00,35,00,64,00,64,00,2d,00,34,00,66,00,34,00,61,00,2d,00,61,00,65,00,61,00,36,00,2d,00,38,00,63,00,61,00,37,00,32,00,37,00,32,00,61,00,30,00,65,00,38,00,36,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\TriggerInfo\1]
+"Action"=dword:00000001
+"Data0"=hex:38,00,46,00,42,00,37,00,34,00,37,00,34,00,34,00,2d,00,42,00,32,00,46,00,46,00,2d,00,34,00,43,00,30,00,30,00,2d,00,42,00,45,00,30,00,44,00,2d,00,39,00,45,00,46,00,39,00,41,00,31,00,39,00,31,00,46,00,45,00,31,00,42,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+; the cryptographic services, which crypt32 asks to keep the protected roots of a user. as on windows 11 26300.
+[HKLM\SYSTEM\CurrentControlSet\Services\CryptSvc]
+"DependOnService"=multi:"RpcSs"
+"Description"="Provides three management services: Catalog Database Service, which confirms the signatures of Windows files and allows new programs to be installed; Protected Root Service, which adds and removes Trusted Root Certification Authority certificates from this computer; and Automatic Root Certificate Update Service, which retrieves root certificates from Windows Update and enable scenarios such as SSL."
+"DisplayName"="Cryptographic Services"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,60,ea,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00,00
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k NetworkService -p"
+"ObjectName"="NT Authority\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000002
+"Type"=dword:00000010
+
+[HKLM\SYSTEM\CurrentControlSet\Services\CryptSvc\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\cryptsvc.dll"
 "ServiceDllUnloadOnStop"=dword:00000001
+"ServiceMain"="CryptServiceMain"
 
 ; the drivers of the devices the firmware tree names; mime runs the work in its own libraries, the keys are what
 ; plug and play resolves a device's service to.
@@ -277,3 +365,256 @@
 "Start"=dword:00000003
 "ErrorControl"=dword:00000001
 "Group"="AudioGroup"
+
+; the bluetooth support service, mime's own bthserv.dll in svchost -k LocalService, as windows 11 registers it: started
+; on demand by the arrival of a radio or by a client that asks the endpoint mapper for its rpc interface.
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv]
+"Description"="The Bluetooth service supports discovery and association of remote Bluetooth devices.  Stopping or disabling this service may cause already installed Bluetooth devices to fail to operate properly and prevent new devices from being discovered or associated."
+"DisplayName"="Bluetooth Support Service"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:84,03,00,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,c0,d4,01,00,01,00,00,00,e0,93,04,00,00,00,00,00,00,00,00,00
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalService -p"
+"ObjectName"="NT AUTHORITY\\LocalService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000003
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\bthserv.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\Parameters\BluetoothControlPanelTasks]
+"State"=dword:00000000
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\TriggerInfo\0]
+"Action"=dword:00000001
+"GUID"=hex:2a,30,50,08,44,b3,da,4f,9b,e9,90,57,6b,8d,46,f0
+"Type"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\TriggerInfo\1]
+"Action"=dword:00000001
+"Data0"=hex:44,00,30,00,39,00,42,00,44,00,45,00,42,00,35,00,2d,00,36,00,31,00,37,00,31,00,2d,00,34,00,41,00,33,00,34,00,2d,00,42,00,46,00,45,00,32,00,2d,00,30,00,36,00,46,00,41,00,38,00,32,00,36,00,35,00,32,00,35,00,36,00,38,00,3a,00,46,00,43,00,43,00,41,00,45,00,39,00,36,00,32,00,2d,00,34,00,37,00,32,00,32,00,2d,00,34,00,30,00,43,00,37,00,2d,00,41,00,34,00,36,00,44,00,2d,00,46,00,45,00,35,00,31,00,35,00,33,00,32,00,38,00,30,00,37,00,32,00,33,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\bthserv\TriggerInfo\2]
+"Action"=dword:00000001
+"Data0"=hex:32,00,41,00,43,00,42,00,39,00,44,00,36,00,38,00,2d,00,42,00,34,00,33,00,34,00,2d,00,34,00,42,00,33,00,45,00,2d,00,42,00,39,00,36,00,36,00,2d,00,45,00,30,00,36,00,42,00,34,00,42,00,33,00,41,00,38,00,34,00,43,00,42,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+; the dhcp client service, mime's own dhcpcore.dll in svchost -k LocalServiceNetworkRestricted, as windows 11 registers
+; it but for the name of dhcpcore6.dll under Parametersv6: mime's library holds the dhcpv6 half itself. it serves the
+; lease queries of dhcpcsvc6.dll, where GetAdaptersAddresses takes the dhcpv6 identifiers of an adapter from. the leases
+; of ipv4 are the host's and dhcpcsvc.dll reads them without the service.
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp]
+"DependOnService"=multi:"NSI","Afd"
+"Description"="Registers and updates IP addresses and DNS records for this computer. If this service is stopped, this computer will not receive dynamic IP addresses and DNS updates. If this service is disabled, any services that explicitly depend on it will fail to start."
+"DisplayName"="DHCP Client"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,c0,d4,01,00,01,00,00,00,e0,93,04,00,00,00,00,00,00,00,00,00
+"Group"="TDI"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalServiceNetworkRestricted -p"
+"ObjectName"="NT Authority\\LocalService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceDll"=expand:"%SystemRoot%\\system32\\dhcpcore.dll"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Configurations]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Linkage]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Linkage\Disabled]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\dhcpcore.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\1]
+"KeyType"=dword:00000007
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpSubnetMaskOpt","SYSTEM\\CurrentControlSet\\Services\\?\\Parameters\\Tcpip\\DhcpSubnetMaskOpt"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\15]
+"KeyType"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpDomain","SYSTEM\\CurrentControlSet\\Services\\TcpIp\\Parameters\\DhcpDomain"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\220]
+"KeyType"=dword:00000003
+"RegSendLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\SoHRequest"
+"VendorType"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\3]
+"KeyType"=dword:00000007
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpDefaultGateway","SYSTEM\\CurrentControlSet\\Services\\?\\Parameters\\Tcpip\\DhcpDefaultGateway"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\44]
+"KeyType"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\Interfaces\\Tcpip_?\\DhcpNameServerList","SYSTEM\\CurrentControlSet\\Services\\NetBT\\Adapters\\?\\DhcpNameServer"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\46]
+"KeyType"=dword:00000004
+"RegLocation"="SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\DhcpNodeType"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\47]
+"KeyType"=dword:00000001
+"RegLocation"="SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\DhcpScopeID"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\6]
+"KeyType"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\?\\DhcpNameServer","SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\DhcpNameServer"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parameters\Options\DhcpNetbiosOptions]
+"KeyType"=dword:00000004
+"OptionId"=dword:00000001
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\NetBT\\Parameters\\Interfaces\\Tcpip_?\\DhcpNetbiosOptions"
+"VendorType"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6\Options]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6\Options\23]
+"KeyType"=dword:00000003
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\?\\Dhcpv6DNSServers","SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Dhcpv6DNSServers"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Parametersv6\Options\24]
+"KeyType"=dword:00000003
+"RegLocation"=multi:"SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\?\\Dhcpv6DomainSearchList","SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Dhcpv6DomainSearchList"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dhcp\Security]
+"Security"=hex:01,00,14,80,a4,00,00,00,b0,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,01,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,74,00,05,00,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,0b,00,00,00,00,00,18,00,fd,01,02,00,01,02,00,00,00,00,00,05,20,00,00,00,2c,02,00,00,00,00,18,00,ff,01,0f,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,14,00,9d,01,02,00,01,01,00,00,00,00,00,02,01,00,00,00,00,00,14,00,fd,01,02,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
+
+; the microsoft passport service, mime's own ngcsvc.dll in svchost -k LocalSystemNetworkRestricted, as windows 11
+; registers it: started when a client asks the endpoint mapper for one of its rpc interfaces. mime serves the first, the
+; key storage interface of the passport key storage provider.
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc]
+"DependOnService"=multi:"RpcSs"
+"Description"="Provides process isolation for cryptographic keys used to authenticate to a user's associated identity providers. If this service is disabled, all uses and management of these keys will not be available, which includes machine logon and single-sign on for apps and websites. This service starts and stops automatically. It is recommended that you do not reconfigure this service."
+"DisplayName"="Microsoft Passport"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:84,03,00,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,e8,03,00,00,01,00,00,00,10,27,00,00,00,00,00,00,00,00,00,00
+"Group"="Cryptography"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalSystemNetworkRestricted -p"
+"ObjectName"="LocalSystem"
+"RequiredPrivileges"=multi:"SeImpersonatePrivilege","SeTcbPrivilege","SeTakeOwnershipPrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000003
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\system32\\ngcsvc.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+"ServiceMain"="NgcServiceMain"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\Security]
+"Security"=hex:01,00,14,80,90,00,00,00,9c,00,00,00,14,00,00,00,30,00,00,00,02,00,1c,00,01,00,00,00,02,80,14,00,ff,00,0f,00,01,01,00,00,00,00,00,01,00,00,00,00,02,00,60,00,04,00,00,00,00,00,14,00,85,00,02,00,01,01,00,00,00,00,00,05,0b,00,00,00,00,00,14,00,ff,00,0e,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,9d,00,0e,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,18,00,85,00,00,00,01,02,00,00,00,00,00,05,20,00,00,00,21,02,00,00,01,01,00,00,00,00,00,05,12,00,00,00,01,01,00,00,00,00,00,05,12,00,00,00
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\0]
+"Action"=dword:00000001
+"Data0"=hex:30,00,65,00,33,00,61,00,65,00,30,00,39,00,35,00,2d,00,38,00,61,00,32,00,33,00,2d,00,34,00,38,00,66,00,34,00,2d,00,39,00,37,00,38,00,32,00,2d,00,30,00,33,00,63,00,31,00,35,00,39,00,34,00,61,00,38,00,39,00,30,00,65,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\1]
+"Action"=dword:00000001
+"Data0"=hex:63,00,32,00,32,00,35,00,65,00,37,00,39,00,39,00,2d,00,32,00,39,00,64,00,65,00,2d,00,34,00,32,00,61,00,66,00,2d,00,62,00,63,00,30,00,35,00,2d,00,31,00,65,00,32,00,31,00,32,00,37,00,63,00,63,00,30,00,35,00,36,00,65,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\2]
+"Action"=dword:00000001
+"Data0"=hex:64,00,39,00,38,00,34,00,34,00,65,00,64,00,39,00,2d,00,66,00,37,00,32,00,61,00,2d,00,34,00,37,00,34,00,35,00,2d,00,61,00,34,00,61,00,31,00,2d,00,65,00,65,00,37,00,31,00,66,00,39,00,35,00,30,00,37,00,38,00,31,00,64,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\3]
+"Action"=dword:00000001
+"Data0"=hex:32,00,62,00,37,00,30,00,62,00,65,00,64,00,36,00,2d,00,31,00,37,00,35,00,37,00,2d,00,34,00,64,00,32,00,32,00,2d,00,39,00,66,00,33,00,39,00,2d,00,34,00,34,00,38,00,35,00,38,00,39,00,66,00,62,00,65,00,62,00,66,00,35,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\4]
+"Action"=dword:00000001
+"Data0"=hex:39,00,63,00,62,00,63,00,39,00,64,00,33,00,61,00,2d,00,37,00,35,00,38,00,36,00,2d,00,34,00,38,00,31,00,34,00,2d,00,38,00,64,00,37,00,30,00,2d,00,31,00,38,00,37,00,33,00,37,00,64,00,63,00,62,00,65,00,35,00,32,00,33,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\5]
+"Action"=dword:00000001
+"Data0"=hex:34,00,45,00,32,00,35,00,46,00,34,00,41,00,32,00,2d,00,32,00,31,00,45,00,38,00,2d,00,34,00,30,00,43,00,45,00,2d,00,42,00,34,00,30,00,31,00,2d,00,33,00,32,00,30,00,35,00,30,00,34,00,31,00,33,00,31,00,34,00,33,00,41,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\6]
+"Action"=dword:00000001
+"Data0"=hex:38,00,33,00,33,00,37,00,41,00,45,00,42,00,43,00,2d,00,35,00,35,00,36,00,34,00,2d,00,34,00,36,00,46,00,44,00,2d,00,42,00,43,00,34,00,31,00,2d,00,37,00,37,00,39,00,38,00,46,00,31,00,38,00,44,00,32,00,45,00,34,00,42,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\NgcSvc\TriggerInfo\7]
+"Action"=dword:00000001
+"GUID"=hex:65,09,f4,00,9d,e8,87,44,98,90,87,c3,ab,b2,11,f4
+"Type"=dword:00000001
+
+; the smart card resource manager as windows 11 registers it. it starts when a reader arrives, and mime has no reader
+; and no library for it: winscard.dll answers SCARD_E_NO_SERVICE while it is stopped, as on a windows machine without a reader.
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr]
+"Description"="Manages access to smart cards read by this computer. If this service is stopped, this computer will be unable to read smart cards. If this service is disabled, any services that explicitly depend on it will fail to start."
+"DisplayName"="Smart Card"
+"ErrorControl"=dword:00000001
+"FailureActions"=hex:84,03,00,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,c0,d4,01,00,01,00,00,00,e0,93,04,00,00,00,00,00,00,00,00,00
+"Group"="SmartCardGroup"
+"ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalServiceAndNoImpersonation"
+"ObjectName"="NT AUTHORITY\\LocalService"
+"RequiredPrivileges"=multi:"SeCreateGlobalPrivilege","SeChangeNotifyPrivilege"
+"ServiceSidType"=dword:00000001
+"Start"=dword:00000003
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\SCardSvr.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
+"ServiceMain"="CalaisMain"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr\Security]
+"Security"=hex:01,00,14,80,90,00,00,00,a0,00,00,00,14,00,00,00,34,00,00,00,02,00,20,00,01,00,00,00,02,c0,18,00,00,00,0c,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,02,00,5c,00,04,00,00,00,00,02,14,00,ff,01,0f,00,01,01,00,00,00,00,00,05,12,00,00,00,00,00,18,00,ff,01,02,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,04,00,00,00,00,00,14,00,8d,01,02,00,01,01,00,00,00,00,00,05,06,00,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00,01,02,00,00,00,00,00,05,20,00,00,00,20,02,00,00
+
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr\TriggerInfo\0]
+"Action"=dword:00000001
+"GUID"=hex:30,52,dd,50,8a,ba,d1,11,bf,5d,00,00,f8,05,f5,30
+"Type"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr\TriggerInfo\1]
+"Action"=dword:00000001
+"GUID"=hex:61,81,1d,12,6d,86,24,4a,ba,58,90,58,94,0c,0d,47
+"Type"=dword:00000001
+
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr\TriggerInfo\2]
+"Action"=dword:00000001
+"Data0"=hex:63,00,36,00,62,00,35,00,32,00,33,00,35,00,61,00,2d,00,65,00,34,00,31,00,33,00,2d,00,34,00,38,00,31,00,64,00,2d,00,39,00,61,00,63,00,38,00,2d,00,33,00,31,00,36,00,38,00,31,00,62,00,31,00,66,00,61,00,61,00,66,00,35,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006
+
+[HKLM\SYSTEM\CurrentControlSet\Services\SCardSvr\TriggerInfo\3]
+"Action"=dword:00000001
+"Data0"=hex:44,00,30,00,39,00,42,00,44,00,45,00,42,00,35,00,2d,00,36,00,31,00,37,00,31,00,2d,00,34,00,41,00,33,00,34,00,2d,00,42,00,46,00,45,00,32,00,2d,00,30,00,36,00,46,00,41,00,38,00,32,00,36,00,35,00,32,00,35,00,36,00,38,00,3a,00,30,00,43,00,43,00,38,00,32,00,38,00,35,00,37,00,2d,00,31,00,45,00,30,00,45,00,2d,00,34,00,36,00,33,00,33,00,2d,00,41,00,36,00,37,00,33,00,2d,00,32,00,35,00,37,00,42,00,41,00,32,00,34,00,45,00,42,00,39,00,41,00,43,00,00,00
+"DataType0"=dword:00000002
+"GUID"=hex:67,d1,90,bc,70,94,39,41,a9,ba,be,0b,bb,f5,b7,4d
+"Type"=dword:00000006

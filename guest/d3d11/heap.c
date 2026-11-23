@@ -286,6 +286,8 @@ HRESULT D3dHeapInit(D3dDevice *device)
         return E_FAIL;
     VkDescriptorPoolSize table_size = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1024 * D3D_STAGES};
     VkDescriptorPoolCreateInfo table_pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    /* a chunk's set goes back when the chunk does. */
+    table_pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     table_pool.maxSets = 1024;
     table_pool.poolSizeCount = 1;
     table_pool.pPoolSizes = &table_size;
@@ -322,11 +324,16 @@ HRESULT D3dHeapInit(D3dDevice *device)
 
 /* ------------------------------------------------------------------ constant buffer descriptors */
 
+static UINT64 cbv_hash(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
+{
+    return ((UINT64)(UINT_PTR)buffer * 0x9E3779B97F4A7C15ull) ^ (offset * 0xC2B2AE3D27D4EB4Full) ^ size;
+}
+
 /* cached per range, made the first time it is bound. */
 UINT D3dCbvIndex(D3dDevice *device, VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
 {
     size = D3D_MIN(size, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
-    UINT64 hash = ((UINT64)(UINT_PTR)buffer * 0x9E3779B97F4A7C15ull) ^ (offset * 0xC2B2AE3D27D4EB4Full) ^ size;
+    UINT64 hash = cbv_hash(buffer, offset, size);
     AcquireSRWLockShared(&device->cbv_lock);
     if (device->cbv_capacity) {
         UINT mask = device->cbv_capacity - 1;
@@ -356,9 +363,7 @@ UINT D3dCbvIndex(D3dDevice *device, VkBuffer buffer, VkDeviceSize offset, VkDevi
                 D3dCbvEntry *e = &device->cbv[i];
                 if (!e->buffer)
                     continue;
-                UINT64 h = ((UINT64)(UINT_PTR)e->buffer * 0x9E3779B97F4A7C15ull) ^
-                           (e->offset * 0xC2B2AE3D27D4EB4Full) ^ e->size;
-                UINT j = (UINT)(h >> 32) & (capacity - 1);
+                UINT j = (UINT)(cbv_hash(e->buffer, e->offset, e->size) >> 32) & (capacity - 1);
                 while (table[j].buffer)
                     j = (j + 1) & (capacity - 1);
                 table[j] = *e;
@@ -385,6 +390,34 @@ UINT D3dCbvIndex(D3dDevice *device, VkBuffer buffer, VkDeviceSize offset, VkDevi
     }
     ReleaseSRWLockExclusive(&device->cbv_lock);
     return index;
+}
+
+/*
+ * drops the ranges of a buffer about to be destroyed. vulkan-1 hands its handle to the next object made, and a later
+ * buffer with it would otherwise find descriptors pointing at freed memory.
+ */
+void D3dCbvForget(D3dDevice *device, VkBuffer buffer)
+{
+    AcquireSRWLockExclusive(&device->cbv_lock);
+    UINT mask = device->cbv_capacity - 1;
+    for (UINT s = 0; s < device->cbv_capacity; s++) {
+        while (device->cbv[s].buffer == buffer) {
+            D3dHeapFree(device, D3D_HEAP_UNIFORM_BUFFER, device->cbv[s].index);
+            device->cbv_count--;
+            /* backward shift deletion keeps every probe chain unbroken. */
+            UINT hole = s;
+            for (UINT j = (hole + 1) & mask; device->cbv[j].buffer; j = (j + 1) & mask) {
+                D3dCbvEntry *e = &device->cbv[j];
+                UINT home = (UINT)(cbv_hash(e->buffer, e->offset, e->size) >> 32) & mask;
+                if (((j - home) & mask) >= ((j - hole) & mask)) {
+                    device->cbv[hole] = *e;
+                    hole = j;
+                }
+            }
+            device->cbv[hole] = (D3dCbvEntry){};
+        }
+    }
+    ReleaseSRWLockExclusive(&device->cbv_lock);
 }
 
 /* ------------------------------------------------------------------ deferred destruction */
@@ -419,6 +452,13 @@ static void destroy(D3dDevice *device, D3dGarbage *g)
         break;
     case D3D_GARBAGE_COMMAND_POOL:
         vk->vkDestroyCommandPool(vk->device, (VkCommandPool)g->handle, nullptr);
+        break;
+    case D3D_GARBAGE_SEMAPHORE:
+        vk->vkDestroySemaphore(vk->device, (VkSemaphore)g->handle, nullptr);
+        break;
+    case D3D_GARBAGE_SHARED_SEMAPHORE:
+        device->shared.adapter->lpVtbl->ReleaseSemaphore(device->shared.adapter, device->shared.vk,
+                                                         (void *)(UINT_PTR)g->handle);
         break;
     }
 }

@@ -1,0 +1,61 @@
+; the cursor scheme of a new account and the schemes windows offers, as the hives of the 26300.9457 image have them.
+; win32k loads the files the user's values name into the system cursors, see guest/win32k/cursor.c. an empty value keeps the
+; cursor of user32.
+
+[HKCU\Control Panel\Cursors]
+"AppStarting"=expand:"%SystemRoot%\\cursors\\aero_working.ani"
+"Arrow"=expand:"%SystemRoot%\\cursors\\aero_arrow.cur"
+"ContactVisualization"=dword:00000001
+"Crosshair"=expand:""
+"CursorBaseSize"=dword:00000020
+"GestureVisualization"=dword:0000001f
+"Hand"=expand:"%SystemRoot%\\cursors\\aero_link.cur"
+"Help"=expand:"%SystemRoot%\\cursors\\aero_helpsel.cur"
+"IBeam"=expand:""
+"No"=expand:"%SystemRoot%\\cursors\\aero_unavail.cur"
+"NWPen"=expand:"%SystemRoot%\\cursors\\aero_pen.cur"
+"Scheme Source"=dword:00000002
+"SizeAll"=expand:"%SystemRoot%\\cursors\\aero_move.cur"
+"SizeNESW"=expand:"%SystemRoot%\\cursors\\aero_nesw.cur"
+"SizeNS"=expand:"%SystemRoot%\\cursors\\aero_ns.cur"
+"SizeNWSE"=expand:"%SystemRoot%\\cursors\\aero_nwse.cur"
+"SizeWE"=expand:"%SystemRoot%\\cursors\\aero_ew.cur"
+"UpArrow"=expand:"%SystemRoot%\\cursors\\aero_up.cur"
+"Wait"=expand:"%SystemRoot%\\cursors\\aero_busy.ani"
+
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Control Panel\Cursors]
+
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Control Panel\Cursors\Default]
+@="@main.cpl,-1020"
+"AppStarting"=expand:"%SystemRoot%\\cursors\\aero_working.ani"
+"Arrow"=expand:"%SystemRoot%\\cursors\\aero_arrow.cur"
+"Crosshair"=expand:""
+"Hand"=expand:"%SystemRoot%\\cursors\\aero_link.cur"
+"Help"=expand:"%SystemRoot%\\cursors\\aero_helpsel.cur"
+"IBeam"=expand:""
+"No"=expand:"%SystemRoot%\\cursors\\aero_unavail.cur"
+"NWPen"=expand:"%SystemRoot%\\cursors\\aero_pen.cur"
+"person"=expand:"%SystemRoot%\\cursors\\aero_person.cur"
+"pin"=expand:"%SystemRoot%\\cursors\\aero_pin.cur"
+"Scheme Source"=dword:00000002
+"SizeAll"=expand:"%SystemRoot%\\cursors\\aero_move.cur"
+"SizeNESW"=expand:"%SystemRoot%\\cursors\\aero_nesw.cur"
+"SizeNS"=expand:"%SystemRoot%\\cursors\\aero_ns.cur"
+"SizeNWSE"=expand:"%SystemRoot%\\cursors\\aero_nwse.cur"
+"SizeWE"=expand:"%SystemRoot%\\cursors\\aero_ew.cur"
+"UpArrow"=expand:"%SystemRoot%\\cursors\\aero_up.cur"
+"Wait"=expand:"%SystemRoot%\\cursors\\aero_busy.ani"
+
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Control Panel\Cursors\Schemes]
+"Magnified"=expand:"%SystemRoot%\\cursors\\larrow.cur,,%SystemRoot%\\cursors\\lappstrt.cur,%SystemRoot%\\cursors\\lwait.cur,%SystemRoot%\\cursors\\lcross.cur,%SystemRoot%\\cursors\\libeam.cur,,%SystemRoot%\\cursors\\lnodrop.cur,%SystemRoot%\\cursors\\lns.cur,%SystemRoot%\\cursors\\lwe.cur,%SystemRoot%\\cursors\\lnwse.cur,%SystemRoot%\\cursors\\lnesw.cur,%SystemRoot%\\cursors\\lmove.cur,,,%SystemRoot%\\cursors\\lpin.cur,%SystemRoot%\\cursors\\lperson.cur,@%systemroot%\\system32\\main.cpl,-1007"
+"Windows Aero"=expand:"%SystemRoot%\\cursors\\aero_arrow.cur,%SystemRoot%\\cursors\\aero_helpsel.cur,%SystemRoot%\\cursors\\aero_working.ani,%SystemRoot%\\cursors\\aero_busy.ani,,,%SystemRoot%\\cursors\\aero_pen.cur,%SystemRoot%\\cursors\\aero_unavail.cur,%SystemRoot%\\cursors\\aero_ns.cur,%SystemRoot%\\cursors\\aero_ew.cur,%SystemRoot%\\cursors\\aero_nwse.cur,%SystemRoot%\\cursors\\aero_nesw.cur,%SystemRoot%\\cursors\\aero_move.cur,%SystemRoot%\\cursors\\aero_up.cur,%SystemRoot%\\cursors\\aero_link.cur,%SystemRoot%\\cursors\\aero_pin.cur,%SystemRoot%\\cursors\\aero_person.cur,@%systemroot%\\system32\\main.cpl,-1020"
+"Windows Aero L"=expand:"%SystemRoot%\\cursors\\aero_arrow_l.cur,%SystemRoot%\\cursors\\aero_helpsel_l.cur,%SystemRoot%\\cursors\\aero_working_l.ani,%SystemRoot%\\cursors\\aero_busy_l.ani,,,%SystemRoot%\\cursors\\aero_pen_l.cur,%SystemRoot%\\cursors\\aero_unavail_l.cur,%SystemRoot%\\cursors\\aero_ns_l.cur,%SystemRoot%\\cursors\\aero_ew_l.cur,%SystemRoot%\\cursors\\aero_nwse_l.cur,%SystemRoot%\\cursors\\aero_nesw_l.cur,%SystemRoot%\\cursors\\aero_move_l.cur,%SystemRoot%\\cursors\\aero_up_l.cur,%SystemRoot%\\cursors\\aero_link_l.cur,%SystemRoot%\\cursors\\aero_pin_l.cur,%SystemRoot%\\cursors\\aero_person_l.cur,@%systemroot%\\system32\\main.cpl,-1021"
+"Windows Aero XL)"=expand:"%SystemRoot%\\cursors\\aero_arrow_xl.cur,%SystemRoot%\\cursors\\aero_helpsel_xl.cur,%SystemRoot%\\cursors\\aero_working_xl.ani,%SystemRoot%\\cursors\\aero_busy_xl.ani,,,%SystemRoot%\\cursors\\aero_pen_xl.cur,%SystemRoot%\\cursors\\aero_unavail_xl.cur,%SystemRoot%\\cursors\\aero_ns_xl.cur,%SystemRoot%\\cursors\\aero_ew_xl.cur,%SystemRoot%\\cursors\\aero_nwse_xl.cur,%SystemRoot%\\cursors\\aero_nesw_xl.cur,%SystemRoot%\\cursors\\aero_move_xl.cur,%SystemRoot%\\cursors\\aero_up_xl.cur,%SystemRoot%\\cursors\\aero_link_xl.cur,%SystemRoot%\\cursors\\aero_pin_xl.cur,%SystemRoot%\\cursors\\aero_person_xl.cur,@%systemroot%\\system32\\main.cpl,-1022"
+"Windows Black"=expand:"%SystemRoot%\\cursors\\arrow_r.cur,%SystemRoot%\\cursors\\help_r.cur,%SystemRoot%\\cursors\\wait_r.cur,%SystemRoot%\\cursors\\busy_r.cur,%SystemRoot%\\cursors\\cross_r.cur,%SystemRoot%\\cursors\\beam_r.cur,%SystemRoot%\\cursors\\pen_r.cur,%SystemRoot%\\cursors\\no_r.cur,%SystemRoot%\\cursors\\size4_r.cur,%SystemRoot%\\cursors\\size3_r.cur,%SystemRoot%\\cursors\\size2_r.cur,%SystemRoot%\\cursors\\size1_r.cur,%SystemRoot%\\cursors\\move_r.cur,%SystemRoot%\\cursors\\up_r.cur,,%SystemRoot%\\cursors\\pin_r.cur,%SystemRoot%\\cursors\\person_r.cur,@%systemroot%\\system32\\main.cpl,-1011"
+"Windows Black (extra large)"=expand:"%SystemRoot%\\cursors\\arrow_rl.cur,%SystemRoot%\\cursors\\help_rl.cur,%SystemRoot%\\cursors\\wait_rl.cur,%SystemRoot%\\cursors\\busy_rl.cur,%SystemRoot%\\cursors\\cross_rl.cur,%SystemRoot%\\cursors\\beam_rl.cur,%SystemRoot%\\cursors\\pen_rl.cur,%SystemRoot%\\cursors\\no_rl.cur,%SystemRoot%\\cursors\\size4_rl.cur,%SystemRoot%\\cursors\\size3_rl.cur,%SystemRoot%\\cursors\\size2_rl.cur,%SystemRoot%\\cursors\\size1_rl.cur,%SystemRoot%\\cursors\\move_rl.cur,%SystemRoot%\\cursors\\up_rl.cur,,%SystemRoot%\\cursors\\pin_rl.cur,%SystemRoot%\\cursors\\person_rl.cur,@%systemroot%\\system32\\main.cpl,-1012"
+"Windows Black (large)"=expand:"%SystemRoot%\\cursors\\arrow_rm.cur,%SystemRoot%\\cursors\\help_rm.cur,%SystemRoot%\\cursors\\wait_rm.cur,%SystemRoot%\\cursors\\busy_rm.cur,%SystemRoot%\\cursors\\cross_rm.cur,%SystemRoot%\\cursors\\beam_rm.cur,%SystemRoot%\\cursors\\pen_rm.cur,%SystemRoot%\\cursors\\no_rm.cur,%SystemRoot%\\cursors\\size4_rm.cur,%SystemRoot%\\cursors\\size3_rm.cur,%SystemRoot%\\cursors\\size2_rm.cur,%SystemRoot%\\cursors\\size1_rm.cur,%SystemRoot%\\cursors\\move_rm.cur,%SystemRoot%\\cursors\\up_rm.cur,,%SystemRoot%\\cursors\\pin_rm.cur,%SystemRoot%\\cursors\\person_rm.cur,@%systemroot%\\system32\\main.cpl,-1013"
+"Windows Inverted"=expand:"%SystemRoot%\\cursors\\arrow_i.cur,%SystemRoot%\\cursors\\help_i.cur,%SystemRoot%\\cursors\\wait_i.cur,%SystemRoot%\\cursors\\busy_i.cur,%SystemRoot%\\cursors\\cross_i.cur,%SystemRoot%\\cursors\\beam_i.cur,%SystemRoot%\\cursors\\pen_i.cur,%SystemRoot%\\cursors\\no_i.cur,%SystemRoot%\\cursors\\size4_i.cur,%SystemRoot%\\cursors\\size3_i.cur,%SystemRoot%\\cursors\\size2_i.cur,%SystemRoot%\\cursors\\size1_i.cur,%SystemRoot%\\cursors\\move_i.cur,%SystemRoot%\\cursors\\up_i.cur,%SystemRoot%\\cursors\\aero_link_i.cur,%SystemRoot%\\cursors\\pin_i.cur,%SystemRoot%\\cursors\\person_i.cur,@%systemroot%\\system32\\main.cpl,-1015"
+"Windows Inverted (extra large)"=expand:"%SystemRoot%\\cursors\\arrow_il.cur,%SystemRoot%\\cursors\\help_il.cur,%SystemRoot%\\cursors\\wait_il.cur,%SystemRoot%\\cursors\\busy_il.cur,%SystemRoot%\\cursors\\cross_il.cur,%SystemRoot%\\cursors\\beam_il.cur,%SystemRoot%\\cursors\\pen_il.cur,%SystemRoot%\\cursors\\no_il.cur,%SystemRoot%\\cursors\\size4_il.cur,%SystemRoot%\\cursors\\size3_il.cur,%SystemRoot%\\cursors\\size2_il.cur,%SystemRoot%\\cursors\\size1_il.cur,%SystemRoot%\\cursors\\move_il.cur,%SystemRoot%\\cursors\\up_il.cur,%SystemRoot%\\cursors\\aero_link_il.cur,%SystemRoot%\\cursors\\pin_il.cur,%SystemRoot%\\cursors\\person_il.cur,@%systemroot%\\system32\\main.cpl,-1016"
+"Windows Inverted (large)"=expand:"%SystemRoot%\\cursors\\arrow_im.cur,%SystemRoot%\\cursors\\help_im.cur,%SystemRoot%\\cursors\\wait_im.cur,%SystemRoot%\\cursors\\busy_im.cur,%SystemRoot%\\cursors\\cross_im.cur,%SystemRoot%\\cursors\\beam_im.cur,%SystemRoot%\\cursors\\pen_im.cur,%SystemRoot%\\cursors\\no_im.cur,%SystemRoot%\\cursors\\size4_im.cur,%SystemRoot%\\cursors\\size3_im.cur,%SystemRoot%\\cursors\\size2_im.cur,%SystemRoot%\\cursors\\size1_im.cur,%SystemRoot%\\cursors\\move_im.cur,%SystemRoot%\\cursors\\up_im.cur,%SystemRoot%\\cursors\\aero_link_im.cur,%SystemRoot%\\cursors\\pin_im.cur,%SystemRoot%\\cursors\\person_im.cur,@%systemroot%\\system32\\main.cpl,-1017"
+"Windows Standard (extra large)"=expand:"%SystemRoot%\\cursors\\arrow_l.cur,%SystemRoot%\\cursors\\help_l.cur,%SystemRoot%\\cursors\\wait_l.cur,%SystemRoot%\\cursors\\busy_l.cur,%SystemRoot%\\cursors\\cross_l.cur,%SystemRoot%\\cursors\\beam_l.cur,%SystemRoot%\\cursors\\pen_l.cur,%SystemRoot%\\cursors\\no_l.cur,%SystemRoot%\\cursors\\size4_l.cur,%SystemRoot%\\cursors\\size3_l.cur,%SystemRoot%\\cursors\\size2_l.cur,%SystemRoot%\\cursors\\size1_l.cur,%SystemRoot%\\cursors\\move_l.cur,%SystemRoot%\\cursors\\up_l.cur,,%SystemRoot%\\cursors\\pin_l.cur,%SystemRoot%\\cursors\\person_l.cur,@%systemroot%\\system32\\main.cpl,-1018"
+"Windows Standard (large)"=expand:"%SystemRoot%\\cursors\\arrow_m.cur,%SystemRoot%\\cursors\\help_m.cur,%SystemRoot%\\cursors\\wait_m.cur,%SystemRoot%\\cursors\\busy_m.cur,%SystemRoot%\\cursors\\cross_m.cur,%SystemRoot%\\cursors\\beam_m.cur,%SystemRoot%\\cursors\\pen_m.cur,%SystemRoot%\\cursors\\no_m.cur,%SystemRoot%\\cursors\\size4_m.cur,%SystemRoot%\\cursors\\size3_m.cur,%SystemRoot%\\cursors\\size2_m.cur,%SystemRoot%\\cursors\\size1_m.cur,%SystemRoot%\\cursors\\move_m.cur,%SystemRoot%\\cursors\\up_m.cur,,%SystemRoot%\\cursors\\pin_m.cur,%SystemRoot%\\cursors\\person_m.cur,@%systemroot%\\system32\\main.cpl,-1019"

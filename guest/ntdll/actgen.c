@@ -13,7 +13,11 @@
 #define PUBLIC_KEY_TOKEN_MICROSOFT L"6595b64144ccf1df"
 #define IS_INTRESOURCE(x) (((ULONG_PTR)(x) >> 16) == 0)
 
-#ifdef __i386__
+#ifdef MIME_SXS_KERNEL
+/* the kernel generates for the process it is asked for, whose machine it tells. */
+#define SYSTEM_DIRECTORY SxsKSystemDirectory()
+#define PROCESS_ARCH SxsKProcessArch()
+#elifdef __i386__
 #define SYSTEM_DIRECTORY L"C:\\Windows\\SysWOW64\\"
 #define PROCESS_ARCH L"x86"
 #elif defined(__x86_64__) && !defined(MIME_X64_NATIVE)
@@ -99,6 +103,19 @@ typedef struct MAPPED_FILE {
     SIZE_T Size;
 } MAPPED_FILE;
 
+#ifdef MIME_SXS_KERNEL
+/* the kernel reads the file whole: a view would land in the address space of whoever starts the program. */
+static NTSTATUS map_file(PCWSTR path, MAPPED_FILE *out)
+{
+    return SxsKReadFile(path, &out->View, &out->Size);
+}
+
+static void unmap_file(MAPPED_FILE *f)
+{
+    gen_free(f->View);
+    f->View = nullptr;
+}
+#else
 static NTSTATUS map_file(PCWSTR path, MAPPED_FILE *out)
 {
     out->View = nullptr;
@@ -139,6 +156,7 @@ static void unmap_file(MAPPED_FILE *f)
         NtUnmapViewOfSection(NtCurrentProcess(), f->View);
     f->View = nullptr;
 }
+#endif
 
 /* an RT_MANIFEST resource of a mapped image or data file, in any language. */
 static NTSTATUS find_manifest_resource(PVOID module, ULONG_PTR name, const void **data, SIZE_T *size)
@@ -196,7 +214,7 @@ static NTSTATUS load_manifest_image(PCWSTR path, ULONG_PTR name, SXS_MANIFEST *m
     if (NT_SUCCESS(status)) {
         const void *data;
         SIZE_T size;
-        if (!LdrpNtHeaders(f.View))
+        if (!RtlImageNtHeader(f.View))
             status = STATUS_INVALID_IMAGE_FORMAT;
         else
             status = find_manifest_resource((PVOID)((ULONG_PTR)f.View | 1), name, &data, &size);
@@ -303,13 +321,21 @@ static void free_gen(GEN *g)
         gen_free(g->Roots[i]);
 }
 
-/* the Windows assemblies mime provides itself, each a single dll in the system directory. */
+/*
+ * the Windows assemblies mime provides itself, each a single dll in the system directory. the classes are the ones the
+ * dll has a version of its own for, which user32 asks it to register by name: windows lists every class of the common
+ * controls, mime's dll registers the others under their plain names when it loads.
+ */
 static const struct {
     PCWSTR Name;
     PCWSTR File;
+    USHORT Major;
+    PCWSTR Classes;
 } g_system_assemblies[] = {
-    {L"Microsoft.Windows.Common-Controls", L"comctl32.dll"},
-    {L"Microsoft.Windows.GdiPlus", L"gdiplus.dll"},
+    {L"Microsoft.Windows.Common-Controls", L"comctl32.dll", 6,
+     L"<windowClass>Static</windowClass><windowClass>Button</windowClass><windowClass>Edit</windowClass>"
+     L"<windowClass>ListBox</windowClass><windowClass>ComboBox</windowClass><windowClass>ScrollBar</windowClass>"},
+    {L"Microsoft.Windows.GdiPlus", L"gdiplus.dll", 0, nullptr},
 };
 
 static BOOLEAN same_identity_name(PCWSTR a, PCWSTR b)
@@ -317,7 +343,7 @@ static BOOLEAN same_identity_name(PCWSTR a, PCWSTR b)
     return a && b && !_wcsicmp(a, b);
 }
 
-static NTSTATUS add_system_assembly(GEN *g, const SXS_IDENTITY *ref, PCWSTR file)
+static NTSTATUS add_system_assembly(GEN *g, const SXS_IDENTITY *ref, PCWSTR file, PCWSTR classes)
 {
     GEN_ASSEMBLY *a = add_assembly(g);
     if (!a)
@@ -326,13 +352,13 @@ static NTSTATUS add_system_assembly(GEN *g, const SXS_IDENTITY *ref, PCWSTR file
     a->SystemFile = file;
     a->ManifestPathType = ACTCTX_PATH_TYPE_NONE;
     /* a manifest of its own, so the identity strings live with the assembly. */
-    WCHAR text[512];
+    WCHAR text[1024];
     _snwprintf(text, RTL_NUMBER_OF(text),
                L"<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'><assemblyIdentity "
                L"type='win32' name='%s' version='%u.%u.%u.%u' processorArchitecture='%s' publicKeyToken='%s'/>"
-               L"<file name='%s'/></assembly>",
+               L"<file name='%s'>%s</file></assembly>",
                ref->Name, ref->Version[0], ref->Version[1], ref->Version[2], ref->Version[3], PROCESS_ARCH,
-               ref->Token ? ref->Token : PUBLIC_KEY_TOKEN_MICROSOFT, file);
+               ref->Token ? ref->Token : PUBLIC_KEY_TOKEN_MICROSOFT, file, classes ? classes : L"");
     text[RTL_NUMBER_OF(text) - 1] = 0;
     UCHAR bom_text[sizeof(text) + 2] = {0xFF, 0xFE};
     SIZE_T bytes = wcslen(text) * sizeof(WCHAR);
@@ -502,14 +528,17 @@ static NTSTATUS resolve_dependencies(GEN *g)
                     same_identity_name(g->Assemblies[j].Manifest.Identity.Name, ref->Name);
             if (present)
                 continue;
-            PCWSTR system_file = nullptr;
+            PCWSTR system_file = nullptr, system_classes = nullptr;
             for (ULONG k = 0; k < RTL_NUMBER_OF(g_system_assemblies); k++)
                 if (same_identity_name(ref->Name, g_system_assemblies[k].Name) && ref->Token &&
-                    !_wcsicmp(ref->Token, PUBLIC_KEY_TOKEN_MICROSOFT))
+                    !_wcsicmp(ref->Token, PUBLIC_KEY_TOKEN_MICROSOFT)) {
                     system_file = g_system_assemblies[k].File;
+                    if (g_system_assemblies[k].Major && ref->HasVersion && ref->Version[0] == g_system_assemblies[k].Major)
+                        system_classes = g_system_assemblies[k].Classes;
+                }
             NTSTATUS status;
             if (system_file) {
-                status = add_system_assembly(g, ref, system_file);
+                status = add_system_assembly(g, ref, system_file, system_classes);
             } else {
                 GEN_ASSEMBLY *found;
                 status = probe_private(g, ref, &found);
@@ -847,13 +876,13 @@ static void build_assembly_information(GEN *g, SECTION *s)
     }
     BUF *u = &s->UserData;
     ULONG global = buf_reserve(u, sizeof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION), 4);
-    ULONG length = 0, at = buf_string(u, g->AppDirectory, &length);
+    /* ntdll reads the directory at an offset from the global information, not from the section. */
+    ULONG length = 0, at = buf_string(u, g->AppDirectory, &length) - global;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, Size) = sizeof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION);
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryPathType) = ACTCTX_PATH_TYPE_WIN32_FILE;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryLength) = length;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryOffset) = at;
     FIELD(u, global, ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ResourceName) = g->ResourceName;
-    s->UserFixups[s->UserFixupCount++] = offsetof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryOffset);
 }
 
 /* a redirection to one path in a single segment. */
@@ -933,9 +962,11 @@ static void build_window_classes(GEN *g, SECTION *s)
                 FIELD(d, r, ACTCTX_WINDOW_CLASS_REDIRECTION, Size) = sizeof(ACTCTX_WINDOW_CLASS_REDIRECTION);
                 FIELD(d, r, ACTCTX_WINDOW_CLASS_REDIRECTION, VersionSpecificClassNameLength) = length;
                 FIELD(d, r, ACTCTX_WINDOW_CLASS_REDIRECTION, VersionSpecificClassNameOffset) = at;
+                /* read on windows 11 26300: the name of the dll follows that of the class, told from the section. */
                 at = buf_string(d, m->Files[f].Name, &length);
                 FIELD(d, r, ACTCTX_WINDOW_CLASS_REDIRECTION, DllNameLength) = length;
                 FIELD(d, r, ACTCTX_WINDOW_CLASS_REDIRECTION, DllNameOffset) = at;
+                item_fixup(item, r + offsetof(ACTCTX_WINDOW_CLASS_REDIRECTION, DllNameOffset));
             }
         }
     }
@@ -1224,10 +1255,15 @@ static NTSTATUS open_resource(const MIME_SXS_GENERATE *r, ULONG_PTR name, MAPPED
                               SIZE_T *size)
 {
     file->View = nullptr;
+#ifdef MIME_SXS_KERNEL
+    /* the kernel took the resource out of the image of the new process before it asked. */
+    if (r->Module)
+        return SxsKRootResource(name, data, size);
+#endif
     if (r->Module)
         return find_manifest_resource(r->Module, name, data, size);
     NTSTATUS status = map_file(r->Source, file);
-    if (NT_SUCCESS(status) && !LdrpNtHeaders(file->View))
+    if (NT_SUCCESS(status) && !RtlImageNtHeader(file->View))
         status = STATUS_INVALID_IMAGE_FORMAT;
     if (NT_SUCCESS(status))
         status = find_manifest_resource((PVOID)((ULONG_PTR)file->View | 1), name, data, size);
@@ -1409,9 +1445,9 @@ static NTSTATUS add_private_path(PCWSTR value, void *context)
 }
 
 /* <program>.config beside a program, read for the probing of its private assemblies. */
-static NTSTATUS load_application_config(GEN *g, PCWSTR program)
+static NTSTATUS load_application_config(GEN *g, PCWSTR program, PCWSTR found)
 {
-    PWSTR path = gen_concat(program, L".config", nullptr, nullptr);
+    PWSTR path = found ? gen_strdup(found) : gen_concat(program, L".config", nullptr, nullptr);
     if (!path)
         return STATUS_NO_MEMORY;
     MAPPED_FILE f;
@@ -1446,11 +1482,13 @@ static NTSTATUS generate(const MIME_SXS_GENERATE *request, const void *text, SIZ
     GEN_ASSEMBLY *root = add_assembly(&g);
     NTSTATUS status = root ? STATUS_SUCCESS : STATUS_NO_MEMORY;
     if (NT_SUCCESS(status) && request->ApplicationConfig)
-        status = load_application_config(&g, request->Source);
+        status = load_application_config(&g, request->Source, request->Config);
     if (NT_SUCCESS(status)) {
         root->Private = TRUE;
         root->ManifestPathType = ACTCTX_PATH_TYPE_WIN32_FILE;
         if (text) {
+            if (IS_INTRESOURCE(request->ResourceName))
+                g.ResourceName = (ULONG)(ULONG_PTR)request->ResourceName;
             root->ManifestPath = gen_strdup(request->Source);
             status = root->ManifestPath ? SxspParseManifest(text, text_size, &root->Manifest) : STATUS_NO_MEMORY;
         } else {
@@ -1468,11 +1506,18 @@ static NTSTATUS generate(const MIME_SXS_GENERATE *request, const void *text, SIZ
     return status;
 }
 
-NTDLL_EXPORT NTSTATUS NTAPI RtlGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data)
+NTSTATUS SxsGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data)
 {
     if (!request || !request->Source || !data)
         return STATUS_INVALID_PARAMETER;
     return generate(request, nullptr, 0, data);
+}
+
+NTSTATUS SxsGenerateFromStream(const MIME_SXS_GENERATE *request, const void *text, SIZE_T size, PVOID *data)
+{
+    if (!request || !request->Source || !text || !data)
+        return STATUS_INVALID_PARAMETER;
+    return generate(request, text, size, data);
 }
 
 NTSTATUS SxspGenerateFromText(const void *text, SIZE_T size, PCWSTR path, PVOID *data)
@@ -1481,7 +1526,7 @@ NTSTATUS SxspGenerateFromText(const void *text, SIZE_T size, PCWSTR path, PVOID 
     return generate(&request, text, size, data);
 }
 
-NTDLL_EXPORT void NTAPI RtlFreeActivationContextData(PVOID data)
+void SxsFreeActivationContextData(PVOID data)
 {
     if (!data)
         return;

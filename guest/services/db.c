@@ -65,6 +65,29 @@ WCHAR *DbReadString(HKEY key, const WCHAR *value, DWORD *chars)
     return text;
 }
 
+/* a string value; an indirect one, "@library,-id", is the string of that resource when it loads. */
+WCHAR *DbReadMuiString(HKEY key, const WCHAR *value)
+{
+    WCHAR *text = DbReadString(key, value, nullptr);
+    if (text && text[0] == L'@') {
+        DWORD needed = 0;
+        RegLoadMUIStringW(key, value, nullptr, 0, &needed, 0, nullptr);
+        WCHAR *loaded = needed ? SvcAllocZero(needed + sizeof(WCHAR)) : nullptr;
+        if (loaded && RegLoadMUIStringW(key, value, loaded, needed, &needed, 0, nullptr) == ERROR_SUCCESS) {
+            SvcFree(text);
+            text = loaded;
+        } else {
+            SvcFree(loaded);
+        }
+    }
+    return text;
+}
+
+WCHAR *DbReadDisplayName(HKEY key)
+{
+    return DbReadMuiString(key, L"DisplayName");
+}
+
 BOOL DbReadDword(HKEY key, const WCHAR *value, DWORD *out)
 {
     DWORD type = 0, size = sizeof(*out), data = 0;
@@ -219,8 +242,7 @@ BOOL DbLoadRecord(SERVICE *s)
         s->DelayedStart = TRUE;
     if (DbReadDword(key, L"FailureActionsOnNonCrashFailures", &flag) && flag)
         s->FailureOnNonCrash = TRUE;
-    WCHAR *display = DbReadString(key, L"DisplayName", nullptr);
-    /* an indirect string names a resource the manager would load; the key name stands in for it. */
+    WCHAR *display = DbReadDisplayName(key);
     if (display && (!*display || display[0] == L'@')) {
         SvcFree(display);
         display = nullptr;
@@ -747,7 +769,7 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
     if (type != SERVICE_NO_CHANGE) {
         s->Type = type;
         if (s->Status.dwCurrentState == SERVICE_STOPPED)
-            s->Status.dwServiceType = type;
+            s->Status.dwServiceType = RunStatusType(s);
     }
     if (start != SERVICE_NO_CHANGE) {
         s->Start = start;

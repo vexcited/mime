@@ -349,72 +349,7 @@ static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
 }
 
 
-/* ------------------------------------------------------------------ trace */
-
-static BOOLEAN g_trace;
-static ULONG64 g_trace_seen[1 << 16];
-
-static ULONG64 trace_hash(ULONG64 h, const void *data, ULONG bytes)
-{
-    const UCHAR *p = data;
-    for (ULONG i = 0; i < bytes; i++)
-        h = (h ^ p[i]) * 0x100000001B3ull;
-    return h;
-}
-
-/* logs the first time a program touches a key or value: where it was found, the hive, a journal or nowhere. */
-static void trace_registry(char kind, char where, CM_NODE *node, PCWSTR rest, ULONG rest_chars, PCWSTR value, ULONG value_chars)
-{
-    if (!g_trace)
-        return;
-    WCHAR path[300];
-    ULONG chars = node ? CmpFullPath(node, path, RTL_NUMBER_OF(path) - 1) : 0;
-    if (chars > RTL_NUMBER_OF(path) - 1)
-        chars = RTL_NUMBER_OF(path) - 1;
-    if (rest_chars && chars + 1 + rest_chars < RTL_NUMBER_OF(path)) {
-        path[chars++] = '\\';
-        memcpy(path + chars, rest, rest_chars * sizeof(WCHAR));
-        chars += rest_chars;
-    }
-    ULONG64 h = 0xCBF29CE484222325ull;
-    const char *image = PsCurrentProcess()->ImageFileName;
-    h = trace_hash(h, &kind, 1);
-    h = trace_hash(h, image, (ULONG)strlen(image));
-    h = trace_hash(h, path, chars * sizeof(WCHAR));
-    h = trace_hash(h, value, value_chars * sizeof(WCHAR));
-    h = trace_hash(h, &where, 1);
-    ULONG slot = (ULONG)h & (RTL_NUMBER_OF(g_trace_seen) - 1);
-    for (ULONG probe = 0; probe < 64; probe++, slot = (slot + 1) & (RTL_NUMBER_OF(g_trace_seen) - 1)) {
-        if (g_trace_seen[slot] == h)
-            return;
-        if (!g_trace_seen[slot]) {
-            g_trace_seen[slot] = h;
-            break;
-        }
-    }
-    KiLogPrintf("regtrace %c%c %s %.*ls | %.*ls", kind, where, image, chars, path, value_chars, value ? value : L"");
-}
-
 /* ------------------------------------------------------------------ security */
-
-/* logs a refusal with the key's path, its tail if too long. */
-static void trace_key(CM_NODE *node, ACCESS_MASK access, NTSTATUS status)
-{
-    if (!SeTraceAccess)
-        return;
-    WCHAR path[96];
-    ULONG at = RTL_NUMBER_OF(path) - 1;
-    path[at] = 0;
-    for (CM_NODE *n = node; n && at > 1; n = n->Parent) {
-        ULONG take = n->NameLength < at - 1 ? n->NameLength : at - 1;
-        at -= take;
-        memcpy(path + at, n->Name, take * sizeof(WCHAR));
-        path[--at] = '\\';
-    }
-    UNICODE_STRING name;
-    RtlInitUnicodeString(&name, path + at);
-    SeTraceDenial("key", &name, access, status);
-}
 
 static SD_MAPPING key_mapping(void)
 {
@@ -579,14 +514,10 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                     status = SeCheckAccess(parent_sd, key_mapping(), KEY_CREATE_SUB_KEY_, 0,
                                            (create->Options & REG_OPTION_BACKUP_RESTORE_) ? SE_ACCESS_BACKUP_INTENT : 0,
                                            &unused);
-                    if (!NT_SUCCESS(status))
-                        SeTraceDescriptor(parent_sd);
                     SeSdDereference(parent_sd);
                 }
-                if (!NT_SUCCESS(status)) {
-                    trace_key(node, KEY_CREATE_SUB_KEY_, status);
+                if (!NT_SUCCESS(status))
                     return status;
-                }
             }
             /* the new key's descriptor is worked out first, so a refusal creates nothing. */
             SD_BLOB *sd = nullptr;
@@ -667,6 +598,7 @@ static NTSTATUS new_body(CM_NODE *node, PVOID *out)
         body->Notify = nullptr;
         body->RegistryView = 0;
         body->PhysicalView = FALSE;
+        body->HandleTags = 0;
         *out = body;
     }
     return status;
@@ -695,25 +627,16 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     if (ctx && ctx->SelectView) {
         if (ctx->RegistryView)
             view = ctx->RegistryView;
+        /*
+         * a 32-bit program has no view of its own here: its wow64 writes Wow6432Node into the paths and asks for the
+         * keys by name, with calls of its own that must reach the keys as written. a view is asked with the flags.
+         */
         if (!view)
-            view = ctx->Mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386 ? 32 : 64;
+            view = 64;
         status = CmpMapRegistryView(root, view, path, &len, MAX_PATH_CHARS, &start, &physical, &ctx->ViewContainer);
-    }
-    PWCHAR requested = nullptr;
-    if (g_trace) {
-        requested = ExAllocatePool2(POOL_FLAG_NON_PAGED, (len + 1) * sizeof(WCHAR), KI_TAG('C', 'm', 'T', 'r'));
-        if (requested)
-            memcpy(requested, path, len * sizeof(WCHAR));
     }
     if (NT_SUCCESS(status))
         status = walk(start, path, len, attributes, context, &node);
-    if (requested) {
-        if (NT_SUCCESS(status))
-            trace_registry('O', node->Hive ? 'h' : (node->Flags & CM_NODE_VOLATILE) ? 'v' : 'j', node, nullptr, 0, nullptr, 0);
-        else
-            trace_registry('O', 'm', start, requested, len, nullptr, 0);
-        ExFreePool(requested);
-    }
     /* an existing key is checked against its descriptor; a key the program just made is its own. */
     if (NT_SUCCESS(status) && ctx && ctx->Check && ctx->Disposition != REG_CREATED_NEW_KEY) {
         SD_BLOB *sd;
@@ -726,15 +649,6 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         }
         if (NT_SUCCESS(status))
             ctx->Checked = TRUE;
-        else
-            trace_key(node, ctx->Access, status);
-        if (!NT_SUCCESS(status) && SeTraceAccess) {
-            SD_BLOB *shown;
-            if (NT_SUCCESS(effective_sd(node, &shown))) {
-                SeTraceDescriptor(shown);
-                SeSdDereference(shown);
-            }
-        }
     }
     CmpUnlock();
     ExFreePool(path);
@@ -743,6 +657,12 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         if (NT_SUCCESS(status)) {
             ((CM_KEY_BODY *)*found)->RegistryView = (UCHAR)view;
             ((CM_KEY_BODY *)*found)->PhysicalView = physical;
+            /* a key takes the tags of the handle it was opened from, and the view asked for it in their place. */
+            USHORT tags = root->HandleTags;
+            if (ctx && ctx->RegistryView)
+                tags = (tags & ~(USHORT)(KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_)) |
+                       (ctx->RegistryView == 32 ? KEY_WOW64_32KEY_ : KEY_WOW64_64KEY_);
+            ((CM_KEY_BODY *)*found)->HandleTags = tags;
         }
     }
     return status;
@@ -869,6 +789,7 @@ static NTSTATUS out_finish(OUT_BUFFER *o, ULONG fixed, PVOID user, ULONG length,
 #define KeyFullInformation 2
 #define KeyNameInformation 3
 #define KeyCachedInformation 4
+#define KeyFlagsInformation 5
 #define KeyValueBasicInformation 0
 #define KeyValueFullInformation 1
 #define KeyValuePartialInformation 2
@@ -970,6 +891,14 @@ static NTSTATUS key_info(CM_NODE *node, ULONG klass, OUT_BUFFER *o, ULONG *fixed
         }
         o->Used = *fixed;
         return STATUS_SUCCESS;
+    case KeyFlagsInformation:
+        /* the wow64, key and control flags, none of them set on a plain key. */
+        *fixed = 12;
+        if (!out_init(o, 12))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        memset(o->Buffer, 0, 12);
+        o->Used = 12;
+        return STATUS_SUCCESS;
     case KeyNameInformation: {
         *fixed = 4;
         ULONG chars = CmpFullPath(node, nullptr, 0);
@@ -1002,7 +931,11 @@ static NTSTATUS value_info(CM_VALUE *v, ULONG klass, OUT_BUFFER *o, ULONG *fixed
     case KeyValueFullInformation:
     case KeyValueFullInformationAlign64: {
         *fixed = 20;
-        ULONG align = klass == KeyValueFullInformation ? 4 : 8;
+        /*
+         * the data starts on a boundary of the caller's pointer: eight bytes for a 64-bit program, as the reference
+         * machine lays it out, and four for a 32-bit one, which asks for the other class when it wants eight.
+         */
+        ULONG align = klass == KeyValueFullInformation && PspIsWow64Process(PsCurrentProcess()) ? 4 : 8;
         ULONG data = (20 + name_bytes + align - 1) & ~(align - 1);
         if (!out_init(o, data + v->DataLength))
             return STATUS_INSUFFICIENT_RESOURCES;
@@ -1107,6 +1040,12 @@ NTSTATUS NTAPI NtOpenKeyEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     CM_PARSE_CONTEXT ctx = {FALSE, FALSE, options, 0};
     HANDLE h;
     status = open_key(&oa, access, &ctx, &h);
+    /* the key a feature on demand is found by: the feature is asked for, once, and the key looked for again. */
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND && KeGetPreviousMode() == UserMode &&
+        ExFeatureKeyFault(oa.RootDirectory, oa.ObjectName)) {
+        ctx = (CM_PARSE_CONTEXT){FALSE, FALSE, options, 0};
+        status = open_key(&oa, access, &ctx, &h);
+    }
     KiFreeCapturedString(&name);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
@@ -1133,9 +1072,56 @@ NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PUL
         return status;
     OUT_BUFFER o;
     ULONG fixed;
-    status = key_info(node, klass, &o, &fixed);
+    if (klass >= 6 && klass <= 8) {
+        /*
+         * measured on windows 11 with keytags.exe of scratch/dlls/evr: a virtualization state of zero, the KEY_WOW64
+         * bits the handle was opened with, and a trust class of one. the KernelBase of windows asks for the tags of every
+         * key it opens.
+         */
+        fixed = 4;
+        status = out_init(&o, 4) ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+        if (NT_SUCCESS(status)) {
+            put32(o.Buffer, klass == 7 ? body->HandleTags : klass == 8 ? 1 : 0);
+            o.Used = 4;
+        }
+    } else {
+        status = key_info(node, klass, &o, &fixed);
+    }
     unlock_key(body);
     return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
+}
+
+/*
+ * measured on windows 11 with keyset.exe of scratch/dlls/evr: the write time takes eight bytes and the other classes
+ * four, checked before anything else; the handle tags need no right and keep their low sixteen bits, the rest need the
+ * right to set values, and the wow64 flags are refused even then.
+ */
+NTSTATUS NTAPI NtSetInformationKey(HANDLE key, ULONG klass, PVOID info, ULONG length)
+{
+    if (klass > 5)
+        return STATUS_INVALID_INFO_CLASS;
+    if (length != (klass ? 4u : 8u))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    UCHAR data[8];
+    NTSTATUS status = KiCopyFromUser(data, info, length);
+    if (!NT_SUCCESS(status))
+        return status;
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    status = lock_key(key, klass == 5 ? 0 : KEY_SET_VALUE, &body, &node);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (klass == 5) {
+        ULONG tags;
+        memcpy(&tags, data, 4);
+        body->HandleTags = (USHORT)tags;
+    } else if (klass == 0) {
+        memcpy(&node->LastWrite, data, 8);
+    } else if (klass == 1) {
+        status = STATUS_INVALID_PARAMETER;
+    }
+    unlock_key(body);
+    return status;
 }
 
 NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, ULONG length, PULONG returned)
@@ -1149,10 +1135,11 @@ NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, 
     CM_NODE *child = node->Child;
     for (ULONG i = 0; child && i < index; i++)
         child = child->Next;
-    trace_registry('S', node->Hive ? 'h' : 'j', node, nullptr, 0, nullptr, 0);
     OUT_BUFFER o;
     ULONG fixed;
-    status = child ? key_info(child, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
+    /* the flags are told of an open key only. */
+    status = !child ? STATUS_NO_MORE_ENTRIES
+                    : klass == KeyFlagsInformation ? STATUS_INVALID_PARAMETER : key_info(child, klass, &o, &fixed);
     unlock_key(body);
     return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
 }
@@ -1173,7 +1160,6 @@ NTSTATUS NTAPI NtQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PV
     }
     CmpLoadValues(node);
     CM_VALUE *v = CmpFindValue(node, captured.Buffer, captured.Length / sizeof(WCHAR));
-    trace_registry('V', !v ? 'm' : v->Written ? 'w' : 'h', node, nullptr, 0, captured.Buffer, captured.Length / sizeof(WCHAR));
     OUT_BUFFER o;
     ULONG fixed;
     status = v ? value_info(v, klass, &o, &fixed) : STATUS_OBJECT_NAME_NOT_FOUND;
@@ -1194,12 +1180,152 @@ NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID i
     CM_VALUE *v = node->Values;
     for (ULONG i = 0; v && i < index; i++)
         v = v->Next;
-    trace_registry('E', node->Hive ? 'h' : 'j', node, nullptr, 0, nullptr, 0);
     OUT_BUFFER o;
     ULONG fixed;
     status = v ? value_info(v, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
     unlock_key(body);
     return NT_SUCCESS(status) ? out_finish(&o, fixed, info, length, returned) : status;
+}
+
+typedef struct KEY_VALUE_ENTRY {
+    PUNICODE_STRING ValueName;
+    ULONG DataLength;
+    ULONG DataOffset;
+    ULONG Type;
+} KEY_VALUE_ENTRY;
+
+/* like ProbeForWrite: a byte of every page is read and written back. */
+static NTSTATUS probe_write(PVOID user, SIZE_T length, ULONG alignment)
+{
+    if (!length || KeGetPreviousMode() != UserMode)
+        return STATUS_SUCCESS;
+    if ((ULONG_PTR)user & (alignment - 1))
+        return STATUS_DATATYPE_MISALIGNMENT;
+    if (!KiIsUserRange(user, length))
+        return STATUS_ACCESS_VIOLATION;
+    ULONG_PTR last = (ULONG_PTR)user + length - 1;
+    for (ULONG_PTR at = (ULONG_PTR)user;; at = (at & ~(ULONG_PTR)(PAGE_SIZE - 1)) + PAGE_SIZE) {
+        UCHAR byte;
+        if (!NT_SUCCESS(KiCopyFromUser(&byte, (PVOID)at, 1)) || !NT_SUCCESS(KiCopyToUser((PVOID)at, &byte, 1)))
+            return STATUS_ACCESS_VIOLATION;
+        if ((at | (PAGE_SIZE - 1)) >= last)
+            return STATUS_SUCCESS;
+    }
+}
+
+/*
+ * measured on windows 11 with qmvk.exe of scratch/dlls/wstorage: at most 0x10000 entries, the entries and the buffer
+ * on a boundary of four, the data of each value on a boundary of four with the bytes between them zeroed. a value that
+ * does not fit leaves its entry zero and the call answers an overflow with the bytes used and the bytes needed. a
+ * missing value writes a needed length of zero and nothing else. no entries writes the needed length alone.
+ */
+NTSTATUS NTAPI NtQueryMultipleValueKey(HANDLE key, KEY_VALUE_ENTRY *entries, ULONG count, PVOID buffer,
+                                       PULONG buffer_length, PULONG required_length)
+{
+    if (count > 0x10000)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    NTSTATUS status = probe_write(entries, (SIZE_T)count * sizeof(KEY_VALUE_ENTRY), sizeof(ULONG));
+    ULONG length = 0;
+    if (NT_SUCCESS(status))
+        status = KiCopyFromUser(&length, buffer_length, sizeof(length));
+    if (NT_SUCCESS(status))
+        status = KiCopyToUser(buffer_length, &length, sizeof(length));
+    if (NT_SUCCESS(status))
+        status = probe_write(buffer, length, sizeof(ULONG));
+    ULONG required = 0;
+    if (NT_SUCCESS(status) && required_length && NT_SUCCESS(status = KiCopyFromUser(&required, required_length, 4)))
+        status = KiCopyToUser(required_length, &required, sizeof(required));
+    if (!NT_SUCCESS(status))
+        return status;
+    KEY_VALUE_ENTRY *copy = nullptr;
+    UNICODE_STRING *names = nullptr;
+    if (count) {
+        copy = ExAllocatePool2(POOL_FLAG_PAGED, count * sizeof(KEY_VALUE_ENTRY), KI_TAG('C', 'm', 'M', 'v'));
+        names = ExAllocatePool2(POOL_FLAG_PAGED, count * sizeof(UNICODE_STRING), KI_TAG('C', 'm', 'M', 'n'));
+        if (!copy || !names)
+            status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+    for (ULONG i = 0; NT_SUCCESS(status) && i < count; i++) {
+        PUNICODE_STRING user_name;
+        UNICODE_STRING name;
+        status = KiCopyFromUser(&user_name, &entries[i].ValueName, sizeof(user_name));
+        if (NT_SUCCESS(status))
+            status = user_name ? KiCopyFromUser(&name, user_name, sizeof(name)) : STATUS_ACCESS_VIOLATION;
+        if (NT_SUCCESS(status) && (name.Length & 1))
+            status = STATUS_INVALID_PARAMETER;
+        if (NT_SUCCESS(status))
+            status = KiCaptureUnicodeStringValue(&names[i], name);
+        if (!NT_SUCCESS(status))
+            count = i;
+    }
+    CM_KEY_BODY *body;
+    CM_NODE *node;
+    if (NT_SUCCESS(status))
+        status = lock_key(key, KEY_QUERY_VALUE, &body, &node);
+    PUCHAR data = nullptr;
+    ULONG used = 0;
+    if (NT_SUCCESS(status)) {
+        CmpLoadValues(node);
+        required = 0;
+        CM_VALUE **found = count ? ExAllocatePool2(POOL_FLAG_PAGED, count * sizeof(CM_VALUE *), KI_TAG('C', 'm', 'M', 'f'))
+                                 : nullptr;
+        if (count && !found)
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        for (ULONG i = 0; NT_SUCCESS(status) && i < count; i++) {
+            found[i] = CmpFindValue(node, names[i].Buffer, names[i].Length / sizeof(WCHAR));
+            if (!found[i]) {
+                status = STATUS_OBJECT_NAME_NOT_FOUND;
+                break;
+            }
+            ULONG offset = (required + 3) & ~3u;
+            memset(&copy[i], 0, sizeof(copy[i]));
+            if (offset + (ULONG64)found[i]->DataLength <= length) {
+                copy[i].Type = found[i]->Type;
+                copy[i].DataLength = found[i]->DataLength;
+                copy[i].DataOffset = offset;
+                used = offset + found[i]->DataLength;
+            }
+            required = offset + found[i]->DataLength;
+        }
+        if (NT_SUCCESS(status) && used && !(data = ExAllocatePool2(POOL_FLAG_PAGED, used, KI_TAG('C', 'm', 'M', 'd'))))
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        if (NT_SUCCESS(status)) {
+            memset(data, 0, used);
+            for (ULONG i = 0; i < count; i++)
+                if (copy[i].DataLength)
+                    memcpy(data + copy[i].DataOffset, found[i]->Data, copy[i].DataLength);
+        }
+        if (found)
+            ExFreePool(found);
+        unlock_key(body);
+        if (status == STATUS_OBJECT_NAME_NOT_FOUND)
+            required = 0;
+        if (NT_SUCCESS(status) || status == STATUS_OBJECT_NAME_NOT_FOUND) {
+            NTSTATUS written = required_length ? KiCopyToUser(required_length, &required, sizeof(required))
+                                               : STATUS_SUCCESS;
+            if (NT_SUCCESS(status))
+                status = written;
+        }
+        if (NT_SUCCESS(status) && count) {
+            for (ULONG i = 0; i < count && NT_SUCCESS(status); i++)
+                status = KiCopyToUser(&entries[i].DataLength, &copy[i].DataLength, 3 * sizeof(ULONG));
+            if (NT_SUCCESS(status) && used)
+                status = KiCopyToUser(buffer, data, used);
+            if (NT_SUCCESS(status))
+                status = KiCopyToUser(buffer_length, &used, sizeof(used));
+            if (NT_SUCCESS(status) && used < required)
+                status = STATUS_BUFFER_OVERFLOW;
+        }
+    }
+    if (data)
+        ExFreePool(data);
+    for (ULONG i = 0; names && i < count; i++)
+        KiFreeCapturedString(&names[i]);
+    if (names)
+        ExFreePool(names);
+    if (copy)
+        ExFreePool(copy);
+    return status;
 }
 
 NTSTATUS NTAPI NtSetValueKey(HANDLE key, PUNICODE_STRING name, ULONG title_index, ULONG type, PVOID data,
@@ -1502,6 +1628,26 @@ NTSTATUS CmDeleteKey(PCWSTR key_path)
     return status;
 }
 
+/* what an open of the key with this access answers to the thread when a driver forces the check. */
+NTSTATUS CmCheckAccess(PCWSTR key_path, ACCESS_MASK access)
+{
+    BOOLEAN required = SeAccessCheckRequired();
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    NTSTATUS status = node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+    if (node && required) {
+        SD_BLOB *sd;
+        status = effective_sd(node, &sd);
+        if (NT_SUCCESS(status)) {
+            ACCESS_MASK granted;
+            status = SeCheckAccess(sd, key_mapping(), access, 0, 0, &granted);
+            SeSdDereference(sd);
+        }
+    }
+    CmpUnlock();
+    return status;
+}
+
 NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type,
                                                         const void *data, ULONG length),
                            PVOID ctx)
@@ -1513,6 +1659,18 @@ NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, U
         for (CM_VALUE *v = node->Values; v; v = v->Next)
             fn(ctx, v->Name, v->NameLength, v->Type, v->Data, v->DataLength);
     }
+    CmpUnlock();
+    return node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+}
+
+NTSTATUS CmEnumerateSubkeys(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars), PVOID ctx)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    if (node && NT_SUCCESS(CmpLoadChildren(node)))
+        for (CM_NODE *c = node->Child; c; c = c->Next)
+            if (!(c->Flags & CM_NODE_DELETED))
+                fn(ctx, c->Name, c->NameLength);
     CmpUnlock();
     return node ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
 }
@@ -1540,10 +1698,58 @@ static void link_key(PCWSTR path, PCWSTR target)
     CmpSetValue(node, name, RTL_NUMBER_OF(name) - 1, REG_LINK, target, (ULONG)(wcslen(target) * sizeof(WCHAR)));
 }
 
+/*
+ * the files of the hive of the user in its profile. measured on windows 11 26100 with deskowner.exe of
+ * scratch/dlls/probe in the research repository: NTUSER.DAT and its two logs are there, hidden, and the registry
+ * holds them open and shares nothing, so that a program opens them for their attributes and gets
+ * STATUS_SHARING_VIOLATION when it asks to read. mime keeps the hive of the user as the default one and the journal,
+ * so the file is a copy of the default hive that is made once and never read back.
+ */
+static PFILE_OBJECT g_user_hive_files[3];
+static HANDLE g_user_hive_handles[3]; /* the share of a file ends with its handle, so each stays open. */
+
+static void hold_user_hive_files(void)
+{
+    static const PCWSTR leaves[] = {L"NTUSER.DAT", L"ntuser.dat.LOG1", L"ntuser.dat.LOG2"};
+    static const ULONG attributes[] = {FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM,
+                                       FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM};
+    WCHAR user[RTL_NUMBER_OF(HalBootInfo->user_name) + 1] = {};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(HalBootInfo->user_name) && HalBootInfo->user_name[i]; i++)
+        user[i] = (WCHAR)(UCHAR)HalBootInfo->user_name[i];
+    if (!user[0])
+        return;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(leaves); i++) {
+        WCHAR text[160] = {};
+        _snwprintf(text, RTL_NUMBER_OF(text) - 1, L"\\??\\C:\\Users\\%ls\\%ls", user, leaves[i]);
+        UNICODE_STRING path;
+        RtlInitUnicodeString(&path, text);
+        OBJECT_ATTRIBUTES oa;
+        InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
+        HANDLE handle;
+        IO_STATUS_BLOCK io = {};
+        NTSTATUS status = IopCreateFile(&handle, FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE, &oa, &io, attributes[i], 0,
+                                        FILE_OPEN_IF, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, KernelMode);
+        if (!NT_SUCCESS(status)) {
+            KiLogPrintf("registry: the profile has no %ls: %08x", leaves[i], status);
+            continue;
+        }
+        g_user_hive_handles[i] = handle;
+        status = ObReferenceHandle(handle, IoFileObjectTypeObject, KernelMode, (PVOID *)&g_user_hive_files[i], nullptr);
+        if (!NT_SUCCESS(status) || i || io.Information != FILE_CREATED || !g_user_hive || !g_user_hive->Image)
+            continue;
+        for (ULONG64 done = 0; done < g_user_hive->Size;) {
+            ULONG chunk = g_user_hive->Size - done > 0x10000 ? 0x10000 : (ULONG)(g_user_hive->Size - done), written = 0;
+            if (!NT_SUCCESS(IoWriteFileObject(g_user_hive_files[i], g_user_hive->Image + done, chunk, done, &written)) ||
+                !written)
+                break;
+            done += written;
+        }
+    }
+}
+
 void CmInitSystem1(void)
 {
     ExInitializeFastMutex(&CmpLock);
-    g_trace = strstr(HalBootInfo->cmdline, "trace-registry") != nullptr;
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;
@@ -1572,7 +1778,18 @@ void CmInitSystem1(void)
     CmpCreateChild(CmpRoot, L"WC", 2, CM_NODE_VOLATILE);
     CmpCreateChild(machine, L"HARDWARE", 8, CM_NODE_VOLATILE);
     CmpCreateChild(machine, L"SAM", 3, CM_NODE_VOLATILE);
-    CmpCreateChild(machine, L"SECURITY", 8, CM_NODE_VOLATILE);
+    /*
+     * the hive of the security authority, where its secrets are. it is kept by the journal, and only the system opens
+     * it: the administrators can read and change its descriptor, as on windows.
+     */
+    CM_NODE *security = CmpCreateChild(machine, L"SECURITY", 8, 0);
+    if (security) {
+        SD_ACE aces[] = {{CONTAINER_INHERIT_ACE, KEY_ALL_ACCESS_, SeSidSystem},
+                         {CONTAINER_INHERIT_ACE, 0x60000, SeSidAdministrators}};
+        SD_BLOB *sd;
+        if (NT_SUCCESS(SeSdBuild(SeSidAdministrators, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, aces, 2, &sd)))
+            security->Sd = sd;
+    }
     mount(machine, L"SYSTEM", L"\\SystemRoot\\System32\\config\\SYSTEM");
     mount(machine, L"SOFTWARE", L"\\SystemRoot\\System32\\config\\SOFTWARE");
     mount(user, L".DEFAULT", L"\\SystemRoot\\System32\\config\\DEFAULT");
@@ -1606,6 +1823,7 @@ void CmInitSystem1(void)
     KiBootStamp("hives");
     CmpJournalInitialize();
     KiBootStamp("journal");
+    hold_user_hive_files();
 
     /* the current control set, from the restored Select key. */
     ULONG current = 1;

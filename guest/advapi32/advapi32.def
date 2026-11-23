@@ -51,7 +51,7 @@ EXPORTS
     RegOpenKeyExA=kernelbase.RegOpenKeyExA
     RegOpenKeyExW=kernelbase.RegOpenKeyExW
     RegOpenKeyW=kernelbase.RegOpenKeyW
-    RegOverridePredefKey=kernelbase.RegOverridePredefKey
+    RegOverridePredefKey
     RegQueryInfoKeyA=kernelbase.RegQueryInfoKeyA
     RegQueryInfoKeyW=kernelbase.RegQueryInfoKeyW
     RegQueryValueExA=kernelbase.RegQueryValueExA

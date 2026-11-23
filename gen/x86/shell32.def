@@ -116,3 +116,8 @@ EXPORTS
     SHBindToParent=_SHBindToParent@16
     SHFreeNameMappings=_SHFreeNameMappings@4
     SHInvokePrinterCommandW=_SHInvokePrinterCommandW@20
+    SHAddFromPropSheetExtArray=_SHAddFromPropSheetExtArray@12 @167
+    SHCreatePropSheetExtArray=_SHCreatePropSheetExtArray@12 @168
+    SHDestroyPropSheetExtArray=_SHDestroyPropSheetExtArray@4 @169
+    SHReplaceFromPropSheetExtArray=_SHReplaceFromPropSheetExtArray@16 @170
+    SHGetItemFromObject=_SHGetItemFromObject@12 @512

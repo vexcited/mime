@@ -11,7 +11,6 @@ static SIZE_T g_free_pages;
 static SIZE_T g_total_pages;
 static volatile SIZE_T g_freed_since_discard;
 static volatile SIZE_T g_freed_since_sweep; /* pages freed since a trim or sweep handed every free page back. */
-static BOOLEAN g_discard_enabled = TRUE; /* the "nodiscard" kernel option keeps freed memory in the guest, for measuring. */
 static ULONG g_discard_min_order = 4; /* 64 KiB blocks, or the host's memory block. */
 #define DISCARD_BATCH (16ull << 8) /* pages freed between discard passes, 16 MiB. */
 #define DISCARD_IDLE (1ull << 8)   /* pages freed before an idle discard, 1 MiB. */
@@ -252,7 +251,7 @@ static volatile ULONG64 g_released_bytes;
 /* returns the bytes handed back. budget 0 means no limit, unlocked releases the kernel lock during the host's work. */
 static ULONG64 report_free(ULONG min_order, ULONG64 limit, BOOLEAN idle, BOOLEAN unlocked)
 {
-    if (!g_discard_enabled || __atomic_exchange_n(&g_report_busy, 1, __ATOMIC_ACQUIRE))
+    if (__atomic_exchange_n(&g_report_busy, 1, __ATOMIC_ACQUIRE))
         return 0;
     ULONG64 budget = limit ? limit : ~0ull, done = 0;
     BOOLEAN left_some = FALSE, refused = FALSE;
@@ -714,6 +713,8 @@ LARGE_INTEGER NTAPI MmGetPhysicalAddress(PVOID va)
 {
     LARGE_INTEGER r;
     if ((ULONG_PTR)va >= MIME_KVA_SYSTEM && (ULONG_PTR)va < MIME_KVA_SYSTEM + MIME_KVA_SYSTEM_SIZE) {
+        if (!(MiReadPte(MiKernelRoot(), (ULONG_PTR)va) & MM_PTE_VALID))
+            MiSystemImageFault((ULONG_PTR)va);
         r.QuadPart = (LONGLONG)((MiReadPte(MiKernelRoot(), (ULONG_PTR)va) & MM_PTE_ADDR_MASK) + ((ULONG_PTR)va & 0xFFF));
         return r;
     }
@@ -765,7 +766,6 @@ void MmInitialize(MimeBootInfo *boot)
         i += 1ull << order;
     }
     g_total_pages = g_ram_pages;
-    g_discard_enabled = !strstr(boot->cmdline, "nodiscard");
     KiLogPrintf("mm: %llu MiB free, pfn database %llu KiB", (ULONG64)(g_free_pages >> 8), db_bytes >> 10);
 
     void MiInitializeKernelTables(MimeBootInfo * boot);

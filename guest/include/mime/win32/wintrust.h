@@ -23,12 +23,16 @@
 #define WTD_REVOCATION_CHECK_CHAIN 0x40
 #define WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT 0x80
 #define WTD_CACHE_ONLY_URL_RETRIEVAL 0x1000
+#define WTD_USE_IE4_TRUST_FLAG 0x1
+#define WTD_DISABLE_MD2_MD4 0x2000
 #define TRUST_E_PROVIDER_UNKNOWN ((LONG)0x800b0001)
 #define TRUST_E_ACTION_UNKNOWN ((LONG)0x800b0002)
 #define TRUST_E_SUBJECT_FORM_UNKNOWN ((LONG)0x800b0003)
 #define TRUST_E_SUBJECT_NOT_TRUSTED ((LONG)0x800b0004)
 #define TRUST_E_NOSIGNATURE ((LONG)0x800b0100)
 #define TRUST_E_BAD_DIGEST ((LONG)0x80096010)
+#define TRUST_E_SYSTEM_ERROR ((LONG)0x80096001)
+#define HTTPSPROV_ACTION {0x573e31f8,0xaaba,0x11d0,{0x8c,0xcb,0x00,0xc0,0x4f,0xc2,0x95,0xee}}
 #define WINTRUST_ACTION_GENERIC_VERIFY_V2 {0x00aac56b,0xcd44,0x11d0,{0x8c,0xc2,0x00,0xc0,0x4f,0xc2,0x95,0xee}}
 /* the policy of driver packages, as setup and the driver store verify them. */
 #define DRIVER_ACTION_VERIFY {0xf750e6c3,0x38ee,0x11d1,{0x85,0xe5,0x00,0xc0,0x4f,0xc2,0x95,0xee}}
@@ -64,6 +68,16 @@ typedef struct _WINTRUST_BLOB_INFO {
     DWORD cbMemSignedMsg;
     BYTE *pbMemSignedMsg;
 } WINTRUST_BLOB_INFO, *PWINTRUST_BLOB_INFO;
+
+typedef struct WINTRUST_CERT_INFO_ {
+    DWORD cbStruct;
+    LPCWSTR pcwszDisplayName;
+    CERT_CONTEXT *psCertContext;
+    DWORD chStores;
+    HCERTSTORE *pahStores;
+    DWORD dwFlags;
+    FILETIME *psftVerifyAsOf;
+} WINTRUST_CERT_INFO, *PWINTRUST_CERT_INFO;
 
 typedef struct _WINTRUST_DATA {
     DWORD cbStruct;

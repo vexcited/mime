@@ -65,6 +65,24 @@ static OCALL *call_begin(OXID_ENTRY *server, const GUID *ipid, REFIID iid, ULONG
     return call;
 }
 
+typedef void(RPC_ENTRY *SET_WAIT_FUNCTION)(DWORD(WINAPI *function)(DWORD, const HANDLE *, DWORD, void *),
+                                          void *context, void *previous[2]);
+
+/*
+ * mime's rpcrt4 lets an apartment serve calls while it waits for a reply. the rpcrt4 of a 32-bit process is
+ * microsoft's, which has no such hook: the apartment then only waits.
+ */
+static SET_WAIT_FUNCTION wait_hook(void)
+{
+    static SET_WAIT_FUNCTION hook;
+    static BOOL looked;
+    if (!looked) {
+        hook = (SET_WAIT_FUNCTION)GetProcAddress(GetModuleHandleW(L"rpcrt4.dll"), "I_RpcMimeSetWaitFunction");
+        looked = TRUE;
+    }
+    return hook;
+}
+
 /* serves calls to the thread's apartment while waiting for the reply. */
 static HRESULT call_send(OCALL *call, ULONG body_size, BYTE **reply, ULONG *reply_size)
 {
@@ -77,12 +95,12 @@ static HRESULT call_send(OCALL *call, ULONG body_size, BYTE **reply, ULONG *repl
 
     OLE_THREAD *t = OleThreadState(FALSE);
     void *previous[2] = {};
-    BOOL waits = t && t->ComInits && t->Sta && t->Apartment;
-    if (waits)
-        I_RpcMimeSetWaitFunction(OrpcWait, t->Apartment, previous);
+    SET_WAIT_FUNCTION hook = t && t->ComInits && t->Sta && t->Apartment ? wait_hook() : nullptr;
+    if (hook)
+        hook(OrpcWait, t->Apartment, previous);
     RPC_STATUS status = I_RpcSendReceive(&call->Rpc);
-    if (waits)
-        I_RpcMimeSetWaitFunction((DWORD(WINAPI *)(DWORD, const HANDLE *, DWORD, void *))previous[0], previous[1], nullptr);
+    if (hook)
+        hook((DWORD(WINAPI *)(DWORD, const HANDLE *, DWORD, void *))previous[0], previous[1], nullptr);
     if (status) {
         /* the request buffer went away with the call. */
         call->Rpc.Buffer = nullptr;

@@ -217,18 +217,22 @@ ULONG WINAPI BaseSetLastNTError(NTSTATUS status)
 }
 
 /* the mode lives in the process, where a job can force bits on. */
+/*
+ * the kernel keeps SEM_FAILCRITICALERRORS inverted: its bit 0 set means the box of a hard error is raised. measured
+ * on windows 11 26300, where SetErrorMode(4) over a kernel mode of 0 returns 1 and leaves 5.
+ */
 UINT WINAPI GetErrorMode(void)
 {
     ULONG mode = 0;
     NtQueryInformationProcess(NtCurrentProcess(), ProcessDefaultHardErrorMode, &mode, sizeof(mode), nullptr);
-    return mode;
+    return mode ^ SEM_FAILCRITICALERRORS;
 }
 
 UINT WINAPI SetErrorMode(UINT mode)
 {
     UINT old = GetErrorMode();
     /* SEM_NOALIGNMENTFAULTEXCEPT cannot be cleared once set. */
-    ULONG next = mode | (old & SEM_NOALIGNMENTFAULTEXCEPT);
+    ULONG next = (mode ^ SEM_FAILCRITICALERRORS) | (old & SEM_NOALIGNMENTFAULTEXCEPT);
     NtSetInformationProcess(NtCurrentProcess(), ProcessDefaultHardErrorMode, &next, sizeof(next));
     return old;
 }

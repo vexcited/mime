@@ -19,9 +19,10 @@ const UCHAR SeSidUsers[16] = {1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x21, 0x02, 0
 const UCHAR SeSidEveryone[12] = {1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
 const UCHAR SeSidAuthenticatedUsers[12] = {1, 1, 0, 0, 0, 0, 0, 5, 11, 0, 0, 0};
 const UCHAR SeSidCreatorOwner[12] = {1, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0};
-const UCHAR SeSidTrustedInstaller[32] = {1, 6, 0, 0, 0, 0, 0, 5, 80, 0, 0, 0, 0x35, 0x74, 0x8F, 0x38, 0x99, 0xEE,
-                                         0x4F, 0xCB, 0xDC, 0xA5, 0x1C, 0x6D, 0x57, 0xA6, 0x8F, 0x6E, 0x40, 0x28,
-                                         0x74, 0x87};
+/* S-1-5-80 and the sha-1 of the service name in upper case, TRUSTEDINSTALLER. */
+const UCHAR SeSidTrustedInstaller[32] = {1, 6, 0, 0, 0, 0, 0, 5, 80, 0, 0, 0, 0xB5, 0x89, 0xFB, 0x38, 0x19, 0x84,
+                                         0xC2, 0xCB, 0x5C, 0x6C, 0x23, 0x6D, 0x57, 0x00, 0x77, 0x6E, 0xC0, 0x02,
+                                         0x64, 0x87};
 const UCHAR SeSidAllAppPackages[16] = {1, 2, 0, 0, 0, 0, 0, 15, 2, 0, 0, 0, 1, 0, 0, 0};
 const UCHAR SeSidRestrictedPackages[16] = {1, 2, 0, 0, 0, 0, 0, 15, 2, 0, 0, 0, 2, 0, 0, 0};
 
@@ -146,9 +147,14 @@ NTSTATUS SeSdCapture(const void *descriptor, KPROCESSOR_MODE mode, SD_BLOB **out
     }
     /*
      * absolute: owner, group, sacl and dacl are pointers after the header. a 32-bit program keeps them as 32-bit
-     * addresses where a relative descriptor has its offsets.
+     * addresses where a relative descriptor has its offsets. on x64 wow64.dll of windows has widened them before
+     * the call gets here, xta64 hands the descriptor of the program over as it is.
      */
+#ifdef __x86_64__
+    BOOLEAN narrow = FALSE;
+#else
     BOOLEAN narrow = mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386;
+#endif
     status = copy_in(mode, head, descriptor, narrow ? 20 : sizeof(head));
     if (!NT_SUCCESS(status))
         return status;
@@ -286,8 +292,8 @@ static const UCHAR *find_label(const SECURITY_DESCRIPTOR_RELATIVE *sd)
     return nullptr;
 }
 
-/* the sd with an integrity label ace added to its sacl, as a low integrity creator leaves on what it makes. */
-static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
+/* the sd with an integrity label ace added to its sacl. */
+static NTSTATUS add_label_ace(SD_BLOB *sd, ULONG rid, UCHAR flags, ULONG policy, USHORT control, SD_BLOB **out)
 {
     const SECURITY_DESCRIPTOR_RELATIVE *r = (const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data;
     const ACL *old = (r->Control & SE_SACL_PRESENT) && r->Sacl ? (const ACL *)(sd->Data + r->Sacl) : nullptr;
@@ -304,7 +310,7 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
         return STATUS_INSUFFICIENT_RESOURCES;
     memset(made->Data, 0, made->Length);
     made->Data[0] = 1;
-    *(USHORT *)(made->Data + 2) = r->Control | SE_SACL_PRESENT;
+    *(USHORT *)(made->Data + 2) = r->Control | SE_SACL_PRESENT | control;
     ULONG at = 20;
     UCHAR *acl = made->Data + at;
     acl[0] = old && old->AclRevision > ACL_REVISION ? old->AclRevision : ACL_REVISION;
@@ -316,7 +322,7 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
     ace[0] = SYSTEM_MANDATORY_LABEL_ACE_TYPE;
     ace[1] = flags;
     *(USHORT *)(ace + 2) = (USHORT)ace_size;
-    *(ULONG *)(ace + 4) = 1; /* no write up. */
+    *(ULONG *)(ace + 4) = policy;
     ace[8] = 1;
     ace[9] = 1;
     ace[15] = 16;
@@ -340,6 +346,23 @@ static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **o
     }
     *out = made;
     return STATUS_SUCCESS;
+}
+
+/* the label a low integrity creator leaves: no write up. */
+static NTSTATUS add_label_flags(SD_BLOB *sd, ULONG rid, UCHAR flags, SD_BLOB **out)
+{
+    return add_label_ace(sd, rid, flags, 1, 0, out);
+}
+
+/*
+ * the label a process, a thread or a token is made with, when its descriptor has none: the level of its token and a
+ * policy, in a sacl marked as inherited. STATUS_OBJECT_NAME_COLLISION when the descriptor has a label already.
+ */
+NTSTATUS SeSdAddObjectLabel(SD_BLOB *sd, ULONG rid, ULONG policy, SD_BLOB **out)
+{
+    if (find_label((const SECURITY_DESCRIPTOR_RELATIVE *)sd->Data))
+        return STATUS_OBJECT_NAME_COLLISION;
+    return add_label_ace(sd, rid, 0, policy, SE_SACL_AUTO_INHERITED, out);
 }
 
 static NTSTATUS add_label(SD_BLOB *sd, ULONG rid, SD_BLOB **out)
@@ -703,6 +726,28 @@ NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
  */
 NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out)
 {
+    if (kind == SE_BOOT_RPC_CONTROL) {
+        /*
+         * measured on windows 11 with rpcdir.c of scratch/procsd in the research repository. an endpoint made without a
+         * descriptor takes the inheritable entries, so that everyone may connect to it.
+         */
+        static const UCHAR restricted[12] = {1, 1, 0, 0, 0, 0, 0, 5, 12, 0, 0, 0};
+        const UCHAR inherit = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE;
+        SD_ACE aces[7] = {{0, 0x2000F, SeSidEveryone},
+                          {0, 0x2000F, restricted},
+                          {0, 0xF000F, SeSidAdministrators},
+                          {inherit, 0xE0000000, SeSidEveryone},
+                          {inherit, 0xE0000000, restricted},
+                          {inherit, 0x10000000, SeSidAdministrators},
+                          {inherit, 0x10000000, SeSidCreatorOwner}};
+        SD_BLOB *sd;
+        NTSTATUS status = SeSdBuild(SeSidAdministrators, SeSidSystem, 0, aces, RTL_NUMBER_OF(aces), &sd);
+        if (!NT_SUCCESS(status))
+            return status;
+        status = add_label_ace(sd, 0x1000, 0, 1, SE_SACL_AUTO_INHERITED, out);
+        SeSdDereference(sd);
+        return status;
+    }
     ACCESS_MASK everyone = mapping[0] | mapping[2];
     if (kind == SE_BOOT_CREATABLE && container)
         everyone |= 0xC; /* create object, create subdirectory. */
@@ -816,6 +861,11 @@ NTSTATUS SeSdSet(ULONG info, const SD_BLOB *modification, const SD_BLOB *old, SD
         MimeRtlFree(work);
         return status;
     }
+    /* a sacl that is set stays marked inherited only when its setter asks so, measured with label.c. */
+    USHORT asked = ((const SECURITY_DESCRIPTOR_RELATIVE *)modification->Data)->Control;
+    if ((parts & 0x1F8) && (asked & (SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED)) !=
+                               (SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED))
+        ((SECURITY_DESCRIPTOR_RELATIVE *)work)->Control &= ~SE_SACL_AUTO_INHERITED;
     return blob_of_rtl(work, out);
 }
 

@@ -6,14 +6,8 @@
 #include <time.h>
 #include <unistd.h>
 
-static MimeLogLevel g_level = MIME_LOG_INFO;
 static const char *g_prefix = "mime";
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-
-void mime_log_set_level(MimeLogLevel level)
-{
-    g_level = level;
-}
 
 void mime_log_set_prefix(const char *prefix)
 {
@@ -22,10 +16,7 @@ void mime_log_set_prefix(const char *prefix)
 
 void mime_logv(MimeLogLevel level, const char *fmt, va_list ap)
 {
-    static const char *const names[] = {"debug", "info", "warn", "error"};
-    if (level < g_level)
-        return;
-
+    static const char *const names[] = {"info", "warn", "error"};
     FILE *out = level >= MIME_LOG_WARN ? stderr : stdout;
     pthread_mutex_lock(&g_lock);
     if (!isatty(fileno(out))) {

@@ -1,0 +1,3 @@
+LIBRARY ngcsvc.dll
+EXPORTS
+    NgcServiceMain @1

@@ -19,13 +19,17 @@ EXPORTS
     SetupDiCreateDevRegKeyW=_SetupDiCreateDevRegKeyW@28
     SetupDiCreateDeviceInfoList=_SetupDiCreateDeviceInfoList@8
     SetupDiCreateDeviceInterfaceRegKeyW=_SetupDiCreateDeviceInterfaceRegKeyW@24
+    SetupDiDestroyClassImageList=_SetupDiDestroyClassImageList@4
     SetupDiDestroyDeviceInfoList=_SetupDiDestroyDeviceInfoList@4
     SetupDiEnumDeviceInfo=_SetupDiEnumDeviceInfo@12
     SetupDiEnumDeviceInterfaces=_SetupDiEnumDeviceInterfaces@20
     SetupDiEnumDriverInfoW=_SetupDiEnumDriverInfoW@20
+    SetupDiGetClassDescriptionA=_SetupDiGetClassDescriptionA@16
     SetupDiGetClassDevsA=_SetupDiGetClassDevsA@16
     SetupDiGetClassDevsExA=_SetupDiGetClassDevsExA@28
     SetupDiGetClassDevsExW=_SetupDiGetClassDevsExW@28
+    SetupDiGetClassImageIndex=_SetupDiGetClassImageIndex@12
+    SetupDiGetClassImageList=_SetupDiGetClassImageList@4
     SetupDiGetClassDevsW=_SetupDiGetClassDevsW@16
     SetupDiGetDeviceInstanceIdA=_SetupDiGetDeviceInstanceIdA@20
     SetupDiGetDeviceInstanceIdW=_SetupDiGetDeviceInstanceIdW@20

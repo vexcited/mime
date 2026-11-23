@@ -1,0 +1,5 @@
+LIBRARY sensapi.dll
+EXPORTS
+    IsDestinationReachableA@8 @2
+    IsDestinationReachableW@8 @3
+    IsNetworkAlive@4 @1

@@ -20,6 +20,71 @@
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion]
 "BuildLabEx"="26100.1.x86fre.ge_release.240331-1435"
 
+; what user32 reads of the window manager: the library it loads to turn the png image of an icon into a bitmap. the
+; other values are those of windows 11, where both views of the key hold them. a program that finds the key looks
+; for LoadAppInit_DLLs in it, which windows always has, zero.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows]
+@="mnmsrvc"
+"AppInit_DLLs"=""
+"DdeSendTimeout"=dword:00000000
+"DesktopHeapLogging"=dword:00000001
+"DeviceNotSelectedTimeout"="15"
+"DwmInputUsesIoCompletionPort"=dword:00000001
+"EnableDwmInputProcessing"=dword:00000007
+"GDIProcessHandleQuota"=dword:00002710
+"IconServiceLib"="IconCodecService.dll"
+"LoadAppInit_DLLs"=dword:00000000
+"NaturalInputHandler"="Ninput.dll"
+"RapidHpdTimeoutMs"=dword:00000bb8
+"ShutdownWarningDialogTimeout"=dword:ffffffff
+"Spooler"="yes"
+"TransmissionRetryTimeout"="90"
+"USERNestedWindowLimit"=dword:00000032
+"USERPostMessageLimit"=dword:00002710
+"USERProcessHandleQuota"=dword:00002710
+
+; the licensing platform's settings as an installed windows 11 pro holds them, the key being the generic one of the
+; edition. programs that identify the machine open this key.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform]
+"AuthorizedContainers"="Microsoft.Office.*_8wekyb3d8bbwe"
+"BackupProductKeyDefault"="VK7JG-NPHTM-C97JM-9MPGT-3V66T"
+"CacheStore"=expand:"%WINDIR%\\System32\\spp\\store\\2.0\\cache"
+"HasOOBERun"=dword:00000001
+"IgnoreContainerOrigin"=dword:00000000
+"InactivityShutdownDelay"=dword:0000001e
+"KeepRunningThresholdMins"=dword:0000000f
+"NoExpirationUX"=dword:00000000
+"SkipRearm"=dword:00000000
+"TokenStore"=expand:"%WINDIR%\\System32\\spp\\store\\2.0"
+"UserOperations"=dword:00000000
+"VLActivationInterval"=dword:00000078
+"VLRenewalInterval"=dword:00002760
+
+; the files of the stock fonts, those of 120 dpi above 108 and those of 96 otherwise.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Gre_Initialize\LargeFont]
+"FIXEDFON.FON"="8514fix.fon"
+"FONTS.FON"="8514sys.fon"
+"OEMFONT.FON"="8514oem.fon"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Gre_Initialize\SmallFont]
+"FIXEDFON.FON"="vgafix.fon"
+"FONTS.FON"="vgasys.fon"
+"OEMFONT.FON"="vgaoem.fon"
+
+; the raster fonts the console loads, the Terminal sizes of the DOS screens.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Console\RasterFonts]
+"woafont"="dosapp.fon"
+"CGA40WOA.FON"="CGA40WOA.FON"
+"CGA80WOA.FON"="CGA80WOA.FON"
+"EGA40WOA.FON"="EGA40WOA.FON"
+"EGA80WOA.FON"="EGA80WOA.FON"
+
+; what setup showed when the machine was installed. updaters read that the license was shown before they act for the user.
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\OOBE]
+"SetupDisplayedEula"=dword:00000001
+"SetupDisplayedLanguageSelection"=dword:00000001
+"SetupDisplayedProductKey"=dword:00000001
+
 ; the profiles folders, read by the profile functions and the service control manager.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList]
 "Default"=expand:"%SystemDrive%\\Users\\Default"
@@ -30,9 +95,12 @@
 ; which services each svchost group runs, read by svchost when it hosts a group.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost]
 "DcomLaunch"=multi:"DcomLaunch"
-"LocalService"=multi:"NSI"
+"LocalService"=multi:"NSI","bthserv"
+"LocalServiceAndNoImpersonation"=multi:"SCardSvr"
 "LocalServiceNoNetwork"=multi:"CoreMessagingRegistrar"
-"NetworkService"=multi:"LanmanWorkstation"
+"LocalServiceNetworkRestricted"=multi:"Dhcp"
+"LocalSystemNetworkRestricted"=multi:"NgcSvc"
+"NetworkService"=multi:"CryptSvc","LanmanWorkstation","Dnscache","DoSvc"
 "RPCSS"=multi:"RpcEptMapper","RpcSs"
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalService]
@@ -54,6 +122,16 @@
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalServiceNoNetwork]
 "CoInitializeSecurityParam"=dword:00000001
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalServiceNetworkRestricted]
+"CoInitializeSecurityAllowLowBox"=dword:00000001
+"CoInitializeSecurityParam"=dword:00000001
+"COM_UnmarshalingPolicy"=dword:00000001
+"DefaultRpcStackSize"=dword:00000040
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalSystemNetworkRestricted]
+"CoInitializeSecurityParam"=dword:00000001
+"COM_UnmarshalingPolicy"=dword:00000001
 
 ; the program folders. 32-bit programs read their own, installers read both.
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion]
@@ -121,11 +199,111 @@
 [HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings]
 [HKLM\SOFTWARE\Clients\StartMenuInternet]
 
+; the cryptographic service providers cryptsp.dll loads by name or by type, as the windows 11 machine has them. the
+; smart card provider is microsoft's basecsp.dll on winscard.dll, both files of the set.
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Base Cryptographic Provider v1.0]
+"Image Path"="%SystemRoot%\\system32\\rsaenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Base DSS and Diffie-Hellman Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\dssenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:0000000d
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Base DSS Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\dssenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000003
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Base Smart Card Crypto Provider]
+"Image Path"="C:\\Windows\\System32\\basecsp.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft DH SChannel Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\dssenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000012
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Enhanced Cryptographic Provider v1.0]
+"Image Path"="%SystemRoot%\\system32\\rsaenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Enhanced DSS and Diffie-Hellman Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\dssenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:0000000d
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Enhanced RSA and AES Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\rsaenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000018
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft RSA SChannel Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\rsaenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:0000000c
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider\Microsoft Strong Cryptographic Provider]
+"Image Path"="%SystemRoot%\\system32\\rsaenh.dll"
+"SigInFile"=dword:00000000
+"Type"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider Types\Type 001]
+"Name"="Microsoft Strong Cryptographic Provider"
+"TypeName"="RSA Full (Signature and Key Exchange)"
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider Types\Type 003]
+"Name"="Microsoft Base DSS Cryptographic Provider"
+"TypeName"="DSS Signature"
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider Types\Type 012]
+"Name"="Microsoft RSA SChannel Cryptographic Provider"
+"TypeName"="RSA SChannel"
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider Types\Type 013]
+"Name"="Microsoft Enhanced DSS and Diffie-Hellman Cryptographic Provider"
+"TypeName"="DSS Signature with Diffie-Hellman Key Exchange"
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider Types\Type 018]
+"Name"="Microsoft DH SChannel Cryptographic Provider"
+"TypeName"="Diffie-Hellman SChannel"
+[HKLM\SOFTWARE\Microsoft\Cryptography\Defaults\Provider Types\Type 024]
+"Name"="Microsoft Enhanced RSA and AES Cryptographic Provider"
+"TypeName"="RSA Full and AES"
+
 ; the default providers crypt32 asks to check revocation and trust list usage, as windows registers them.
 [HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 1\{CertDllVerifyRevocation,CertDllVerifyCTLUsage}\DEFAULT]
 "Dll"=multi:"C:\\Windows\\System32\\cryptnet.dll"
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 1\{CertDllVerifyRevocation,CertDllVerifyCTLUsage}\DEFAULT]
 "Dll"=multi:"C:\\Windows\\SysWOW64\\cryptnet.dll"
+
+; the subject interface package of portable executables, which crypt32 loads from wintrust as windows registers it.
+; the sealed digest and the packages of the other kinds of file are not there yet.
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllCreateIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPCreateIndirectData"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetCaps\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetCaps"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetSignedDataMsg"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllPutSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPPutSignedDataMsg"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllRemoveSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPRemoveSignedDataMsg"
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPVerifyIndirectData"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllCreateIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPCreateIndirectData"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetCaps\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetCaps"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllGetSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPGetSignedDataMsg"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllPutSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPPutSignedDataMsg"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllRemoveSignedDataMsg\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPRemoveSignedDataMsg"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}]
+"Dll"="WINTRUST.DLL"
+"FuncName"="CryptSIPVerifyIndirectData"
 
 ; user account control is on. the kernel reads DeclineElevationPrompts here and finds none.
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System]

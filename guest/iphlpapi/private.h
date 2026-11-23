@@ -60,6 +60,9 @@ typedef struct {
     IFTYPE type;
     ULONG mtu;
     ULONG64 speed;
+    /* the counters of the host's link; packets of every kind, multicast included. */
+    ULONG64 rx_bytes, rx_packets, rx_multicast, rx_errors, rx_dropped;
+    ULONG64 tx_bytes, tx_packets, tx_errors, tx_dropped;
     BYTE mac[8];
     ULONG mac_length;
     BOOL admin_up;

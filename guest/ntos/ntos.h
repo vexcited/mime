@@ -71,13 +71,11 @@ ULONG64 HalHnsToCounter(ULONG64 hns);
 
 void KiLogPrintf(const char *fmt, ...);
 void KiBootStamp(const char *what);
-void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page);
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp);
 void KiTraceUserFrames(PKTRAP_FRAME frame);
 BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size);
 void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size);
 #define KdPrint(args) KiLogPrintf args
-#define MIME_TRACE(...) KiLogPrintf(__VA_ARGS__)
 
 #define ASSERT(e)                                                                                                 \
     do {                                                                                                          \
@@ -181,10 +179,16 @@ typedef struct _KTHREAD {
     BOOLEAN SuspendApcActive;
     BOOLEAN Suspended;
     PVOID UserSuspendGate;
-    /* another thread set the context while this one was in a system call, see KiSystemService. */
+    /* ThreadEnableAlignmentFaultFixup: aligned packed moves that fault are rewritten, see fix_alignment_fault. */
+    BOOLEAN AutoAlignment;
+    /* another thread set the context while this one was in a system call, see KiSystemService: KI_CONTEXT_SET bits. */
     BOOLEAN ContextSetInService;
     /* the next return to user mode goes through the process's instrumentation callback, see KiExitToUserMode. */
     BOOLEAN InstrumentReturn;
+    /* the process had an instrumentation callback when the thread entered its system service: its return goes there. */
+    BOOLEAN ServiceInstrumented;
+    /* the return to user mode is that of a system service, see KiExitToUserMode. */
+    BOOLEAN ServiceExit;
     /* x64: in a system service that came without the kernel lock, see KiFastSystemService. */
     BOOLEAN FastService;
     KEVENT SuspendEvent;
@@ -195,6 +199,13 @@ typedef struct _KTHREAD {
     /* x64: the hardware breakpoints a context set, loaded while the thread runs, see KiSetThreadDebug. */
     ULONG64 UserDr[4];
     ULONG64 UserDr6, UserDr7;
+    ULONG64 UserGsBase; /* the base of gs in user mode, which rd/wrgsbase may change. */
+    ULONG64 ExceptionContext; /* the user context of the exception being dispatched. */
+    /* x64: the breakpoints were loaded into the processor since they were set, see KiGetThreadDebug. */
+    BOOLEAN UserDrLoaded;
+    /* x64: what r8 to r11 and xmm0 to xmm5 of the frame last held that a system service does not save. */
+    ULONG64 ServiceStale[4];
+    M128A ServiceStaleXmm[6];
 } KTHREAD;
 
 typedef struct _KPROCESS {
@@ -375,7 +386,6 @@ void KiReleaseKernelLock(void);
 
 /* arch/x64/foreign.c: the drivers mime did not build. a lock held for their calls is named by this reason. */
 #define KI_LOCK_REASON_FOREIGN (0x2001 + 0xF1)
-extern BOOLEAN KiForeignDirect, KiForeignUnlock;
 void KiForeignRun(PKSTART_ROUTINE routine, PVOID context);
 BOOLEAN KiIsForeignCaller(ULONG_PTR return_address);
 void KiForeignTrapTaken(PKTRAP_FRAME frame);
@@ -481,17 +491,6 @@ FORCEINLINE BOOLEAN KiDispatcherLockHeld(void)
 void KiDispatcherLockMissing(const char *what, PVOID caller);
 #endif
 
-/* MIME_KERNEL_ARGS options that turn the lock free paths off, to tell what a failure depends on. */
-#define KI_OPT_NO_FAST_FAULT 0x1
-#define KI_OPT_NO_SECTION_FAULT 0x2
-#define KI_OPT_NO_IDLE_SPIN 0x4
-#define KI_OPT_EAGER_TIMER 0x8
-#define KI_OPT_NO_ATTR_CACHE 0x10
-#define KI_OPT_PRECISE_TIMERS 0x20
-#define KI_OPT_NO_FAST_SERVICE 0x40
-extern ULONG KiOptions;
-extern UCHAR KiNoLockFlush;
-
 void KiInitializeKernel(MimeBootInfo *boot);
 void KiInitializeProcessor(PKPCR pcr);
 void KiStartProcessors(void);
@@ -547,6 +546,49 @@ void KiInitializeUserContext(PCONTEXT context, ULONG64 pc, ULONG64 sp, ULONG64 a
 BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE routine, PVOID context, PVOID arg1,
                        PVOID arg2);
 BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record);
+#ifdef __x86_64__
+/* the extended state beyond sse a user context carries behind it, x87, sse and avx-512 at the most. */
+#define KI_XSTATE_MAXIMUM 0x800
+ULONG KiXstateSize(void);
+void KiCaptureXstate(PKTHREAD thread, ULONG64 asked, PUCHAR out);
+void KiRestoreXstate(PKTHREAD thread, const UCHAR *in);
+/* the extended state area of a user context: where it is, its length, the features it is laid out for and its mask. */
+typedef struct KI_USER_XSTATE {
+    PUCHAR Area;
+    ULONG Length;
+    ULONG64 Layout;
+    ULONG64 Mask;
+} KI_USER_XSTATE;
+/* what the flags of a context ask for: the parts, the extended state, the flags it answers with. */
+typedef struct KI_CONTEXT_REQUEST {
+    ULONG Parts;
+    ULONG Out;
+    BOOLEAN Xstate;
+    BOOLEAN Report;
+} KI_CONTEXT_REQUEST;
+#define CONTEXT_EXCEPTION_ACTIVE 0x08000000u
+#define CONTEXT_SERVICE_ACTIVE 0x10000000u
+#define CONTEXT_UNWOUND_TO_CALL 0x20000000u
+#define CONTEXT_EXCEPTION_REQUEST 0x40000000u
+#define CONTEXT_EXCEPTION_REPORTING 0x80000000u
+#ifndef STATUS_SET_CONTEXT_DENIED
+#define STATUS_SET_CONTEXT_DENIED ((NTSTATUS)0xC000060A)
+#endif
+#define KI_CONTEXT_SET_ANY 1
+#define KI_CONTEXT_SET_INTEGER 2
+extern ULONG KiMxcsrMask;
+NTSTATUS KiProbeUserXstate(PCONTEXT context, KI_USER_XSTATE *where);
+BOOLEAN KiUserXstateDenied(const KI_USER_XSTATE *where);
+NTSTATUS KiStoreUserXstate(const KI_USER_XSTATE *where, const UCHAR *buffer);
+NTSTATUS KiLoadUserXstate(const KI_USER_XSTATE *where, PUCHAR buffer);
+void KiResetXstate(PKTHREAD thread);
+NTSTATUS KiContextRequest(ULONG flags, KI_CONTEXT_REQUEST *request);
+void KiCaptureThreadContext(PKTHREAD thread, PKTRAP_FRAME frame, BOOLEAN in_service, CONTEXT *context);
+void KiApplyThreadContext(PKTHREAD thread, PKTRAP_FRAME frame, BOOLEAN in_service, const CONTEXT *context, ULONG parts);
+void KiNativeCodeSegment(PKTHREAD thread, PKTRAP_FRAME frame, ULONG parts);
+void KiNoteUserTrap(PKTHREAD thread, const KTRAP_FRAME *frame);
+void KiSetExtendedState(XSTATE_CONFIGURATION *x);
+#endif
 BOOLEAN KiSetupUserCallback(PKTRAP_FRAME frame, const KTRAP_FRAME *trap, PVOID dispatcher, ULONG api,
                             const void *input, ULONG input_length);
 void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame);
@@ -555,6 +597,12 @@ void KiInitializeProcessorArch(void);
 void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame);
 void PspCheckForSuspendApc(PKTHREAD thread);
 NTSTATUS PspWaitForSuspension(PETHREAD thread);
+NTSTATUS PspSuspendThread(PETHREAD thread);
+void PspResumeThread(PETHREAD thread);
+NTSTATUS PsGetUserContextThread(PETHREAD thread, CONTEXT *ctx, PULONG report);
+NTSTATUS PsSetUserContextThread(PETHREAD thread, const CONTEXT *ctx, ULONG parts);
+NTSTATUS PspWow64GetContextThread(PETHREAD thread, PVOID context, ULONG length);
+NTSTATUS PspWow64SetContextThread(PETHREAD thread, PVOID context, ULONG length);
 BOOLEAN KiInsertQueueApc(PKAPC apc, KPRIORITY increment);
 void KeInitializeApc(PKAPC apc, PKTHREAD thread, KAPC_ENVIRONMENT env, PKKERNEL_ROUTINE kernel_routine,
                      PKRUNDOWN_ROUTINE rundown, PKNORMAL_ROUTINE normal, KPROCESSOR_MODE mode, PVOID context);
@@ -597,20 +645,37 @@ BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count);
 void KiIdentifyToHypervisor(void);
 void KiPrepareHypervisor(void);
 void KiSetProcessorFeatures(BOOLEAN *features);
+UCHAR KiVirtualizationFlags(void);
+USHORT KiMeasureCyclesPerYield(void);
 PCSTR KiProcessorVendor(void);
+PCSTR KiProcessorBrand(void);
+ULONG KiProcessorMhz(void);
 USHORT KiProcessorModel(void);
 USHORT KiProcessorLevel(void);
 USHORT KiProcessorRevision(void);
+ULONG KiProcessorFeatureBits(void);
 void KiFormatProcessorIdentifier(PWCHAR text, ULONG chars); /* "ARMv8 (64-bit) Family 8 Model...". */
 typedef void (*KI_SET_REGISTRY_VALUE)(PCWSTR key, PCWSTR name, ULONG type, const void *data, ULONG length);
 void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set); /* the processor's own CentralProcessor values. */
 UCHAR KiProcessorSmbiosType(void);
 PCSTR KiProcessorSmbiosManufacturer(void);
 ULONG64 KiProcessorSmbiosId(void);
+/* a cache of a core as the processor describes it. Type is a PROCESSOR_CACHE_TYPE, Shared a cache of the package. */
+typedef struct KI_CACHE {
+    UCHAR Level, Associativity;
+    USHORT LineSize;
+    ULONG Size;
+    ULONG Type;
+    BOOLEAN Shared;
+} KI_CACHE;
+ULONG KiQueryCaches(KI_CACHE *caches, ULONG room);
 
 /* user memory access with recovery from faults. */
-#define KI_TRY_USER(buf) (KiCurrentThread()->FaultRecovery = &(buf), KiSetJump(&(buf)) == 0)
-#define KI_END_TRY_USER() (KiCurrentThread()->FaultRecovery = NULL)
+/* a copy made while another is under way, by the fault the other took, gives the other its recovery back. */
+#define KI_TRY_USER(buf)                                                                                               \
+    ((buf).Outer = KiCurrentThread()->FaultRecovery, KiCurrentThread()->FaultRecovery = &(buf),                       \
+     KiSetJump(&(buf)) == 0)
+#define KI_END_TRY_USER(buf) (KiCurrentThread()->FaultRecovery = (buf).Outer)
 NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length);
 /* the fault's status, or an access violation when it was just that. */
 NTSTATUS KiFaultResult(void);
@@ -661,6 +726,7 @@ struct _SECTION;
 #define MM_VAD_WRITE_WATCH 0x4 /* pages written since the last reset are tracked. */
 #define MM_VAD_RELOCATED 0x8        /* an image view away from its base: pages are relocated on first touch. */
 #define MM_VAD_RELOCATED_SHARED 0x10 /* the relocated pages are the section's, shared by views at the same base. */
+#define MM_VAD_NO_CHANGE 0x20 /* a view mapped with SEC_NO_CHANGE, or of a section made with it. */
 
 typedef struct _MMVAD {
     ULONG_PTR StartVa;
@@ -700,6 +766,14 @@ typedef struct _MMADDRESS_SPACE {
     SIZE_T PeakVirtualSize;
     SIZE_T PageFaults;
     ULONG_PTR AllocationLimit;
+    /* where a search from below starts and where stacks, the peb and the tebs go, see MiRandomizeAddressSpace. zero: the bottom. */
+    ULONG_PTR BottomUpBase;
+    ULONG_PTR StackBase;
+    ULONG_PTR LowBase; /* where a search that has to end below BottomUpBase starts. */
+    ULONG_PTR TopDownStart; /* where a search from above starts, see MiRandomizeTopDown. */
+    /* the reservations the peb and the tebs sit in, see MiAllocatePebOrTeb. */
+    struct _MI_TEB_REGION *TebRegions;
+    FAST_MUTEX TebLock;
     ULONG_PTR LastFaultEnd[8]; /* ends of recent demand zero windows, to spot sequential touching by several threads. */
     ULONG NextFaultStream;
     /* counts lock-free faults in progress. the Lock holder sets the writer bit and waits for them to leave. */
@@ -753,9 +827,14 @@ typedef struct _MI_IMAGE_INFO {
     USHORT SubsystemMinor;
     USHORT DllCharacteristics;
     USHORT Characteristics;
+    USHORT OsMajor, OsMinor;
+    ULONG LoaderFlags, CheckSum;
+    ULONG FileSize; /* of the file the image was made of, 0 when not known. */
     ULONG64 StackReserve;
     ULONG64 StackCommit;
     BOOLEAN Relocatable;
+    UCHAR BaseFieldWidth; /* the bytes the headers keep the base in, at BaseFieldRva. */
+    ULONG BaseFieldRva;
 } MI_IMAGE_INFO;
 
 
@@ -771,10 +850,11 @@ typedef struct _SECTION {
     ULONG PageCount;
     ULONG Pad;
     ULONG64 *Pages;       /* physical address of every prototype page. */
-    UCHAR *PageProtect;   /* image sections: protection per page. */
+    UCHAR *PageProtect;   /* image sections: protection per page, copy on write told as read-write. */
     PVOID SystemVa;       /* kernel mapping when mapped in system space. */
     PFILE_OBJECT File;
     UNICODE_STRING FileName;
+    UNICODE_STRING DeviceName; /* the volume of the file, which the name of a mapped file starts with. */
     MI_IMAGE_INFO Image;
     ULONG RelocRva;
     ULONG RelocSize;
@@ -789,9 +869,21 @@ typedef struct _SECTION {
      */
     ULONG *RelocIndex;
     ULONG RelocIndexState; /* 0 not tried, 1 built, 2 the table is one the index cannot describe. */
-    ULONG_PTR RelocBase;   /* where the first view away from the preferred base went, and where later ones go. */
+    ULONG_PTR RelocBase;   /* the base the relocated pages are for: BasedAddress, or where the first view away from the preferred base went. */
     ULONG64 *RelocPages;   /* relocated pages of the views at RelocBase, built on touch. */
+    /*
+     * images: the base views go to and a view is at its base at. the preferred one, or the one drawn for the image
+     * when it was made, see MiSelectImageBase.
+     */
+    ULONG_PTR BasedAddress;
+    BOOLEAN SystemImage; /* images: of a file the system came with, which windows signs itself. */
+    BOOLEAN BaseBelow4gb; /* images: the base was drawn below 4 GiB for a 64-bit dll, see MI_IMAGE_BASE_BELOW_4GB. */
+    const void *SourceRom; /* images: the entry of that file, which names the one image all its opens share. */
+    ULONG BaseRange; /* one plus the range of dll bases BaseSlot counts in, 0 when the base holds no slots. */
+    ULONG BaseSlot;
+    ULONG BaseSlots;
     ULONG ImageSlot;       /* file images: one plus the slot in the table of images processes share. */
+    ULONG ExtensionRva;    /* a guard-cf image: the rva of the stub page the kernel maps after it, 0 when none. */
     ULONG64 *PageHash;     /* MI_SECTION_WRITE_BACK: a hash of each page as the file has it. */
     LIST_ENTRY WriteBackLinks; /* MI_SECTION_WRITE_BACK: among the sections reads and writes of their file look at. */
     ULONG FileVolume;      /* a data section of a host file: what names the file, see IoFileIdentity. */
@@ -863,6 +955,24 @@ ULONG64 MmReleaseFreeMemory(void); /* a trim: every free page to the host, retur
 SIZE_T MmFreedSinceSweep(void);    /* pages freed since every free page was last handed back. */
 ULONG64 MmGetReleasedBytes(void);  /* the total of what the host dropped since boot. */
 SIZE_T MmGetTotalPages(void);
+/*
+ * the page microsoft's hypervisor shares with user mode, HYPERVISOR_SHARED_USER_DATA in ntdll: the performance
+ * counter is the high half of the tsc times the multiplier, plus the bias. windows maps it read only among the
+ * pages after KUSER_SHARED_DATA, at an address it draws at boot; here it stays where the reference machine had it.
+ */
+typedef struct MIME_HYPERVISOR_SHARED_PAGE {
+    volatile ULONG TimeUpdateLock;
+    ULONG Reserved;
+    volatile ULONGLONG QpcMultiplier;
+    volatile ULONGLONG QpcBias;
+} MIME_HYPERVISOR_SHARED_PAGE;
+#define MIME_HYPERVISOR_SHARED_PAGE_VA 0x7FFEE000ull
+/* SHARED_GLOBAL_FLAGS_QPC_BYPASS_*: the counter is read in user mode, through the hypervisor's page, with rdtscp. */
+#define MIME_QPC_BYPASS_ENABLED 0x01
+#define MIME_QPC_BYPASS_USE_HV_PAGE 0x02
+#define MIME_QPC_BYPASS_USE_RDTSCP 0x80
+void MiSetHypervisorSharedPage(ULONG64 pa); /* the page every new address space maps read only. */
+ULONG_PTR MmHypervisorSharedPageVa(void);   /* where user mode sees it, 0 without microsoft's hypervisor. */
 
 ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level);
 BOOLEAN MiMapPage(ULONG64 *root, ULONG_PTR va, ULONG64 pa, ULONG64 attrs);
@@ -896,18 +1006,10 @@ void MmFreeKernelStack(PVOID allocation, PVOID limit, SIZE_T reserve);
 
 void ExInitializePool(void);
 SIZE_T ExQueryPoolUsage(void);
+ULONG ExQueryPoolTags(PVOID out, ULONG room);
+ULONG ExQueryBigPool(PVOID out, ULONG room);
+ULONG ExQueryResourceCount(void);
 
-/* the verifying pool, kernel option verify-pool, see mm/specpool.c. */
-extern BOOLEAN MmVerifyPool;
-extern BOOLEAN MmVerifyPoolFill;
-PVOID MiSpecialPoolAllocate(SIZE_T size, ULONG tag, BOOLEAN zero, PVOID caller);
-void MiSpecialPoolFree(PVOID block, ULONG tag, PVOID caller);
-BOOLEAN MiSpecialPoolContains(PVOID block);
-ULONG MiSpecialPoolSweep(BOOLEAN fatal);
-void MiSpecialPoolBugCheckReport(void);
-void MiSpecialPoolFault(ULONG_PTR address, ULONG error, ULONG_PTR rip);
-void MiSpecialPoolQuery(MIME_POOL_INFORMATION *out);
-NTSTATUS MiSpecialPoolSelfTest(ULONG operation);
 BOOLEAN MiIsCodeAddress(ULONG_PTR address);
 void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size);
 
@@ -933,9 +1035,11 @@ typedef struct _MI_EXTENDED {
     HANDLE Partition;
     HANDLE PhysicalHandle;
     USHORT Machine;
+    BOOLEAN OnDemand; /* a program's view of data: its pages come in as they are touched, as on windows. */
 } MI_EXTENDED;
 
 BOOLEAN MiProtectionIsValid(ULONG protect);
+BOOLEAN MiProtectionCompatible(ULONG granted, ULONG wanted);
 NTSTATUS MiCaptureExtendedParameters(const MEM_EXTENDED_PARAMETER *parameters, ULONG count, ULONG allowed,
                                      BOOLEAN user, MI_EXTENDED *out);
 NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect,
@@ -945,11 +1049,23 @@ SIZE_T MmGetCommittedPages(void);
 SIZE_T MmGetPeakCommittedPages(void);
 SIZE_T MmGetCommitLimitPages(void);
 NTSTATUS MiAllocateVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect);
+void MiRandomizeAddressSpace(PMMADDRESS_SPACE as);
+void MiRandomizeTopDown(PMMADDRESS_SPACE as);
+ULONG64 MiRandom(void);
+NTSTATUS MiAllocateThreadMemory(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect);
+NTSTATUS MiAllocatePebOrTeb(PEPROCESS process, SIZE_T size, BOOLEAN peb, PVOID *out);
+BOOLEAN MiFreeTeb(PEPROCESS process, PVOID teb, SIZE_T size);
 NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type);
 NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG protect, PULONG old);
+NTSTATUS MmPatchUserCode(PVOID address, UCHAR value);
+void KiCaptureDebugStatus(PKTHREAD thread);
+BOOLEAN KiServiceSingleStep(PKTHREAD thread, PKTRAP_FRAME frame, PEXCEPTION_RECORD record);
 NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info);
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode);
 NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out);
+/* a dll whose base is drawn below 4 GiB like a 32-bit one, which windows gives the known dlls named with a leading _. */
+#define MI_IMAGE_BASE_BELOW_4GB 0x1
+NTSTATUS MiCreateImageSectionEx(PFILE_OBJECT file, ULONG flags, PSECTION *out);
 NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULONG flags, PSECTION *out);
 NTSTATUS MiMapViewOfSection(PSECTION section, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
                             ULONG protect, ULONG allocation_type);
@@ -994,11 +1110,11 @@ MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, TimeDateStamp, 0x9C);
 MIME_STATIC_ASSERT(sizeof(KLDR_DATA_TABLE_ENTRY) == 0xA0, "KLDR_DATA_TABLE_ENTRY");
 
 extern LIST_ENTRY PsLoadedModuleList;
-extern BOOLEAN MiTraceRoutines;
 void MiInitializeLoadedModules(void);
 PKLDR_DATA_TABLE_ENTRY MiKernelModule(void);
 PKLDR_DATA_TABLE_ENTRY MiLookupModule(ULONG_PTR address);
 NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out);
+NTSTATUS MmLoadExportDriver(const char *name);
 NTSTATUS IopCreateDriverObject(PCUNICODE_STRING name, PCUNICODE_STRING registry, PCUNICODE_STRING service,
                                PKLDR_DATA_TABLE_ENTRY module, PDRIVER_OBJECT *out);
 void IopDeleteDriverObject(PVOID object);
@@ -1006,8 +1122,17 @@ BOOLEAN KiDispatchKernelTrap(struct _KTRAP_FRAME *frame);
 NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp);
 
 void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY module);
-typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PVOID base, SIZE_T size, PCUNICODE_STRING name);
+typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PKLDR_DATA_TABLE_ENTRY module);
 ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context);
+/* the images of microsoft's files that the list of loaded modules names, see mm/sysimage.c. */
+void MiInitializeSystemImages(void);
+void MiSyncSystemImages(void);
+BOOLEAN MiIsSystemImageRecord(PKLDR_DATA_TABLE_ENTRY module);
+BOOLEAN MiSystemImageFault(ULONG_PTR va);
+PLIST_ENTRY MiPlaceLoadedModule(PKLDR_DATA_TABLE_ENTRY module);
+void MiForgetLoadedModule(PKLDR_DATA_TABLE_ENTRY module);
+void MiLockLoadedModules(void);
+void MiUnlockLoadedModules(void);
 PVOID MiFindKernelExport(PVOID image_base, const char *name);
 PVOID MiFindModuleExport(const char *module, const char *name);
 NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read);
@@ -1026,6 +1151,7 @@ typedef struct _OBJECT_TYPE {
 /* replaces the generic rights in a mask with the type's own. */
 ACCESS_MASK ObMapGenericAccess(POBJECT_TYPE type, ACCESS_MASK mask);
 NTSTATUS ObQueryAllTypesInformation(PVOID info, ULONG length, PULONG returned);
+NTSTATUS ObQueryTypeInformation(POBJECT_TYPE type, PVOID info, ULONG length, PULONG returned);
 
 typedef struct _OBJECT_HEADER {
     volatile LONG_PTR PointerCount;
@@ -1056,6 +1182,7 @@ typedef struct _OBJECT_DIRECTORY_ENTRY {
 
 typedef struct _OBJECT_DIRECTORY {
     OBJECT_DIRECTORY_ENTRY *Buckets[OB_DIRECTORY_BUCKETS];
+    struct OB_NAMESPACE *Namespace; /* the boundary of a private namespace, which the directory is the root of. */
 } OBJECT_DIRECTORY, *POBJECT_DIRECTORY;
 
 typedef struct _OBJECT_SYMBOLIC_LINK {
@@ -1074,6 +1201,7 @@ typedef struct _HANDLE_TABLE {
     ULONG Count;
     ULONG FirstFree;
     KSPIN_LOCK Lock;
+    BOOLEAN RaiseOnInvalidClose; /* class 71 of the process, see invalid_close. */
 } HANDLE_TABLE, *PHANDLE_TABLE;
 
 /*
@@ -1096,6 +1224,9 @@ FORCEINLINE void ObUnlockHandleTable(PHANDLE_TABLE table, ULONG64 state)
 }
 
 extern POBJECT_TYPE ObDirectoryType;
+void ObpForgetNamespace(POBJECT_DIRECTORY directory);
+/* the signing level cached for a file goes with the file, as the extended attribute windows keeps it in. */
+void SeForgetSigningLevel(ULONG64 file_id);
 extern POBJECT_TYPE ObSymbolicLinkType;
 extern POBJECT_TYPE ObTypeType;
 extern POBJECT_DIRECTORY ObRootDirectory;
@@ -1147,6 +1278,7 @@ NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mas
 #define SE_BOOT_CREATABLE 1
 #define SE_BOOT_INTERACTIVE 2
 #define SE_BOOT_PLAIN_SYSTEM 3 /* the system and the administrators only. */
+#define SE_BOOT_RPC_CONTROL 4  /* \RPC Control, whose entries pass to the endpoints made in it. */
 NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out);
 /* for an object nobody gave a descriptor: the system and the administrators own it. */
 NTSTATUS SeSdSystemDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
@@ -1183,7 +1315,6 @@ extern const UCHAR SeSidSystem[12], SeSidAdministrators[16], SeSidUsers[16], SeS
 #define SE_RESTORE_PRIVILEGE 18
 #define SE_DEBUG_PRIVILEGE 20
 #endif
-extern BOOLEAN SeAccessEnforced;
 /*
  * fails with STATUS_ACCESS_DENIED, the status of a missing privilege, or STATUS_BAD_IMPERSONATION_LEVEL for
  * a thread that may only identify a client. desired may hold MAXIMUM_ALLOWED and generic rights. *granted
@@ -1199,10 +1330,8 @@ BOOLEAN SeThreadHasPrivilege(ULONG luid);
 BOOLEAN SeThreadBypassesTraverse(void);
 /* the integrity level of the thread's token and of its process, as a rid. */
 ULONG SeThreadIntegrityRid(void);
-/* logs a refusal when the trace-access kernel option is set. */
-void SeTraceDescriptor(const SD_BLOB *sd);
-void SeTraceDenial(PCSTR what, const UNICODE_STRING *name, ACCESS_MASK desired, NTSTATUS status);
-extern BOOLEAN SeTraceAccess;
+ULONG SeTokenIntegrityRid(PVOID token);
+NTSTATUS SeSdAddObjectLabel(SD_BLOB *sd, ULONG rid, ULONG policy, SD_BLOB **out);
 
 /* descriptors of mimefs files, io/mimefs_sec.c. */
 void MimeUserSid(UCHAR sid[28]);
@@ -1257,6 +1386,8 @@ NTSTATUS ObInsertIntoDirectory(POBJECT_DIRECTORY dir, PVOID object, PCUNICODE_ST
 BOOLEAN ObDirectoryHasName(POBJECT_DIRECTORY dir, PCUNICODE_STRING name);
 NTSTATUS ObCreateDirectory(PCWSTR path, POBJECT_DIRECTORY *out);
 NTSTATUS ObCreateSymbolicLink(PCWSTR link, PCWSTR target);
+BOOLEAN ObRefuseOpenLink(POBJECT_ATTRIBUTES attributes);
+void ExCreateKnownDlls(void);
 NTSTATUS ObInitializeHandleTable(PHANDLE_TABLE table);
 void ObKillProcessHandles(PEPROCESS process);
 NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS target_process, PHANDLE target,
@@ -1264,16 +1395,18 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
 PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
 /* the object of one of two types behind a handle of the calling process, or none. needs no kernel lock. */
 PVOID ObReferenceHandleFast(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, POBJECT_TYPE other);
-extern BOOLEAN ObAuditHandleAccess;
 /* lets go of a reference unless it is the last one, which takes the kernel lock to let go of. */
 BOOLEAN ObDereferenceObjectFast(PVOID object);
+BOOLEAN ObReferenceObjectSafe(PVOID object); /* FALSE once the last reference went. */
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
+void ObpDeleteNameCheck(PVOID object);
 void ObMakeTemporaryObject(PVOID object);
 
 /* ------------------------------------------------------------------ ps */
 
 typedef struct _ETHREAD {
     KTHREAD Tcb;
+    PVOID SharedSlot; /* the slot of the process's shared page this thread asked for. */
     CLIENT_ID Cid;
     PVOID StartAddress;
     PVOID Win32StartAddress;
@@ -1284,6 +1417,8 @@ typedef struct _ETHREAD {
     BOOLEAN Initialized;
     BOOLEAN DeadThread;
     LIST_ENTRY ThreadListEntry; /* in EPROCESS. */
+    ULONG64 ListSequence;       /* the order of the list. */
+    LIST_ENTRY DeadLinks;       /* in the list of the reaper once it ended. */
     PVOID UserStackAllocation;
     SIZE_T UserStackSize;
     ULONG_PTR UserStackGuard; /* the stack guard page, whose first touch is a stack overflow. */
@@ -1308,6 +1443,9 @@ typedef struct _ETHREAD {
     NTSTATUS PendingException;  /* raised as the system call returns, for a failed strict handle check. */
     PVOID CreateEa;             /* the extended attributes of the file being created, a kernel copy. */
     ULONG CreateEaLength;
+    PVOID WorkerFactory;        /* the worker factory that started the thread, compared and never followed. */
+    BOOLEAN WorkerReady;        /* it said it was ready. */
+    BOOLEAN WorkerWaited;       /* it waited for work once. */
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
@@ -1328,11 +1466,16 @@ typedef struct _PSP_SYSTEM_DLL {
 
 typedef struct _EPROCESS {
     KPROCESS Pcb;
+    /* the page thread information class 57 hands out in slots of 64 bytes, and how many it gave. */
+    PVOID ThreadSharedPage;
+    ULONG ThreadSharedSlots;
+    ULONG64 SequenceNumber; /* how many processes were made before this one, plus one. */
     HANDLE UniqueProcessId;
     HANDLE InheritedFromUniqueProcessId;
     LIST_ENTRY ActiveProcessLinks;
     LIST_ENTRY ThreadListHead;
     volatile LONG ThreadCount;
+    ULONG64 GoneKernelTime, GoneUserTime; /* of the threads whose objects went, in whole ticks. */
     HANDLE_TABLE HandleTable;
     MMADDRESS_SPACE AddressSpace;
     /* the page ranges NtLockVirtualMemory locked, start and end pairs: MmLockedRanges of them. */
@@ -1347,6 +1490,12 @@ typedef struct _EPROCESS {
     USHORT Machine;             /* of the program image. */
     USHORT Subsystem;           /* of the program image, kept after the image section is let go at exit. */
     PVOID Wow64Peb;             /* the 32-bit peb of a wow64 process. */
+    /* what the manifest of the image says of the systems it knows, which CreateProcess asks csrss for. */
+    USHORT SxsSupportedOsMajor, SxsSupportedOsMinor;
+    ULONG64 SxsMaxVersionTested;
+    ULONG SxsRunLevel, SxsUiAccess; /* requestedExecutionLevel of the manifest, 0 without one. */
+    /* the features on demand the process asked for, and the ones a thread of it is asking for now: see ex/feature.c. */
+    UCHAR FeaturesAsked, FeaturesAsking;
     CHAR ImageFileName[16];
     WCHAR ImagePathBuffer[MIME_IMAGE_NAME_CHARS];
     UNICODE_STRING ImagePath;
@@ -1360,16 +1509,20 @@ typedef struct _EPROCESS {
     PVOID Win32Process;
     PVOID KernelCallbackTable;
     ULONG64 MimeRequestId; /* the host run request that created the process. */
+    ULONG64 MimeDebugRequest; /* the one whose terminal gets its debug output: its own, or that of its ancestors. */
     BOOLEAN MimeUserProgram; /* a run started it or its ancestors, counted in MimeSharedPage.user_processes. */
     struct _MIME_CONSOLE *Console; /* the attached console, io/console.c. */
     PVOID ConsoleCtrlRoutine;      /* kernelbase's, started on a new thread for each ctrl event. */
     ULONG ConsoleGroup;            /* process group of GenerateConsoleCtrlEvent. */
     struct _MIME_CONSOLE *ConsoleHint; /* the terminal of the run the process descends from, which AllocConsole may take. */
+    BOOLEAN ConsoleShared;             /* the console is its creator's, so kernelbase connects through a reference. */
     ULONG TimerResolution; /* what NtSetTimerResolution asked for, 0 when nothing, ex/sysinfo.c. */
     UCHAR PriorityClass;   /* PROCESS_PRIORITY_CLASS_*, ps/priority.c. */
     BOOLEAN Foreground;
     BOOLEAN DisableBoost;
     ULONG DefaultHardErrorMode; /* SetErrorMode, with the bits a job forces. */
+    ULONG HardErrorBoxes;       /* set while a hard error box of this process is being put up, ex/sysinfo.c. */
+    struct _ETHREAD *HardErrorThread; /* the thread the last hard error box runs on, referenced. */
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
@@ -1390,6 +1543,7 @@ typedef struct _EPROCESS {
     LONG ShutdownState;  /* PS_SHUTDOWN_* of the shutdown in progress. */
     BOOLEAN ServiceController; /* services.exe, which shutdown gives the services' time. */
     ULONG SessionId;           /* from the creation token, 0 for the services and the system. */
+    BOOLEAN CsrConnected;      /* it holds its connection to the api port, and a second one is refused. */
 } EPROCESS;
 
 extern LIST_ENTRY PsActiveProcessHead;
@@ -1427,6 +1581,10 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
                          PETHREAD *out);
 NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, ULONG flags,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out);
+/* the PS_ATTRIBUTE_LIST of NtCreateThreadEx, captured before the thread exists and answered after. */
+NTSTATUS PspCaptureThreadAttributes(PVOID user, PVOID *captured);
+void PspReturnThreadAttributes(PVOID captured, PEPROCESS process, PETHREAD thread);
+void PspFreeThreadAttributes(PVOID captured);
 typedef struct _MIME_CONSOLE MIME_CONSOLE;
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING command_line,
                              PCUNICODE_STRING current_directory, ULONG64 request_id, MIME_CONSOLE *console,
@@ -1436,6 +1594,11 @@ NTSTATUS PsStartServiceController(void);
 DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
 NTSTATUS PspNotifyProcessCreate(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_STRING command_line);
 void PspNotifyProcess(PEPROCESS process, BOOLEAN create);
+void PspInitializePebBlocks(void);
+NTSTATUS PspMapPebBlocks(PEPROCESS process, PPEB peb);
+NTSTATUS PspCsrSharedSection(ULONG session, PVOID *section, ULONG64 *server, ULONG64 *static_data);
+NTSTATUS PspCsrNlsUserInfo(ULONG session, PVOID buffer, ULONG length);
+void ExInitializeCsr(void);
 void PspNotifyThread(PETHREAD thread, BOOLEAN create);
 void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, PFILE_OBJECT file);
 BOOLEAN PspImageNotifyRegistered(void);
@@ -1455,8 +1618,6 @@ NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB
 NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process);
 void PspJobProcessExit(PEPROCESS process);
 void PsDumpThreads(void);
-void KiTimelineNote(ULONG kind, const char *text, ULONG64 detail);
-extern BOOLEAN KiTimelineOn;
 void NpfsDumpState(void);
 PVOID KiSatisfiedWaitObject(PKTHREAD thread);
 void KiDumpServiceCalls(void);
@@ -1468,6 +1629,52 @@ BOOLEAN IopRemoveCompletionPacket(PVOID port, ULONG64 values[4]);
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id);
 void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
+/* features on demand: a name that was not found may be the one a feature is used by. TRUE says to try the name again. */
+BOOLEAN ExFeatureFileFault(PCUNICODE_STRING name, BOOLEAN look);
+BOOLEAN ExFeatureKeyFault(HANDLE root, PCUNICODE_STRING name);
+/* the activation context of a new process, from the manifest of its image: see sxs/process.c. */
+void PspSxsInitialize(void);
+NTSTATUS PspSxsCreateProcessContext(PEPROCESS process, PCUNICODE_STRING image);
+
+/* a manifest or a configuration as kernel32 found it: bytes of the client at an address, or a section it holds. */
+typedef struct BASE_SXS_STREAM {
+    UCHAR FileType, PathType, HandleType;
+    UNICODE_STRING Path;
+    HANDLE FileHandle;
+    HANDLE Handle;
+    ULONG64 Offset, Size;
+} BASE_SXS_STREAM;
+
+#define BASE_SXS_HANDLE_PROCESS 1
+#define BASE_SXS_HANDLE_SECTION 3
+
+#define BASE_SXS_MANIFEST_PRESENT 0x1
+#define BASE_SXS_POLICY_PRESENT 0x2
+#define BASE_SXS_SYSTEM_DEFAULT_IDENTITY 0x4
+#define BASE_SXS_TEXTUAL_IDENTITY 0x8
+
+/*
+ * request 0x1e of basesrv, which CreateActCtx sends, read from BaseSrvSxsCreateActivationContextFromMessage of
+ * sxssrv 26300. a 32-bit client sends the same layout. the tail is what the generator tells csrss, which kernel32
+ * does not read.
+ */
+typedef struct BASE_SXS_CREATE_ACTIVATION_CONTEXT {
+    ULONG Flags;
+    USHORT ProcessorArchitecture;
+    UNICODE_STRING CultureFallbacks;
+    BASE_SXS_STREAM Manifest;
+    BASE_SXS_STREAM Policy;
+    UNICODE_STRING AssemblyDirectory;
+    UNICODE_STRING TextualAssemblyIdentity;
+    LARGE_INTEGER FileTime;
+    ULONG_PTR ResourceName;
+    PVOID ActivationContextData; /* where the address of the view is written, 8 bytes in any client. */
+    PVOID NativeData;            /* where it is written again, at the width of the client. */
+    UCHAR Generated[0x130];
+} BASE_SXS_CREATE_ACTIVATION_CONTEXT;
+MIME_STATIC_ASSERT(sizeof(BASE_SXS_CREATE_ACTIVATION_CONTEXT) == 0x1F8, "sxs message");
+
+NTSTATUS PspSxsCreateClientContext(const BASE_SXS_CREATE_ACTIVATION_CONTEXT *message);
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread);
 void PspReapDeadThreads(void);
 void PspStartReaper(void);
@@ -1477,6 +1684,7 @@ NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
 extern PSECTION PspWow64NtdllSection;
 ULONG PspWow64NtdllExport(const char *name);
+NTSTATUS PspPrepareSystemDllInitBlocks(PEPROCESS process, PVOID ntdll32);
 extern PSECTION PspX64NtdllSection;
 
 /* ------------------------------------------------------------------ se */
@@ -1490,6 +1698,7 @@ struct _TOKEN *SepCreateElevatedUserToken(void);
 NTSTATUS SepAssignNewProcessSecurity(PEPROCESS process, PETHREAD thread, SD_BLOB *process_offer, SD_BLOB *thread_offer,
                                      KPROCESSOR_MODE mode);
 ULONG SepTokenSessionId(PEPROCESS process);
+ULONG64 SepTokenAuthenticationId(PEPROCESS process);
 void SepFreeProcessToken(PEPROCESS process);
 void SepFreeThreadToken(PETHREAD thread);
 struct _TOKEN *SepReferenceEffectiveToken(PETHREAD thread);
@@ -1546,9 +1755,11 @@ NTSTATUS CmQueryValueUnlessBusy(PCWSTR key_path, PCWSTR name, PULONG type, PVOID
 NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length);
 NTSTATUS CmDeleteValue(PCWSTR key_path, PCWSTR name);
 NTSTATUS CmDeleteKey(PCWSTR key_path);
+NTSTATUS CmCheckAccess(PCWSTR key_path, ACCESS_MASK access);
 NTSTATUS CmEnumerateValues(PCWSTR key_path,
                            void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type, const void *data, ULONG length),
                            PVOID ctx);
+NTSTATUS CmEnumerateSubkeys(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars), PVOID ctx);
 
 /* io/fscache.c: the file data cache of the host backed volumes. */
 typedef struct _MIMEFS_CACHE MIMEFS_CACHE;
@@ -1615,12 +1826,19 @@ BOOLEAN FsWbAnyMapped(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 NTSTATUS IoWriteFileObject(PFILE_OBJECT file, const void *buffer, ULONG length, ULONG64 offset, PULONG written);
 void IopInitializeCompletion(void);
+NTSTATUS IopRemoveCompletionPackets(PVOID port, PVOID out, ULONG count, PULONG removed, PLARGE_INTEGER timeout);
+LONG IopCompletionDepth(PVOID port);
+void IopBindCompletionFactory(PVOID port, PVOID factory, BOOLEAN bind);
+PVOID ExWorkerFactoryPacketQueued(PVOID factory);
+void ExWorkerFactoryCheck(PVOID factory);
+void ExInitializeWorkerFactory(void);
 void IopInitializeWaitPackets(void);
 void IopInitializeNull(void);
 void IopInitializeNamedPipes(void);
 void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_STATUS_BLOCK iosb);
 /* wow64 flags a 32-bit status block with bit 0 of the apc routine. internally bit 0 of the block's address carries it. */
 void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb);
+void IopTakeWow64Iosb(PFILE_OBJECT file, PVOID *apc_routine, PIO_STATUS_BLOCK *iosb);
 ULONG IopIosbImage(PIO_STATUS_BLOCK iosb, NTSTATUS status, ULONG_PTR information, PVOID *address, ULONG64 image[2]);
 BOOLEAN IopIsNamedPipe(PFILE_OBJECT file);
 NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc_routine, PVOID apc_context,
@@ -1639,6 +1857,24 @@ NTSTATUS AfdDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID cont
 NTSTATUS AfdReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
                       PVOID buffer, ULONG length);
 NTSTATUS AfdCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+struct MIME_AFD_CONFIG;
+struct MIME_AFD_SOCKET_INFO;
+struct MIME_AFD_CONFIG *AfdCopyConfig(void);
+ULONG AfdCopySockets(struct MIME_AFD_SOCKET_INFO **list);
+
+/* nsi.c: the network store interface, \Device\Nsi. */
+void IopInitializeNsi(void);
+void IopInitializeDeviceApi(void);
+BOOLEAN IopIsNsi(PFILE_OBJECT file);
+NTSTATUS NsiDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                          ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
+NTSTATUS NsiCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+
+/* netbt.c: netbios over tcp, \Device\NetBT_Tcpip_{guid}. */
+void IopInitializeNetbt(void);
+BOOLEAN IopIsNetbt(PFILE_OBJECT file);
+NTSTATUS NetbtDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb,
+                            ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
 
 /* request.c: a user mode request a driver answers itself, maybe later. */
 typedef struct IO_USER_REQUEST {
@@ -1698,6 +1934,8 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
 void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token);
 void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow);
 BOOLEAN FsAttrIsHostWatch(ULONG id);
+BOOLEAN FsAttrWatched(ULONG volume, PCUNICODE_STRING name, PLONG token);
+BOOLEAN FsAttrUnchanged(ULONG volume, PCUNICODE_STRING name, LONG token);
 /* fsnotify.c: starts the thread that fetches changes made by host programs. */
 void FsNotifyHostStart(void);
 void FsNotifyReport(ULONG volume, PCUNICODE_STRING path, ULONG action, ULONG filter);
@@ -1725,6 +1963,10 @@ void IopStartPnpHostChanges(void);
 /* makes the tree hold an endpoint for each audio device the host has now. */
 void IopSyncAudioEndpoints(void);
 void IopPnpHostChanged(void);
+/* shows the devices of the tree to the visitor, which may add interfaces and devices. */
+void IopPnpEachDevice(void (*visit)(PCWSTR instance, PCWSTR klass));
+/* devlinks.c: the interfaces and dos names of the devices, made once the drivers have theirs. */
+void IopPublishDeviceLinks(void);
 void IopDrivesInterrupt(void);
 
 /* http.c: the http server driver. */
@@ -1791,7 +2033,7 @@ extern KUSER_SHARED_DATA *SharedUserData;
 extern ULONG64 KeBootFiletime;
 /* ex/timezone.c: the clock offset follows the zone's daylight time rules. */
 void ExInitializeTimeZone(void);
-NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned);
+NTSTATUS ExQueryTimeZoneInformation(BOOLEAN dynamic, PVOID info, ULONG length, PULONG returned);
 ULONG PsGetDeviceImagePath(PEPROCESS process, PWCHAR out, ULONG capacity);
 void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image);
 /* the guard below a thread's committed stack, three pages as RtlCreateUserStack makes it. */
@@ -1803,8 +2045,11 @@ void CmRefreshTimeZoneRules(ULONG year);
 void ExInitialize(void);
 void ExpInitializeAtoms(void);
 void ExpInitializeWnf(void);
+void ExpInitializeEtw(void);
 /* ex/firmware.c: the variable store of the firmware, and the firmware type system information reports. */
 void ExpInitializeFirmware(void);
+/* ex/power.c: the PowerRequest objects of NtPowerInformation. */
+void ExpInitializePower(void);
 extern ULONG ExpFirmwareType;
 void ExUpdateSystemTime(void);
 NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
@@ -1825,6 +2070,11 @@ void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data,
 
 /* io/console.c: the console driver. */
 void IopInitializeConsole(void);
+void IopInitializeKsec(void);
+/* io/mountmgr.c: the mount manager, and the names of a volume of a letter it hands out. */
+void IopInitializeMountManager(void);
+void MountVolumeGuid(WCHAR letter, GUID *guid);
+ULONG MountVolumeUniqueId(WCHAR letter, UCHAR out[24]);
 void IopInitializeConsoleDevice(void);
 MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size, ULONG cursor);
 MIME_CONSOLE *ConsoleCreateNew(void);
@@ -1847,6 +2097,9 @@ void ConsoleDereference(MIME_CONSOLE *console);
 NTSTATUS ConsoleAttach(PEPROCESS process, MIME_CONSOLE *console);
 void ConsoleDetach(PEPROCESS process);
 void ConsoleProcessExit(PEPROCESS process);
+/* a handle of the process to \Reference of its console, what kernelbase connects with, and the redirected streams of a run. */
+NTSTATUS ConsoleCreateReference(PEPROCESS process, PHANDLE handle);
+NTSTATUS ConsoleCreateStreamHandles(PEPROCESS process, HANDLE handles[3]);
 void ConsoleHostInput(ULONG64 request, const UCHAR *data, ULONG length);
 void ConsoleHostEvent(ULONG64 request, ULONG event);
 void ConsoleHostSize(ULONG64 request, ULONG size);

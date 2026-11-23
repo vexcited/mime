@@ -1,0 +1,5 @@
+LIBRARY Windows.Networking.Connectivity.dll
+EXPORTS
+    DllCanUnloadNow@0 @2
+    DllGetActivationFactory@8 @3
+    DllGetClassObject@12 @4

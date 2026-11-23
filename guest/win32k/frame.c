@@ -155,7 +155,10 @@ void FrameGetVisibleRect(WND *w, RECT *r)
 
 static BOOLEAN has_minmax(WND *w)
 {
-    return (w->Style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) && !(w->ExStyle & WS_EX_TOOLWINDOW);
+    DWORD boxes = w->Style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+    if (!WndCanMinimize(w))
+        boxes &= ~(DWORD)WS_MINIMIZEBOX;
+    return boxes && !(w->ExStyle & WS_EX_TOOLWINDOW);
 }
 
 static BOOLEAN has_help(WND *w)
@@ -187,7 +190,7 @@ void FrameGetButtonRect(WND *w, int button, RECT *r)
         slot = 1;
         break;
     case CAPTION_MIN:
-        if (!has_minmax(w))
+        if (!has_minmax(w) || !WndCanMinimize(w))
             return;
         slot = 2;
         break;
@@ -357,7 +360,8 @@ LRESULT FrameHitTest(WND *w, POINT pt)
         case CAPTION_HELP:
             return HTHELP;
         }
-        if ((w->Style & WS_SYSMENU) && w->IconSmall && !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW)) &&
+        if ((w->Style & WS_SYSMENU) && (w->IconSmall || w->Icon || (w->Class && (w->Class->IconSmall || w->Class->Icon))) &&
+            !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW)) &&
             wp.x < vis.left + scale(32, dpi) && wp.y >= vis.top)
             return HTSYSMENU;
         if (wp.y >= vis.top && wp.x >= vis.left && wp.x < vis.right)
@@ -384,16 +388,17 @@ static void frame_free(void *ctx, void *p)
 static const MimeAllocator g_frame_alloc = {frame_alloc, frame_free, nullptr};
 
 /* the classes of the style the frame and the menus read, light and dark. */
-enum { CLASS_WINDOW, CLASS_WINDOW_DARK, CLASS_MENU, CLASS_MENU_DARK, CLASS_COUNT };
+enum { CLASS_WINDOW, CLASS_WINDOW_DARK, CLASS_MENU, CLASS_MENU_DARK, CLASS_SCROLLBAR, CLASS_COUNT };
 /* the dark classes are named DarkMode::Window and DarkMode::Menu, the part before :: being the app. */
-static const char *const g_class_apps[CLASS_COUNT] = {nullptr, "DarkMode", nullptr, "DarkMode"};
-static const char *const g_class_names[CLASS_COUNT] = {"Window", "Window", "Menu", "Menu"};
+static const char *const g_class_apps[CLASS_COUNT] = {nullptr, "DarkMode", nullptr, "DarkMode", nullptr};
+static const char *const g_class_names[CLASS_COUNT] = {"Window", "Window", "Menu", "Menu", "ScrollBar"};
 
-/* the coverage of a glyph image, to be tinted when drawn. */
+/* the coverage of a glyph image, to be tinted when drawn, and the color the image has itself. */
 typedef struct GLYPH_MASK {
     struct GLYPH_MASK *Next;
-    int32_t ResId, Top;
+    int32_t ResId, Left, Top;
     LONG Width, Height;
+    COLORREF Color;
     PUCHAR Coverage;
 } GLYPH_MASK;
 
@@ -489,42 +494,135 @@ BOOLEAN FrameBorderColor(BOOLEAN dark, BOOLEAN active, ULONG *argb)
     return TRUE;
 }
 
-/* the glyph of a caption button for a state at a dpi, as 8 bit coverage. */
-static const GLYPH_MASK *glyph_mask(BOOLEAN dark, int part, int state, UINT dpi)
+static void draw_glyph(SURFACE *s, const REGION *clip, const GLYPH_MASK *mask, const RECT *button, ULONG pixel);
+
+/* the pixels of an image of the style, b, g, r and a with the colors multiplied by the alpha. */
+static PUCHAR decode_image(const MimeMsstylesImage *img, MimePngInfo *info)
+{
+    LONG width = img->src.right - img->src.left, height = img->src.bottom - img->src.top;
+    if (!mime_png_info(img->data, img->size, info) || width <= 0 || height <= 0 || info->width > 1024 ||
+        info->height > 4096 || img->src.right > (LONG)info->width || img->src.bottom > (LONG)info->height)
+        return nullptr;
+    PUCHAR argb = frame_alloc(nullptr, (SIZE_T)info->width * info->height * 4);
+    if (argb && mime_png_decode(img->data, img->size, &g_frame_alloc, MIME_PNG_PREMULTIPLIED, argb,
+                                (size_t)info->width * 4) != MIME_PNG_OK) {
+        frame_free(nullptr, argb);
+        argb = nullptr;
+    }
+    return argb;
+}
+
+/* the glyph of a part of a class for a state at a dpi, as 8 bit coverage. */
+static const GLYPH_MASK *class_glyph(int which, int part, int state, UINT dpi)
 {
     MimeMsstylesImage img;
-    if (!load_theme() || !mime_msstyles_get_image(&g_theme.Theme, g_theme.Class[dark ? CLASS_WINDOW_DARK : CLASS_WINDOW],
-                                                  part, state, dpi, 0, 0, MIME_MSSTYLES_GLYPH, &img))
+    if (!load_theme() || g_theme.Class[which] < 0 ||
+        !mime_msstyles_get_image(&g_theme.Theme, g_theme.Class[which], part, state, dpi, 0, 0, MIME_MSSTYLES_GLYPH, &img))
         return nullptr;
     for (GLYPH_MASK *m = g_theme.Masks; m; m = m->Next)
-        if (m->ResId == img.res_id && m->Top == img.src.top)
+        if (m->ResId == img.res_id && m->Top == img.src.top && m->Left == img.src.left)
             return m;
     MimePngInfo info;
     LONG width = img.src.right - img.src.left, height = img.src.bottom - img.src.top;
-    if (!mime_png_info(img.data, img.size, &info) || width <= 0 || height <= 0 || info.width > 1024 ||
-        info.height > 4096 || img.src.right > (LONG)info.width || img.src.bottom > (LONG)info.height)
-        return nullptr;
-    SIZE_T pixels = (SIZE_T)info.width * info.height;
-    PUCHAR argb = frame_alloc(nullptr, pixels * 4);
-    GLYPH_MASK *mask = frame_alloc(nullptr, sizeof(*mask) + (SIZE_T)width * height);
-    if (!argb || !mask || mime_png_decode(img.data, img.size, &g_frame_alloc, MIME_PNG_PREMULTIPLIED, argb,
-                                          (size_t)info.width * 4) != MIME_PNG_OK) {
+    PUCHAR argb = decode_image(&img, &info);
+    GLYPH_MASK *mask = argb ? frame_alloc(nullptr, sizeof(*mask) + (SIZE_T)width * height) : nullptr;
+    if (!mask) {
         frame_free(nullptr, argb);
-        frame_free(nullptr, mask);
         return nullptr;
     }
     mask->ResId = img.res_id;
+    mask->Left = img.src.left;
     mask->Top = img.src.top;
     mask->Width = width;
     mask->Height = height;
+    mask->Color = 0;
     mask->Coverage = (PUCHAR)(mask + 1);
+    UCHAR most = 0;
     for (LONG y = 0; y < height; y++)
-        for (LONG x = 0; x < width; x++)
-            mask->Coverage[y * width + x] = argb[((SIZE_T)(img.src.top + y) * info.width + img.src.left + x) * 4 + 3];
+        for (LONG x = 0; x < width; x++) {
+            const UCHAR *p = &argb[((SIZE_T)(img.src.top + y) * info.width + img.src.left + x) * 4];
+            mask->Coverage[y * width + x] = p[3];
+            if (p[3] > most) {
+                most = p[3];
+                mask->Color = RGB(p[2] * 255 / p[3], p[1] * 255 / p[3], p[0] * 255 / p[3]);
+            }
+        }
     frame_free(nullptr, argb);
     mask->Next = g_theme.Masks;
     g_theme.Masks = mask;
     return mask;
+}
+
+static const GLYPH_MASK *glyph_mask(BOOLEAN dark, int part, int state, UINT dpi)
+{
+    return class_glyph(dark ? CLASS_WINDOW_DARK : CLASS_WINDOW, part, state, dpi);
+}
+
+/* the color at the middle of the background image of a part, which a part of one color is filled with. */
+typedef struct PART_FILL {
+    struct PART_FILL *Next;
+    int32_t ResId, Left, Top;
+    COLORREF Color;
+} PART_FILL;
+
+static PART_FILL *g_fills;
+
+static BOOLEAN class_fill(int which, int part, int state, UINT dpi, COLORREF *out)
+{
+    MimeMsstylesImage img;
+    if (!load_theme() || MetricsHighContrast() || g_theme.Class[which] < 0)
+        return FALSE;
+    /* a part made of two colors and no bitmap, as the style of mime has them. */
+    MimeMsstylesColorImage colors;
+    if (mime_msstyles_get_color_image(&g_theme.Theme, g_theme.Class[which], part, state, &colors)) {
+        *out = RGB((colors.fill >> 16) & 0xFF, (colors.fill >> 8) & 0xFF, colors.fill & 0xFF);
+        return TRUE;
+    }
+    if (!mime_msstyles_get_image(&g_theme.Theme, g_theme.Class[which], part, state, dpi, 0, 0, 0, &img))
+        return FALSE;
+    for (PART_FILL *f = g_fills; f; f = f->Next)
+        if (f->ResId == img.res_id && f->Top == img.src.top && f->Left == img.src.left) {
+            *out = f->Color;
+            return TRUE;
+        }
+    MimePngInfo info;
+    PUCHAR argb = decode_image(&img, &info);
+    PART_FILL *f = argb ? frame_alloc(nullptr, sizeof(*f)) : nullptr;
+    if (!f) {
+        frame_free(nullptr, argb);
+        return FALSE;
+    }
+    const UCHAR *p = &argb[((SIZE_T)((img.src.top + img.src.bottom) / 2) * info.width + (img.src.left + img.src.right) / 2) * 4];
+    f->ResId = img.res_id;
+    f->Left = img.src.left;
+    f->Top = img.src.top;
+    f->Color = RGB(p[2], p[1], p[0]);
+    f->Next = g_fills;
+    g_fills = f;
+    frame_free(nullptr, argb);
+    *out = f->Color;
+    return TRUE;
+}
+
+/*
+ * a part of the ScrollBar class in a state: the parts of the style are of one color each, with an arrow over the
+ * buttons. FALSE when the style has none, and the caller draws the classic one.
+ */
+BOOLEAN FrameDrawScrollPart(SURFACE *s, const REGION *clip, const RECT *r, int part, int state, UINT dpi)
+{
+    COLORREF fill;
+    if (!class_fill(CLASS_SCROLLBAR, part, state, dpi, &fill))
+        return FALSE;
+    DrawFillRect(s, clip, r, ColorToPixel(fill));
+    const GLYPH_MASK *mask = part == 1 ? class_glyph(CLASS_SCROLLBAR, part, state, dpi) : nullptr;
+    if (mask) {
+        REGION inside;
+        RgnInit(&inside);
+        RgnCombineRect(&inside, clip, r, RGN_AND);
+        draw_glyph(s, &inside, mask, r, ColorToPixel(mask->Color));
+        RgnFree(&inside);
+    }
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ painting */
@@ -820,6 +918,7 @@ void FramePaint(WND *w)
                    origin.y + (w->WindowRect.bottom - w->WindowRect.top)};
     if (!is_top_frame(w->Style)) {
         paint_classic_edges(w, s, &clip, window);
+        ScrollPaint(w, s, &clip);
         SurfaceMarkDrawn(s, &window, &clip);
         RgnFree(&clip);
         return;
@@ -847,7 +946,11 @@ void FramePaint(WND *w)
         LONG caption_top = vis.top;
         LONG caption_bottom = origin.y + m.Top;
         LONG x = vis.left + scale(12, dpi);
-        BOOLEAN icon = (w->Style & WS_SYSMENU) && w->IconSmall && !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW));
+        /* like windows, the small icon of the window, then of its class, then the large ones. */
+        HICON shown_icon = w->IconSmall ? w->IconSmall
+                           : w->Class && w->Class->IconSmall ? w->Class->IconSmall
+                           : w->Icon ? w->Icon : w->Class ? w->Class->Icon : nullptr;
+        BOOLEAN icon = (w->Style & WS_SYSMENU) && shown_icon && !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW));
         if (icon) {
             LONG size = MetricsGet(SM_CXSMICON, dpi);
             LONG ix = vis.left + scale(8, dpi);
@@ -858,7 +961,7 @@ void FramePaint(WND *w)
             DC *dc = DcLookup(hdc);
             if (dc) {
                 RgnCopy(&dc->VisRgn, &clip);
-                CursorDrawIcon(dc, ix - origin.x, iy - origin.y, w->IconSmall, size, size, DI_NORMAL);
+                CursorDrawIcon(dc, ix - origin.x, iy - origin.y, shown_icon, size, size, DI_NORMAL);
                 PaintReleaseDC(dc);
             }
             x = ix + size + scale(8, dpi);
@@ -877,6 +980,7 @@ void FramePaint(WND *w)
             draw_button(w, s, &clip, origin, buttons[i], dpi, active, &colors);
     }
     MenuBarPaint(w, s, &clip, origin);
+    ScrollPaint(w, s, &clip);
     /* drawn straight into the surface, so the present needs to know. */
     SurfaceMarkDrawn(s, &window, &clip);
     RgnFree(&clip);

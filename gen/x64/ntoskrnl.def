@@ -209,6 +209,7 @@ EXPORTS
     MimeCopyFromUser @7 NONAME
     MimeCopyToUser @8 NONAME
     MimeCurrentHasPrivilege @9 NONAME
+    MimeAddGlobalAtom @42 NONAME
     MimeFindGlobalAtom @41 NONAME
     MimeFsAssignNewFile @10 NONAME
     MimeFsCheckOpen @11 NONAME
@@ -286,6 +287,11 @@ EXPORTS
     MmMapLockedPagesSpecifyCache
     MmMapPagesInSystem
     MmMapSharedSectionUser
+    MmMapReadOnlySection
+    MmCreateReservedSection
+    ExRegisterCsrServerDll
+    PsQueryNtUserPfn
+    PsQuerySubsystemIds
     MmMapViewInSystemSpace
     MmMapWritableSection
     MmProbeAndLockPages
@@ -758,8 +764,6 @@ EXPORTS
     SeThreadHasPrivilege
     SeThreadIntegrityRid
     SeTokenObjectType DATA
-    SeTraceDenial
-    SeTraceDescriptor
     SharedUserData DATA
     ZwAllocateVirtualMemory
     ZwClose

@@ -17,6 +17,11 @@ typedef enum MIME_PNP_CLASS {
      * change.
      */
     MIME_PNP_WAIT_CHANGE = 101,
+    /*
+     * makes the Enum key of a device that is not there, with the value Phantom, for CM_Create_DevNode. windows'
+     * plug and play manager does this for a caller it grants write access, an administrator.
+     */
+    MIME_PNP_CREATE_PHANTOM = 102,
 } MIME_PNP_CLASS;
 
 enum {
@@ -24,6 +29,15 @@ enum {
     MIME_PNP_CHILD = 2,
     MIME_PNP_SIBLING = 3,
 };
+
+/*
+ * the same requests as controls of \Device\DeviceApi\CMApi, for a 32-bit process: the function of the code is the
+ * class, input and output are the request. a control that finds the buffer too small succeeds with this in Flags and
+ * the size it needs in OutChars.
+ */
+#define MIME_PNP_CONTROL(klass) (0x00220000u | (0x800u + (klass)) << 2)
+#define MIME_PNP_CONTROL_CLASS(code) ((((code) >> 2) & 0xFFF) - 0x800u)
+#define MIME_PNP_TOO_SMALL 0xFFFFFFFEu
 
 typedef struct MIME_PNP_REQUEST {
     ULONG Flags;     /* the relation. for interfaces, nonzero for every class. */

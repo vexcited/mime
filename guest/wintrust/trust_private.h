@@ -26,11 +26,14 @@ typedef struct {
     /* a catalog: its signed content names the member hashes instead of holding one digest of a file. */
     BOOL catalog;
 } WT_SUBJECT;
+/* the digest of an image, its size or 0. */
+DWORD WtImageDigest(ALG_ID id, const WT_SUBJECT *subject, BYTE hash[64]);
 LONG WtVerifyPe(HANDLE mapping, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyP7x(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyCatalog(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
+LONG WtVerifyHttps(const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTRUST_DATA *options,
                         PCCERT_CHAIN_CONTEXT *chain);
 #endif

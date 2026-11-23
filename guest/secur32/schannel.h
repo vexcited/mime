@@ -53,6 +53,12 @@
 #define SECBUFFER_APPLICATION_PROTOCOLS 18
 
 #define SECPKG_ATTR_APPLICATION_PROTOCOL 35
+#ifndef SECPKG_ATTR_REMOTE_CERT_CHAIN
+#define SECPKG_ATTR_REMOTE_CERT_CHAIN 0x67
+#endif
+#ifndef SECPKG_ATTR_LOCAL_CERT_CONTEXT
+#define SECPKG_ATTR_LOCAL_CERT_CONTEXT 0x54
+#endif
 #define SECPKG_ATTR_SESSION_INFO 0x5D
 #define SECPKG_ATTR_CIPHER_INFO 0x64
 
@@ -195,11 +201,55 @@ typedef struct SCH_CONFIG {
     /* the server protocols that may be negotiated, SP_PROT_TLS1_2_SERVER, and the certificate a server answers with. */
     ULONG ServerProtocols;
     PCCERT_CONTEXT Certificate;
+    /* the random thumbprint of the credential, which keys its cached sessions. */
+    UINT64 Tag;
 } SCH_CONFIG;
 
-/* reads SCHANNEL_CRED or SCH_CREDENTIALS; NULL means the defaults. */
-void SchParseCredentials(const void *auth_data, SCH_CONFIG *config);
+/* reads SCHANNEL_CRED or SCH_CREDENTIALS; NULL means the defaults. fails when no protocol is left. */
+SECURITY_STATUS SchParseCredentials(const void *auth_data, SCH_CONFIG *config);
 bool SecSchannelConfig(PCredHandle handle, SCH_CONFIG *config);
+
+/* ------------------------------------------------------------------ certificates of a connection */
+
+typedef struct TLS_CERTS {
+    HCERTSTORE Store;
+    PCCERT_CONTEXT Leaf;
+} TLS_CERTS;
+
+/* ------------------------------------------------------------------ client session cache, session.c */
+
+typedef struct TLS_SESSION {
+    struct TLS_SESSION *Next;
+    UINT64 Tag;
+    /* the target name of InitializeSecurityContext, empty for none. */
+    PWSTR Target;
+    USHORT Version;
+    USHORT Suite;
+    bool Ems;
+    /* the tls 1.2 master secret, or the tls 1.3 resumption psk. */
+    BYTE Secret[48];
+    /* the connection that made it: its master secret, or its tls 1.3 resumption master secret. */
+    BYTE Origin[48];
+    BYTE SessionId[32];
+    BYTE SessionIdSize;
+    BYTE *Ticket;
+    SIZE_T TicketSize;
+    UINT32 AgeAdd;
+    UINT32 Lifetime;
+    ULONGLONG Created;
+    /* the server's certificates, which a resumed connection reports. */
+    TLS_CERTS Certs;
+} TLS_SESSION;
+
+/* a copy of the newest matching session; a tls 1.3 ticket leaves the cache as it is taken. */
+TLS_SESSION *TlsSessionFind(UINT64 tag, PCWSTR target, ULONG protocols, bool (*usable)(const TLS_SESSION *, void *),
+                            void *context);
+TLS_SESSION *TlsSessionNew(UINT64 tag, PCWSTR target);
+/* takes s over. */
+void TlsSessionAdd(TLS_SESSION *s);
+void TlsSessionFree(TLS_SESSION *s);
+void TlsSessionForget(UINT64 tag, PCWSTR target, const BYTE *origin);
+void TlsSessionPurge(UINT64 tag);
 
 /* ------------------------------------------------------------------ tls engine, tls.c */
 
@@ -254,6 +304,10 @@ void TlsSessionInfo(const TLS *t, SCH_SESSION_INFO *info);
 SECURITY_STATUS TlsKeyInfo(const TLS *t, SCH_KEY_INFO_W *info, bool ansi);
 /* the server's leaf certificate with the chain in its store, or NULL before it arrived. */
 PCCERT_CONTEXT TlsRemoteCertificate(const TLS *t);
+/* the certificate this handshake sent, NULL for none or a resumed session. */
+PCCERT_CONTEXT TlsLocalCertificate(const TLS *t);
+/* SSL_SESSION_DISABLE_RECONNECTS. */
+void TlsDisableReconnects(TLS *t);
 void TlsExpiry(const TLS *t, PTimeStamp expiry);
 /* queues close_notify or another alert for the next InitializeSecurityContext. */
 void TlsQueueAlert(TLS *t, BYTE level, BYTE number);
@@ -268,11 +322,6 @@ typedef struct TLS_PEER_KEY {
     MimeEcKey Ec;
 } TLS_PEER_KEY;
 
-typedef struct TLS_CERTS {
-    HCERTSTORE Store;
-    PCCERT_CONTEXT Leaf;
-} TLS_CERTS;
-
 /* a memory store of the server's certificates, leaf first; fails for one crypt32 cannot read. */
 SECURITY_STATUS SchLoadCertificates(TLS_CERTS *certs, const BYTE *const *der, const SIZE_T *sizes, DWORD count);
 SECURITY_STATUS SchLeafKey(const TLS_CERTS *certs, TLS_PEER_KEY *key);
@@ -280,8 +329,10 @@ void SchFreeKey(TLS_PEER_KEY *key);
 /* crypt32 chain building and ssl policy, with the alert to send on failure. */
 SECURITY_STATUS SchValidateChain(const TLS_CERTS *certs, PCWSTR server, ULONG flags, BYTE *alert);
 void SchFreeCertificates(TLS_CERTS *certs);
+void SchCopyCertificates(TLS_CERTS *to, const TLS_CERTS *from);
 PCCERT_CONTEXT SchDuplicate(PCCERT_CONTEXT cert);
 /* signs with the key the certificate's properties name. */
+int SchCertificateKeyKind(PCCERT_CONTEXT cert, unsigned *bits);
 bool SchSignWithCertificate(PCCERT_CONTEXT cert, unsigned scheme, const MimeHashAlg *hash, const BYTE *content,
                             SIZE_T size, BYTE *sig, SIZE_T *sig_size);
 void SchFreeCertificate(PCCERT_CONTEXT cert);

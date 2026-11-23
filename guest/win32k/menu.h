@@ -34,6 +34,7 @@ typedef struct MENU {
     ULONG_PTR MenuData;
     ULONG Serial; /* changes with every edit, so a menu bar layout knows it is stale. */
     LONG Users;   /* windows that have it as their menu bar. */
+    ULONG DeskItems, DeskItemsSize; /* its items and their text in the desktop heap, deskheap.c. */
 } MENU;
 
 MENU *MenuLookup(HMENU handle);

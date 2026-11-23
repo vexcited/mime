@@ -79,6 +79,24 @@ NTSTATUS Mx32FilterToken(const ULONG *a);
 NTSTATUS Mx32AdjustGroupsToken(const ULONG *a);
 NTSTATUS Mx32SetInformationThread(const ULONG *a);
 NTSTATUS Mx32QuerySystemInformation(const ULONG *a);
+NTSTATUS Mx32QuerySystemInformationEx(const ULONG *a);
+NTSTATUS Mx32WorkerFactoryCall(ULONG number, const ULONG *a);
+NTSYSCALLAPI NTSTATUS NTAPI NtRaiseHardError(NTSTATUS status, ULONG count, ULONG mask, PULONG_PTR parameters, ULONG option,
+                                             PULONG response);
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateTimer2(PHANDLE handle, PVOID reserved, POBJECT_ATTRIBUTES attributes, ULONG flags, ACCESS_MASK access);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetTimer2(HANDLE handle, PLARGE_INTEGER due, PLARGE_INTEGER period, PVOID parameters);
+NTSYSCALLAPI NTSTATUS NTAPI NtCancelTimer2(HANDLE handle, PVOID parameters);
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateWorkerFactory(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, HANDLE port,
+                                                  HANDLE process, PVOID start, PVOID parameter, ULONG maximum,
+                                                  SIZE_T stack_reserve, SIZE_T stack_commit);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryInformationWorkerFactory(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetInformationWorkerFactory(HANDLE handle, ULONG klass, PVOID info, ULONG length);
+NTSYSCALLAPI NTSTATUS NTAPI NtShutdownWorkerFactory(HANDLE handle, volatile LONG *pending);
+NTSYSCALLAPI NTSTATUS NTAPI NtReleaseWorkerFactoryWorker(HANDLE handle);
+NTSYSCALLAPI NTSTATUS NTAPI NtWorkerFactoryWorkerReady(HANDLE handle);
+NTSYSCALLAPI NTSTATUS NTAPI NtWaitForWorkViaWorkerFactory(HANDLE handle, PVOID packets, ULONG count, PULONG removed, PVOID deferred);
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemInformationEx(SYSTEM_INFORMATION_CLASS klass, PVOID input, ULONG input_length, PVOID info,
+                                                       ULONG length, PULONG returned);
 NTSTATUS Mx32QueryObject(const ULONG *a);
 NTSTATUS Mx32SetInformationObject(const ULONG *a);
 NTSTATUS Mx32QuerySection(const ULONG *a);

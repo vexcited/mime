@@ -32,6 +32,7 @@
 #define IOCTL_AFD_COMPLETE MIME_AFD_IOCTL(0x810)      /* in ULONG64 information, completes at once like a request */
 #define IOCTL_AFD_CONFIG MIME_AFD_IOCTL(0x811)        /* out MIME_AFD_CONFIG and its arrays */
 #define IOCTL_AFD_SOCKETS MIME_AFD_IOCTL(0x812)       /* out MIME_AFD_SOCKET_INFO list of every open socket */
+#define IOCTL_AFD_ECHO MIME_AFD_IOCTL(0x813)          /* in MIME_AFD_ECHO, out MIME_AFD_ECHO_RESULT, pends */
 
 /* a Windows sockaddr_in or sockaddr_in6, the host's MimeNetAddr. */
 typedef struct MIME_AFD_ADDRESS {
@@ -198,6 +199,20 @@ typedef struct MIME_AFD_LINK {
     UCHAR MacLength;
     UCHAR Mac[8];
     UCHAR Pad[7];
+    /* received and sent since the host started the link; packets of every kind, multicast included */
+    ULONG64 RxBytes;
+    ULONG64 RxPackets;
+    ULONG64 RxMulticast;
+    ULONG64 RxErrors;
+    ULONG64 RxDropped;
+    ULONG64 TxBytes;
+    ULONG64 TxPackets;
+    ULONG64 TxErrors;
+    ULONG64 TxDropped;
+    /* the DHCP lease of the link's ipv4 address, zeros when the host has none or does not tell */
+    UCHAR DhcpServer[4];
+    ULONG DhcpLease;      /* seconds the lease lasts */
+    ULONG64 DhcpObtained; /* seconds since 1970 */
 } MIME_AFD_LINK;
 
 #define MIME_AFD_ADDR_DYNAMIC 0x1
@@ -255,6 +270,37 @@ typedef struct MIME_AFD_SOCKET_INFO {
     MIME_AFD_ADDRESS Local;
     MIME_AFD_ADDRESS Remote; /* family 0 unless connected */
 } MIME_AFD_SOCKET_INFO;
+
+/*
+ * one icmp echo, the request of IcmpSendEcho2 and Icmp6SendEcho2. it always pends once its arguments hold: the answer's
+ * payload goes to Reply, the rest to the output at completion. the status is STATUS_SUCCESS for an echo reply,
+ * STATUS_UNSUCCESSFUL with Error set for an icmp error about the echo, STATUS_TIMEOUT, STATUS_BUFFER_TOO_SMALL when
+ * the payload does not fit, or STATUS_INVALID_BUFFER_SIZE when the echo is too big to send.
+ */
+#define MIME_AFD_ECHO_DONT_FRAGMENT 0x1
+
+typedef struct MIME_AFD_ECHO {
+    MIME_AFD_ADDRESS Destination;
+    MIME_AFD_ADDRESS Source; /* family 0 for any */
+    ULONG64 Request;
+    ULONG RequestSize;
+    ULONG Timeout; /* milliseconds */
+    ULONG64 Reply;
+    ULONG ReplySize;
+    UCHAR Ttl; /* 0 for the default */
+    UCHAR Flags;
+    USHORT Pad;
+} MIME_AFD_ECHO;
+
+typedef struct MIME_AFD_ECHO_RESULT {
+    MIME_AFD_ADDRESS From;
+    ULONG RoundTrip; /* milliseconds */
+    ULONG DataSize;
+    UCHAR Type, Code; /* of an icmp error */
+    UCHAR Ttl, Tos;
+    UCHAR Error;
+    UCHAR Pad[3];
+} MIME_AFD_ECHO_RESULT;
 
 /* NTSTATUS values for socket errors, with their win32 meaning where Windows has one. */
 #define STATUS_AFD_LOCAL_DISCONNECT ((NTSTATUS)0xC000013BL)

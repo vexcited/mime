@@ -2,7 +2,8 @@
  * comctl32 entry point and control class registration.
  *
  * windows registers a class when an activation context names it, through RegisterClassNameW, or in
- * InitCommonControlsEx. mime has no class redirection, so every class is registered when the dll loads.
+ * InitCommonControlsEx. the activation context mime generates names the classes user32 has too, so the other ones
+ * are registered when the dll loads.
  */
 #include "comctl32_private.h"
 
@@ -35,6 +36,22 @@ static const CLASS_ENTRY g_classes[] = {
     {L"SysLink", LinkProc, CS_GLOBALCLASS | CS_HREDRAW | CS_VREDRAW, 0, ICC_LINK_CLASS},
 };
 
+/* the classes that take the place of the ones of user32, and so cannot be registered before a program asks. */
+static const WCHAR *const g_user_classes[] = {L"Static", L"Button", L"ScrollBar", L"Edit", L"ListBox", L"ComboBox"};
+
+/* a class made whole here, of the name of one of user32. */
+static BOOL register_own(LPCWSTR name, WNDPROC proc, UINT style)
+{
+    WNDCLASSW wc = {};
+    wc.style = CS_GLOBALCLASS | style;
+    wc.lpfnWndProc = proc;
+    wc.cbWndExtra = sizeof(void *);
+    wc.hInstance = Comctl32Instance;
+    wc.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    wc.lpszClassName = name;
+    return RegisterClassW(&wc) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
 static BOOL register_class(const CLASS_ENTRY *c)
 {
     WNDCLASSW wc = {};
@@ -60,6 +77,15 @@ WINCOMMCTRLAPI BOOL WINAPI RegisterClassNameW(LPCWSTR name)
 {
     if (!name)
         return FALSE;
+    if (!_wcsicmp(name, L"Static"))
+        return RegisterStaticClass();
+    if (!_wcsicmp(name, L"Button"))
+        return register_own(L"Button", ButtonProc, CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_PARENTDC);
+    if (!_wcsicmp(name, L"ScrollBar"))
+        return register_own(L"ScrollBar", ScrollBarProc, CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW | CS_PARENTDC);
+    for (SIZE_T i = 3; i < RTL_NUMBER_OF(g_user_classes); i++)
+        if (!_wcsicmp(name, g_user_classes[i]))
+            return RegisterFieldClass(g_user_classes[i]);
     for (SIZE_T i = 0; i < sizeof(g_classes) / sizeof(g_classes[0]); i++)
         if (!_wcsicmp(name, g_classes[i].Name)) {
             register_class(&g_classes[i]);
@@ -75,6 +101,11 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         SubclassProcessAttach();
         RegisterControlClasses(0xFFFFFFFF);
     } else if (reason == DLL_PROCESS_DETACH && !reserved) {
+        /* a program that frees the dll must not keep classes whose procedures went with it. */
+        for (SIZE_T i = 0; i < sizeof(g_classes) / sizeof(g_classes[0]); i++)
+            UnregisterClassW(g_classes[i].Name, Comctl32Instance);
+        for (SIZE_T i = 0; i < RTL_NUMBER_OF(g_user_classes); i++)
+            UnregisterClassW(g_user_classes[i], Comctl32Instance);
         SubclassProcessFree();
     }
     return TRUE;

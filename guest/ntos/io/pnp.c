@@ -8,16 +8,20 @@
  */
 #define MIME_KERNEL_PNP
 #include "../cm/cm.h"
+#include <mime/ntrtlsec.h>
 #include <mime/pnp.h>
+#include "../se/se.h"
 
 #define INSTANCE_CHARS 200
 #define LINK_CHARS 260
 #define REFERENCE_CHARS 32
+#define CLASS_CHARS 40
 
 typedef struct DEVNODE {
     LIST_ENTRY Links;
     struct DEVNODE *Parent;
     WCHAR Instance[INSTANCE_CHARS];
+    WCHAR Class[CLASS_CHARS]; /* the setup class, a guid in braces. */
     LIST_ENTRY Interfaces;
 } DEVNODE;
 
@@ -110,6 +114,28 @@ static void set_value(CM_NODE *key, PCWSTR name, PCWSTR value, BOOLEAN multi)
 
 /* ------------------------------------------------------------------ devices */
 
+/*
+ * the two keys every device of the reference machine has under its own: its parameters, and its properties, which
+ * only the system opens. a user is refused there, an administrator too.
+ */
+static void device_subkeys(PCWSTR instance)
+{
+    WCHAR path[INSTANCE_CHARS + 96] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\";
+    wcscat(path, instance);
+    SIZE_T end = wcslen(path);
+    wcscat(path, L"\\Device Parameters");
+    CmpOpenPath(path, TRUE);
+    path[end] = 0;
+    wcscat(path, L"\\Properties");
+    CM_NODE *properties = CmpOpenPath(path, TRUE);
+    if (!properties || properties->Sd)
+        return;
+    SD_ACE aces[] = {{CONTAINER_INHERIT_ACE, 0xF003F /* KEY_ALL_ACCESS */, SeSidSystem}};
+    SD_BLOB *sd;
+    if (NT_SUCCESS(SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_PROTECTED, aces, 1, &sd)))
+        properties->Sd = sd;
+}
+
 /* adds a device under its parent, with the properties windows' installers would leave in its Enum key. */
 NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVICE_PROPERTIES *props)
 {
@@ -117,9 +143,20 @@ NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVIC
         return STATUS_NAME_TOO_LONG;
     WCHAR path[INSTANCE_CHARS + 64] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\";
     wcscat(path, instance);
+    /*
+     * the registry's own lock, as for any writer: a key made here while another thread sets a value would put two
+     * records at one place of the journal, and the next boot would find it corrupt and start from empty. the
+     * devices the registry describes at boot are added with the lock already held.
+     */
+    BOOLEAN locked = CmpLock.Owner != (PVOID)KeGetCurrentThread();
+    if (locked)
+        ExAcquireFastMutex(&CmpLock);
     CM_NODE *key = CmpOpenPath(path, TRUE);
-    if (!key)
+    if (!key) {
+        if (locked)
+            CmpUnlock();
         return STATUS_INSUFFICIENT_RESOURCES;
+    }
     set_value(key, L"DeviceDesc", props->DeviceDesc, FALSE);
     set_value(key, L"HardwareID", props->HardwareIds, TRUE);
     set_value(key, L"CompatibleIDs", props->CompatibleIds, TRUE);
@@ -130,11 +167,16 @@ NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVIC
     set_value(key, L"LocationInformation", props->Location, FALSE);
     set_value(key, L"ContainerID", props->ContainerId, FALSE);
     set_value(key, L"FriendlyName", props->FriendlyName, FALSE);
+    device_subkeys(instance);
+    if (locked)
+        CmpUnlock();
     DEVNODE *d = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*d), KI_TAG('P', 'n', 'p', 'D'));
     if (!d)
         return STATUS_INSUFFICIENT_RESOURCES;
     memset(d, 0, sizeof(*d));
     memcpy(d->Instance, instance, (wcslen(instance) + 1) * sizeof(WCHAR));
+    if (props->ClassGuid && wcslen(props->ClassGuid) < CLASS_CHARS)
+        wcscpy(d->Class, props->ClassGuid);
     InitializeListHead(&d->Interfaces);
     lock();
     d->Parent = parent ? find(parent) : nullptr;
@@ -142,6 +184,30 @@ NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVIC
     changed();
     unlock();
     return STATUS_SUCCESS;
+}
+
+/* shows the devices there are now to the visitor, which runs without the lock and may add interfaces and devices. */
+void IopPnpEachDevice(void (*visit)(PCWSTR instance, PCWSTR klass))
+{
+    enum { ENTRY_CHARS = INSTANCE_CHARS + CLASS_CHARS };
+    lock();
+    ULONG count = 0;
+    for (LIST_ENTRY *e = g_devnodes.Flink; e != &g_devnodes; e = e->Flink)
+        count++;
+    PWCHAR copy = count ? ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)count * ENTRY_CHARS * sizeof(WCHAR),
+                                          KI_TAG('P', 'n', 'p', 'V'))
+                        : nullptr;
+    ULONG n = 0;
+    for (LIST_ENTRY *e = g_devnodes.Flink; copy && e != &g_devnodes; e = e->Flink, n++) {
+        DEVNODE *d = CONTAINING_RECORD(e, DEVNODE, Links);
+        memcpy(copy + (SIZE_T)n * ENTRY_CHARS, d->Instance, sizeof(d->Instance));
+        memcpy(copy + (SIZE_T)n * ENTRY_CHARS + INSTANCE_CHARS, d->Class, sizeof(d->Class));
+    }
+    unlock();
+    for (ULONG i = 0; i < n; i++)
+        visit(copy + (SIZE_T)i * ENTRY_CHARS, copy + (SIZE_T)i * ENTRY_CHARS + INSTANCE_CHARS);
+    if (copy)
+        ExFreePool(copy);
 }
 
 static void remove_interface(DEVINTERFACE *i)
@@ -266,6 +332,51 @@ static BOOLEAN path_matches(const DEVINTERFACE *i, PCWSTR path)
     if (!i->Reference[0])
         return path[n] == 0;
     return path[n] == L'\\' && same(path + n + 1, i->Reference);
+}
+
+/*
+ * the key of a phantom device, for an administrator. the key is the administrators' to change, since the calls that
+ * set it up and remove it come from the caller's cfgmgr32 where windows' go through the manager.
+ */
+static NTSTATUS create_phantom(PCWSTR instance)
+{
+    if (!instance[0] || wcslen(instance) >= INSTANCE_CHARS)
+        return STATUS_INVALID_PARAMETER;
+    PTOKEN token = SepReferenceEffectiveToken(PsCurrentThread());
+    BOOLEAN elevated = token && SepElevated(token);
+    if (token)
+        ObDereferenceObject(token);
+    if (!elevated)
+        return STATUS_ACCESS_DENIED;
+    /* the registry's lock is taken outside the tree's, as where a driver adds a device. */
+    lock();
+    BOOLEAN live = find(instance) != nullptr;
+    unlock();
+    if (live)
+        return STATUS_OBJECT_NAME_COLLISION;
+    WCHAR path[INSTANCE_CHARS + 64] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\";
+    wcscat(path, instance);
+    NTSTATUS status = STATUS_SUCCESS;
+    ExAcquireFastMutex(&CmpLock);
+    if (CmpOpenPath(path, FALSE)) {
+        status = STATUS_OBJECT_NAME_COLLISION;
+    } else {
+        CM_NODE *key = CmpOpenPath(path, TRUE);
+        ULONG phantom = 1;
+        if (!key) {
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        } else {
+            CmpSetValue(key, L"Phantom", 7, REG_DWORD, &phantom, sizeof(phantom));
+            SD_ACE aces[] = {{CONTAINER_INHERIT_ACE, 0xF003F /* KEY_ALL_ACCESS */, SeSidSystem},
+                             {CONTAINER_INHERIT_ACE, 0xF003F, SeSidAdministrators},
+                             {CONTAINER_INHERIT_ACE, 0x20019 /* KEY_READ */, SeSidUsers}};
+            SD_BLOB *sd;
+            if (!key->Sd && NT_SUCCESS(SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_PROTECTED, aces, 3, &sd)))
+                key->Sd = sd;
+        }
+    }
+    CmpUnlock();
+    return status;
 }
 
 static NTSTATUS answer(MIME_PNP_REQUEST *r, ULONG capacity, MIME_PNP_CLASS klass)
@@ -405,6 +516,30 @@ void IopPnpHostChanged(void)
     KeSetEvent(&g_host_changed, IO_NO_INCREMENT, FALSE);
 }
 
+/* answers a request that lies in kernel memory. back is how much of it goes to the caller. */
+static NTSTATUS run_request(ULONG klass, MIME_PNP_REQUEST *r, ULONG length, ULONG *back)
+{
+    NTSTATUS status;
+    r->Instance[RTL_NUMBER_OF(r->Instance) - 1] = 0;
+    ULONG capacity = (length - (ULONG)sizeof(MIME_PNP_REQUEST)) / sizeof(WCHAR);
+    if (klass == MIME_PNP_WAIT_CHANGE) {
+        status = wait_change(r);
+        r->OutChars = 0;
+    } else if (klass == MIME_PNP_CREATE_PHANTOM) {
+        status = create_phantom(r->Instance);
+        r->OutChars = 0;
+    } else {
+        lock();
+        status = answer(r, capacity, (MIME_PNP_CLASS)klass);
+        unlock();
+    }
+    *back = status == STATUS_BUFFER_TOO_SMALL ? (ULONG)sizeof(MIME_PNP_REQUEST)
+                                              : (ULONG)sizeof(MIME_PNP_REQUEST) + r->OutChars * sizeof(WCHAR);
+    if (*back > length)
+        *back = length;
+    return status;
+}
+
 NTSTATUS NTAPI NtPlugPlayControl(ULONG klass, PVOID user_buffer, ULONG length)
 {
     if (length < sizeof(MIME_PNP_REQUEST) || length > 0x40000)
@@ -414,24 +549,73 @@ NTSTATUS NTAPI NtPlugPlayControl(ULONG klass, PVOID user_buffer, ULONG length)
         return STATUS_INSUFFICIENT_RESOURCES;
     NTSTATUS status = KiCopyFromUser(r, user_buffer, length);
     if (NT_SUCCESS(status)) {
-        r->Instance[RTL_NUMBER_OF(r->Instance) - 1] = 0;
-        ULONG capacity = (length - (ULONG)sizeof(MIME_PNP_REQUEST)) / sizeof(WCHAR);
-        if (klass == MIME_PNP_WAIT_CHANGE) {
-            status = wait_change(r);
-            r->OutChars = 0;
-        } else {
-            lock();
-            status = answer(r, capacity, (MIME_PNP_CLASS)klass);
-            unlock();
-        }
-        ULONG back = status == STATUS_BUFFER_TOO_SMALL ? (ULONG)sizeof(MIME_PNP_REQUEST)
-                                                        : (ULONG)sizeof(MIME_PNP_REQUEST) + r->OutChars * sizeof(WCHAR);
+        ULONG back;
+        status = run_request(klass, r, length, &back);
         if (NT_SUCCESS(status) || status == STATUS_BUFFER_TOO_SMALL) {
-            NTSTATUS copied = KiCopyToUser(user_buffer, r, back < length ? back : length);
+            NTSTATUS copied = KiCopyToUser(user_buffer, r, back);
             if (!NT_SUCCESS(copied))
                 status = copied;
         }
     }
     ExFreePool(r);
     return status;
+}
+
+/* ------------------------------------------------------------------ \Device\DeviceApi */
+
+/*
+ * the device of the plug and play manager for user mode, which windows' cfgmgr32 opens as \Device\DeviceApi\CMApi.
+ * the wow64 layer of windows answers NtPlugPlayControl with STATUS_NOT_IMPLEMENTED, so mime's cfgmgr32 sends its
+ * requests here in a 32-bit process: a buffered control whose function is the class and whose buffer is the request.
+ * a small buffer is told in the request itself, since a failed control gives no data back.
+ */
+static NTSTATUS NTAPI deviceapi_request(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG_PTR information = 0;
+    if (stack->MajorFunction == IRP_MJ_CREATE) {
+        UNICODE_STRING api = RTL_CONSTANT_STRING(L"\\CMApi");
+        if (!RtlEqualUnicodeString(&stack->FileObject->FileName, &api, TRUE))
+            status = STATUS_OBJECT_NAME_NOT_FOUND;
+    } else if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL) {
+        ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
+        ULONG in_len = stack->Parameters.DeviceIoControl.InputBufferLength;
+        ULONG out_len = stack->Parameters.DeviceIoControl.OutputBufferLength;
+        MIME_PNP_REQUEST *r = irp->AssociatedIrp.SystemBuffer;
+        if ((code & 0xFFFFE003) != MIME_PNP_CONTROL(0) || in_len < sizeof(MIME_PNP_REQUEST) || in_len != out_len ||
+            in_len > 0x40000) {
+            status = STATUS_INVALID_PARAMETER;
+        } else {
+            ULONG back;
+            status = run_request(MIME_PNP_CONTROL_CLASS(code), r, in_len, &back);
+            if (status == STATUS_BUFFER_TOO_SMALL) {
+                r->Flags = MIME_PNP_TOO_SMALL;
+                status = STATUS_SUCCESS;
+            }
+            if (NT_SUCCESS(status))
+                information = back;
+        }
+    }
+    irp->IoStatus.Status = status;
+    irp->IoStatus.Information = information;
+    IofCompleteRequest(irp, IO_NO_INCREMENT);
+    return status;
+}
+
+static NTSTATUS NTAPI deviceapi_entry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
+{
+    driver->MajorFunction[IRP_MJ_CREATE] = deviceapi_request;
+    driver->MajorFunction[IRP_MJ_CLEANUP] = deviceapi_request;
+    driver->MajorFunction[IRP_MJ_CLOSE] = deviceapi_request;
+    driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = deviceapi_request;
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\DeviceApi");
+    PDEVICE_OBJECT device;
+    return IoCreateDevice(driver, 0, &name, FILE_DEVICE_UNKNOWN, 0, FALSE, &device);
+}
+
+void IopInitializeDeviceApi(void)
+{
+    if (!NT_SUCCESS(IoCreateDriver(L"\\Driver\\PnpManager", deviceapi_entry, nullptr)))
+        KiLogPrintf("the device api failed to start");
 }

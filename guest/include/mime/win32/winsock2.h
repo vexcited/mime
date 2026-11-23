@@ -507,6 +507,7 @@ typedef struct linger {
 #define _IOW(x, y, t) (IOC_IN | (((long)sizeof(t) & IOCPARM_MASK) << 16) | ((x) << 8) | (y))
 
 #define FIONREAD _IOR('f', 127, u_long)
+#define SIO_IDEAL_SEND_BACKLOG_QUERY _IOR('t', 123, u_long)
 #define FIONBIO _IOW('f', 126, u_long)
 #define FIOASYNC _IOW('f', 125, u_long)
 #define SIOCSHIWAT _IOW('s', 0, u_long)

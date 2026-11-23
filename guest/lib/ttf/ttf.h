@@ -108,6 +108,8 @@ bool mime_ttf_vdmx(const MimeTtfFont *font, int x_ratio, int y_ratio, int ppem, 
 
 /* gasp behavior flags for a ppem, 0xffff when the table is absent. */
 unsigned mime_ttf_gasp(const MimeTtfFont *font, int ppem);
+/* whether the gasp table has one of the flags at any size, true when the table is absent. */
+bool mime_ttf_gasp_any(const MimeTtfFont *font, unsigned mask);
 
 /* kern table adjustment to add to the advance of left, in font units. */
 int mime_ttf_kerning(const MimeTtfFont *font, uint16_t left, uint16_t right);

@@ -1198,6 +1198,138 @@ static DWORD cmd_qc(SCSESSION *s, const WCHAR *name)
     return 0;
 }
 
+static BOOL same_guid(const GUID *g, DWORD a, WORD b, WORD c, const char *d)
+{
+    return g->Data1 == a && g->Data2 == b && g->Data3 == c && !memcmp(g->Data4, d, 8);
+}
+
+/*
+ * the trigger list as sc.exe of windows 11 26300 prints it: the action, then the type with the subtype in lower case
+ * and what the subtype is called, then each data item. A subtype that the type does not know prints no line. A string
+ * of two bytes or less is skipped, the strings of a firewall trigger are joined with semicolons, a level and a keyword
+ * print their number and the data type. The note follows when the service is disabled.
+ */
+static void print_triggers(TU_STR *out, SC_HANDLE service, const WCHAR *name, const SERVICE_TRIGGER_INFO *info)
+{
+    if (!info->cTriggers) {
+        tu_str_format(out, L"\n    The service %s has not registered for any start or stop triggers.\n\n", name);
+        return;
+    }
+    DWORD error, start = 0;
+    QUERY_SERVICE_CONFIGW *config = query_config(service, 0, &error);
+    if (config) {
+        start = config->dwStartType;
+        tu_free(config);
+    }
+    tu_str_format(out, L"\nSERVICE_NAME: %s\n\n", name);
+    for (DWORD i = 0; i < info->cTriggers; i++) {
+        const SERVICE_TRIGGER *t = &info->pTriggers[i];
+        tu_str_puts(out, t->dwAction == SERVICE_TRIGGER_ACTION_SERVICE_START ? L"        START SERVICE \n"
+                                                                             : L"        STOP SERVICE\n");
+        const GUID *g = t->pTriggerSubtype;
+        const WCHAR *line = nullptr;
+        if (g) {
+            switch (t->dwTriggerType) {
+            case SERVICE_TRIGGER_TYPE_DEVICE_INTERFACE_ARRIVAL:
+                line = L"          DEVICE INTERFACE ARRIVAL     : %s [INTERFACE CLASS GUID]\n";
+                break;
+            case SERVICE_TRIGGER_TYPE_IP_ADDRESS_AVAILABILITY:
+                line = same_guid(g, 0x4f27f2de, 0x14e2, 0x430b, "\xa5\x49\x7c\xd4\x8c\xbc\x82\x45")
+                           ? L"          IP ADDRESS AVAILABILITY      : %s [FIRST IP ADDRESS AVAILABLE]\n"
+                           : L"          IP ADDRESS AVAILABILITY      : %s [NO IP ADDRESS AVAILABLE]\n";
+                break;
+            case SERVICE_TRIGGER_TYPE_DOMAIN_JOIN:
+                line = same_guid(g, 0x1ce20aba, 0x9851, 0x4421, "\x94\x30\x1d\xde\xb7\x66\xe8\x09")
+                           ? L"          DOMAIN JOINED STATUS         : %s [DOMAIN JOINED]\n"
+                           : L"          DOMAIN JOINED STATUS         : %s [NOT DOMAIN JOINED]\n";
+                break;
+            case SERVICE_TRIGGER_TYPE_FIREWALL_PORT_EVENT:
+                line = same_guid(g, 0xb7569e07, 0x8421, 0x4ee0, "\xad\x10\x86\x91\x5a\xfd\xad\x09")
+                           ? L"          FIREWALL PORT EVENT          : %s [PORT OPEN]\n"
+                           : L"          FIREWALL PORT EVENT          : %s [PORT CLOSE]\n";
+                break;
+            case SERVICE_TRIGGER_TYPE_GROUP_POLICY:
+                line = same_guid(g, 0x659fcae6, 0x5bdb, 0x4da9, "\xb1\xff\xca\x2a\x17\x8d\x46\xe0")
+                           ? L"          GROUP POLICY                 : %s [MACHINE POLICY PRESENT]\n"
+                           : L"          GROUP POLICY                 : %s [USER POLICY PRESENT]\n";
+                break;
+            case SERVICE_TRIGGER_TYPE_NETWORK_ENDPOINT:
+                if (same_guid(g, 0xbc90d167, 0x9470, 0x4139, "\xa9\xba\xbe\x0b\xbb\xf5\xb7\x4d"))
+                    line = L"          NETWORK EVENT                : %s [RPC INTERFACE EVENT]\n";
+                else if (same_guid(g, 0x1f81d131, 0x3fac, 0x4537, "\x9e\x0c\x7e\x7b\x0c\x2f\x4b\x55"))
+                    line = L"          NETWORK EVENT                : %s [NAMED PIPE EVENT]\n";
+                break;
+            case SERVICE_TRIGGER_TYPE_CUSTOM_SYSTEM_STATE_CHANGE:
+                if (same_guid(g, 0x2d7a2816, 0x0c5e, 0x45fc, "\x9c\xe7\x57\x0e\x5e\xcd\xe9\xc9"))
+                    line = L"          CUSTOM SYSTEM STATE CHANGE EVENT   : %s \n";
+                break;
+            case SERVICE_TRIGGER_TYPE_CUSTOM:
+                line = L"          CUSTOM                       : %s [ETW PROVIDER UUID]\n";
+                break;
+            default:
+                break;
+            }
+        }
+        if (line) {
+            WCHAR text[40];
+            _snwprintf(text, RTL_NUMBER_OF(text), L"%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", g->Data1, g->Data2,
+                       g->Data3, g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6],
+                       g->Data4[7]);
+            tu_str_format(out, line, text);
+        }
+        for (DWORD j = 0; j < t->cDataItems; j++) {
+            const SERVICE_TRIGGER_SPECIFIC_DATA_ITEM *d = &t->pDataItems[j];
+            static const WCHAR data[] = L"            DATA                       : %s\n";
+            WCHAR text[1024 / 2 + 1];
+            switch (d->dwDataType) {
+            case SERVICE_TRIGGER_DATA_TYPE_BINARY: {
+                TU_STR hex = {};
+                for (DWORD k = 0; k < d->cbData; k++)
+                    tu_str_format(&hex, k ? L" %02x" : L"%02x", d->pData[k]);
+                tu_str_putc(&hex, 0);
+                tu_str_format(out, data, hex.data);
+                tu_str_free(&hex);
+                break;
+            }
+            case SERVICE_TRIGGER_DATA_TYPE_STRING: {
+                if (d->cbData <= 2)
+                    break;
+                DWORD bytes = d->cbData > 1024 ? 1024 : d->cbData;
+                DWORD chars = bytes / 2;
+                memcpy(text, d->pData, chars * sizeof(WCHAR));
+                text[chars] = 0;
+                if (t->dwTriggerType == SERVICE_TRIGGER_TYPE_FIREWALL_PORT_EVENT)
+                    for (DWORD k = 0; k < (bytes - 3) / 2 + 1; k++)
+                        if (!text[k])
+                            text[k] = L';';
+                tu_str_format(out, data, text);
+                break;
+            }
+            case SERVICE_TRIGGER_DATA_TYPE_LEVEL:
+                if (d->cbData != 1)
+                    return;
+                _snwprintf(text, RTL_NUMBER_OF(text), L"0x%02x [%d]", d->pData[0], 3);
+                tu_str_format(out, data, text);
+                break;
+            case SERVICE_TRIGGER_DATA_TYPE_KEYWORD_ANY:
+            case SERVICE_TRIGGER_DATA_TYPE_KEYWORD_ALL: {
+                if (d->cbData != 8)
+                    return;
+                ULONGLONG value;
+                memcpy(&value, d->pData, sizeof(value));
+                _snwprintf(text, RTL_NUMBER_OF(text), L"0x%016llx [%d]", value, (int)d->dwDataType);
+                tu_str_format(out, data, text);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    }
+    if (start == SERVICE_DISABLED)
+        tu_str_puts(out, L"\n[NOTE: Since the service start type is disabled, the triggers are inactive.]\n");
+}
+
 static DWORD cmd_qinfo(SCSESSION *s, const WCHAR *name, DWORD level)
 {
     DWORD result;
@@ -1270,7 +1402,7 @@ static DWORD cmd_qinfo(SCSESSION *s, const WCHAR *name, DWORD level)
         break;
     }
     case SERVICE_CONFIG_TRIGGER_INFO:
-        tu_str_format(&out, L"\n    The service %s has not registered for any start or stop triggers.\n\n", name);
+        print_triggers(&out, s->service, name, (SERVICE_TRIGGER_INFO *)info);
         break;
     case SERVICE_CONFIG_LAUNCH_PROTECTED_: {
         DWORD t = *(DWORD *)info;

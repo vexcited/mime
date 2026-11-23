@@ -93,10 +93,67 @@ static BOOL family_listed(const FEATURE_FONT *font, const char *family)
     return FALSE;
 }
 
+static unsigned le16(const BYTE *p)
+{
+    return p[0] | p[1] << 8;
+}
+
+static DWORD le32(const BYTE *p)
+{
+    return (DWORD)p[0] | p[1] << 8 | p[2] << 16 | (DWORD)p[3] << 24;
+}
+
+/*
+ * A raster font file, a 16 bit NE executable: every RT_FONT resource is a font whose face name, dfFace at 105 of
+ * its header, the catalog gives the file. There is at least one.
+ */
+static BOOL raster_names_match(const FEATURE_FONT *font, const BYTE *data, SIZE_T size)
+{
+    DWORD ne = le32(data + 0x3C);
+    if ((SIZE_T)ne + 0x40 > size || data[ne] != 'N' || data[ne + 1] != 'E')
+        return FALSE;
+    SIZE_T p = (SIZE_T)ne + le16(data + ne + 0x24);
+    if (p + 2 > size)
+        return FALSE;
+    unsigned shift = le16(data + p), fonts = 0;
+    p += 2;
+    while (p + 8 <= size && shift < 16) {
+        unsigned type = le16(data + p), count = le16(data + p + 2);
+        if (!type)
+            break;
+        p += 8;
+        for (unsigned i = 0; i < count; i++, p += 12) {
+            if (p + 12 > size)
+                return FALSE;
+            if (type != 0x8008)
+                continue;
+            DWORD offset = (DWORD)le16(data + p) << shift, length = (DWORD)le16(data + p + 2) << shift;
+            if (offset > size || length > size - offset || length < 118)
+                return FALSE;
+            DWORD face = le32(data + offset + 105);
+            char family[96];
+            SIZE_T n = 0;
+            while (face + n < length && data[offset + face + n] && n + 1 < sizeof(family)) {
+                BYTE ch = data[offset + face + n];
+                if (ch < 0x20 || ch > 0x7E)
+                    return FALSE;
+                family[n++] = (char)ch;
+            }
+            family[n] = 0;
+            if (!n || !family_listed(font, family))
+                return FALSE;
+            fonts++;
+        }
+    }
+    return fonts != 0;
+}
+
 /* Every face of the file has a family the catalog gives the file. */
 static BOOL name_table_matches(const FEATURE_FONT *font, const BYTE *data, SIZE_T size)
 {
     char family[96];
+    if (size >= 0x40 && data[0] == 'M' && data[1] == 'Z')
+        return raster_names_match(font, data, size);
     if (size >= 12 && be32(data) == 0x74746366) {
         DWORD count = be32(data + 8);
         if (!count || count > 32 || 12 + count * 4 > size)
@@ -122,9 +179,12 @@ typedef struct INSTALL {
     BOOL Seen[1024];
 } INSTALL;
 
+/* The system raster fonts have no value under the Fonts key on Windows either. */
 static void register_font(RUN *run, const FEATURE_FONT *font)
 {
     WCHAR name[260], file[MAX_PATH];
+    if (!font->Registry)
+        return;
     _snwprintf(name, RTL_NUMBER_OF(name), L"%hs", font->Registry);
     _snwprintf(file, RTL_NUMBER_OF(file), L"%hs", font->File);
     name[RTL_NUMBER_OF(name) - 1] = file[RTL_NUMBER_OF(file) - 1] = 0;
@@ -363,6 +423,8 @@ uint32_t FontsRemove(RUN *run, const FEATURE_DEF *feature)
         RemoveFontResourceW(path);
         if (!DeleteFileW(path) && GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND)
             error = GetLastError();
+        if (!font->Registry)
+            continue;
         _snwprintf(name, RTL_NUMBER_OF(name), L"%hs", font->Registry);
         name[RTL_NUMBER_OF(name) - 1] = 0;
         HKEY key;

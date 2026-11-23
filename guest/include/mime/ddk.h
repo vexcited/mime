@@ -823,6 +823,7 @@ NTKERNELAPI PVOID NTAPI PsGetThreadWin32Thread(PETHREAD thread);
 NTKERNELAPI PVOID NTAPI PsGetCurrentThreadWin32Thread(void);
 NTKERNELAPI PVOID NTAPI PsSetThreadWin32Thread(PETHREAD thread, PVOID win32, PVOID old_win32);
 NTKERNELAPI PVOID NTAPI PsGetProcessPeb(PEPROCESS process);
+NTKERNELAPI PVOID NTAPI PsGetProcessWow64Process(PEPROCESS process);
 NTKERNELAPI PVOID NTAPI PsGetThreadTeb(PETHREAD thread);
 NTKERNELAPI PVOID NTAPI PsGetCurrentThreadTeb(void);
 extern NTKERNELAPI PEPROCESS PsInitialSystemProcess;
@@ -1027,16 +1028,30 @@ NTKERNELAPI PKEVENT NTAPI HalMimeGetGpuEvent(void);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyFromUser(void *dst, const void *user_src, SIZE_T length);
 /* the global atom of a string in the table of the calling process, 0 when there is none. */
 NTKERNELAPI USHORT NTAPI MimeFindGlobalAtom(PCWSTR name);
+NTKERNELAPI USHORT NTAPI MimeAddGlobalAtom(PCWSTR name);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyToUser(void *user_dst, const void *src, SIZE_T length);
 NTKERNELAPI const void *NTAPI HalMimeGetBootInfo(void);
 NTKERNELAPI PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes);
 NTKERNELAPI void NTAPI MmFreeContiguousPages(PVOID va, SIZE_T bytes);
 NTKERNELAPI NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *section);
+NTKERNELAPI NTSTATUS NTAPI MmCreateReservedSection(SIZE_T size, SIZE_T committed, PVOID *kernel_base, PVOID *section);
 NTKERNELAPI NTSTATUS NTAPI MmMapWritableSection(PVOID section, PEPROCESS process, PVOID *base,
                                                  ULONG64 offset, SIZE_T *size);
 NTKERNELAPI NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *user_base,
                                                   BOOLEAN writable);
 NTKERNELAPI void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table);
+/* a read-only view of a whole section, placed where an allocation of the process would go. */
+NTKERNELAPI NTSTATUS NTAPI MmMapReadOnlySection(PVOID section, PEPROCESS process, PVOID *user_base);
+/*
+ * the server dll of csrss a driver stands for: its routine answers the connection of a process, called on the thread
+ * of that process with the bytes the client sent, which go back to it when the routine succeeds.
+ */
+typedef NTSTATUS(NTAPI *CSR_SERVER_CONNECT)(PVOID data, ULONG length);
+NTKERNELAPI void NTAPI ExRegisterCsrServerDll(ULONG index, CSR_SERVER_CONNECT connect);
+/* the procedures ntdll hands to user32, as RtlRetrieveNtUserPfn tells them: 24 ansi, 24 unicode and 18 workers. */
+#define MIME_NTUSER_PFN_COUNT 66
+NTKERNELAPI NTSTATUS NTAPI PsQueryNtUserPfn(ULONG64 *procedures);
+NTKERNELAPI void NTAPI PsQuerySubsystemIds(PHANDLE process, PHANDLE thread);
 /* a section over physical pages the caller owns and frees once the section is gone. */
 NTKERNELAPI NTSTATUS NTAPI MmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section);
 
@@ -1070,6 +1085,8 @@ typedef struct _WIN32_CALLOUTS {
      * leaves the call to the service itself.
      */
     BOOLEAN(NTAPI *FastService)(ULONG number, ULONG64 argument, ULONG64 *result);
+    /* runs what gdi32 left in GdiTebBatch, before any service of win32k, like KeGdiFlushUserBatch */
+    void(NTAPI *FlushUserBatch)(void);
 } WIN32_CALLOUTS;
 NTKERNELAPI void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts);
 
@@ -1081,5 +1098,7 @@ NTKERNELAPI BOOLEAN NTAPI MimeCurrentHasPrivilege(ULONG privilege);
 NTKERNELAPI ULONG NTAPI MimeProcessShutdownFlags(PEPROCESS process);
 NTKERNELAPI ULONG NTAPI MimeProcessUiLimits(PEPROCESS process);
 NTKERNELAPI BOOLEAN NTAPI MimeProcessMayUseUserHandles(PEPROCESS user, PEPROCESS owner);
+/* the integrity of the token the current thread acts with, SECURITY_MANDATORY_*_RID. */
+NTKERNELAPI ULONG SeThreadIntegrityRid(void);
 
 #endif

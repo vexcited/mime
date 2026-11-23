@@ -97,3 +97,4 @@ EXPORTS
     UnregisterScaleChangeEvent@4 @96
     UnsubscribeFeatureStateChangeNotification@4 @97
     CommandLineToArgvW@8 @2
+    SHWindowsPolicy@4 @190 NONAME

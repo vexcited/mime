@@ -1396,6 +1396,12 @@ bool mime_ui_get_keyboard(MimeKeyboardLayout *out)
     return false;
 }
 
+/* macOS scrolls by distance, not by lines. */
+uint32_t mime_ui_wheel_lines(void)
+{
+    return 0;
+}
+
 void mime_ui_get_display(MimeDisplayInfo *info)
 {
     memset(info, 0, sizeof(*info));
@@ -2775,6 +2781,16 @@ void mime_ui_vk_detach(uint32_t id_, uint32_t source)
 
 /* guest pixels are the window's backing pixels, so the client area is the drawable as it is. */
 void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
+{
+}
+
+/* a layer of the window system is cut by the view it lies in. */
+bool mime_ui_vk_landing(const MimeUiFrame *frame, uint32_t source)
+{
+    return false;
+}
+
+void mime_ui_vk_landed(const MimeUiFrame *frame)
 {
 }
 

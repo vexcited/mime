@@ -1,7 +1,8 @@
 /*
  * the tls client: tls 1.3 of rfc 8446, and tls 1.2 of rfc 5246 with the ecdhe and aes gcm suites of rfc 5288 and
  * rfc 8422, the extended master secret of rfc 7627 and renegotiation indication of rfc 5746. the ClientHello names the
- * server per rfc 6066 and offers protocols per rfc 7301.
+ * server per rfc 6066 and offers protocols per rfc 7301. sessions resume from session ids and the tickets of rfc 5077,
+ * and from tls 1.3 tickets as psks.
  *
  * records are read whole from the caller's buffers and decrypted in place. outgoing records queue in an output buffer
  * that InitializeSecurityContext hands over as its token.
@@ -39,6 +40,8 @@ enum {
     EXT_SIGNATURE_ALGORITHMS = 13,
     EXT_ALPN = 16,
     EXT_EXTENDED_MASTER_SECRET = 23,
+    EXT_SESSION_TICKET = 35,
+    EXT_PRE_SHARED_KEY = 41,
     EXT_SUPPORTED_VERSIONS = 43,
     EXT_COOKIE = 44,
     EXT_PSK_MODES = 45,
@@ -89,7 +92,13 @@ enum {
     ST_SRV_WAIT_KEY_EXCHANGE,
     ST_SRV_WAIT_CCS,
     ST_SRV_WAIT_FINISHED,
+    /* the server asked a certificate there is none for: InitializeSecurityContext answered for the caller to decide. */
+    ST12_AWAIT_CREDENTIALS,
+    ST13_AWAIT_CREDENTIALS,
 };
+
+/* SECPKG_ATTR_SESSION_INFO flags. */
+#define SSL_SESSION_RECONNECT 1
 
 #define TLS_MAX_PLAIN 16384
 #define TLS_MAX_MESSAGE (256 * 1024)
@@ -112,12 +121,13 @@ typedef struct TLS_SUITE {
 } TLS_SUITE;
 
 static const TLS_SUITE suites[] = {
-    {0x1301, 0x0304, 16, false, &mime_sha256, L"TLS_AES_128_GCM_SHA256"},
+    /* offered in this order, which is the default order of windows 11: the 256 bit suite of each pair first. */
     {0x1302, 0x0304, 32, false, &mime_sha384, L"TLS_AES_256_GCM_SHA384"},
-    {0xC02B, 0x0303, 16, true, &mime_sha256, L"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"},
+    {0x1301, 0x0304, 16, false, &mime_sha256, L"TLS_AES_128_GCM_SHA256"},
     {0xC02C, 0x0303, 32, true, &mime_sha384, L"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"},
-    {0xC02F, 0x0303, 16, false, &mime_sha256, L"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
+    {0xC02B, 0x0303, 16, true, &mime_sha256, L"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"},
     {0xC030, 0x0303, 32, false, &mime_sha384, L"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"},
+    {0xC02F, 0x0303, 16, false, &mime_sha256, L"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"},
 };
 
 /* the signature schemes offered, best first. */
@@ -182,12 +192,29 @@ struct TLS {
     TLS_CERTS Certs;
     TLS_PEER_KEY Key;
     bool CertRequested;
+    bool CredentialsAsked;
+    USHORT RequestSchemes[32];
+    BYTE RequestSchemeCount;
     BYTE RequestContext[255];
     BYTE RequestContextSize;
     bool CcsSent;
     BYTE Protocol[255];
     BYTE ProtocolSize;
     USHORT PeerGroup;
+
+    /* the cached session the ClientHello offers, and whether the server took it. */
+    TLS_SESSION *Offered;
+    bool OfferPsk;
+    bool Resumed;
+    /* a tls 1.2 ticket went with an empty session id: the message after the ServerHello tells. */
+    bool ResumeUndecided;
+    /* the tls 1.2 ServerHello promised a NewSessionTicket before its ChangeCipherSpec. */
+    bool TicketPending;
+    TLS_BUF NewTicket;
+    bool HaveNewTicket;
+    BYTE ResumptionMaster[48];
+    bool NoReconnect;
+    bool CertSent;
 
     /* the post handshake record DecryptMessage left for InitializeSecurityContext. */
     SIZE_T PendingSkip;
@@ -337,6 +364,7 @@ static SECURITY_STATUS alert_status(BYTE level, BYTE number)
     case 42:
     case 43:
     case 46:
+    case 116:
         return SEC_E_CERT_UNKNOWN;
     case 44:
         return CRYPT_E_REVOKED;
@@ -605,13 +633,13 @@ static void set_keys13(TLS *t, TLS_CIPHER *c, const BYTE *secret)
     mime_wipe(key, sizeof(key));
 }
 
-/* the handshake secrets of rfc 8446 7.1 once the ServerHello is in the transcript. */
-static void derive_handshake13(TLS *t, const BYTE *shared, SIZE_T shared_size)
+/* the handshake secrets of rfc 8446 7.1 once the ServerHello is in the transcript, from a psk the server took. */
+static void derive_handshake13(TLS *t, const BYTE *shared, SIZE_T shared_size, const BYTE *psk)
 {
     const MimeHashAlg *h = t->Suite->Hash;
     UINT hl = hash_size(t);
     BYTE zeros[48] = {}, early[48], empty[48], derived[48], secret[48], th[48];
-    mime_hkdf_extract(h, zeros, hl, zeros, hl, early);
+    mime_hkdf_extract(h, zeros, hl, psk ? psk : zeros, hl, early);
     mime_hash(h, nullptr, 0, empty);
     expand_label(h, early, "derived", empty, hl, derived, hl);
     mime_hkdf_extract(h, derived, hl, shared, shared_size, secret);
@@ -729,6 +757,14 @@ static const TLS_SUITE *find_suite(const TLS *t, unsigned id)
     return nullptr;
 }
 
+static const TLS_SUITE *suite_by_id(unsigned id)
+{
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(suites); i++)
+        if (suites[i].Id == id)
+            return &suites[i];
+    return nullptr;
+}
+
 static void put_extension_start(TLS_BUF *b, unsigned type, SIZE_T *at)
 {
     put16(b, type);
@@ -779,6 +815,13 @@ static void build_client_hello(TLS *t, TLS_BUF *m)
     for (SIZE_T i = 0; i < RTL_NUMBER_OF(schemes); i++)
         put16(m, schemes[i]);
     close_vector(m, at, 2);
+    if (v12) {
+        /* empty, or the ticket of the tls 1.2 session offered. */
+        put_extension_start(m, EXT_SESSION_TICKET, &at);
+        if (t->Offered && t->Offered->Version == 0x0303)
+            TlsBufPut(m, t->Offered->Ticket, t->Offered->TicketSize);
+        close_vector(m, at, 2);
+    }
     if (t->AlpnSize) {
         put_extension_start(m, EXT_ALPN, &at);
         put16(m, t->AlpnSize);
@@ -824,16 +867,61 @@ static void build_client_hello(TLS *t, TLS_BUF *m)
             TlsBufPut(m, t->Cookie.Data, t->Cookie.Size);
             close_vector(m, at, 2);
         }
+        /* 4.2.11: last, one identity and a binder that send_client_hello fills in. */
+        if (t->OfferPsk) {
+            const TLS_SESSION *o = t->Offered;
+            UINT32 age = (UINT32)(GetTickCount64() - o->Created) + o->AgeAdd;
+            put_extension_start(m, EXT_PRE_SHARED_KEY, &at);
+            inner = open_vector(m, 2);
+            put16(m, o->TicketSize);
+            TlsBufPut(m, o->Ticket, o->TicketSize);
+            put16(m, age >> 16);
+            put16(m, age & 0xFFFF);
+            close_vector(m, inner, 2);
+            UINT hl = suite_by_id(o->Suite)->Hash->digest_size;
+            put16(m, 1 + hl);
+            put8(m, hl);
+            for (UINT i = 0; i < hl; i++)
+                put8(m, 0);
+            close_vector(m, at, 2);
+        }
     }
     close_vector(m, ext, 2);
     close_vector(m, body, 3);
+}
+
+/* 4.2.11.2: the binder is the finished mac of the psk's binder key over the hello up to the binders. */
+static bool psk_binder(TLS *t, TLS_BUF *m)
+{
+    const MimeHashAlg *h = suite_by_id(t->Offered->Suite)->Hash;
+    UINT hl = h->digest_size;
+    SIZE_T truncated = m->Size - (2 + 1 + hl);
+    TLS_BUF partial = {};
+    TlsBufPut(&partial, t->Transcript.Data, t->Transcript.Size);
+    TlsBufPut(&partial, m->Data, truncated);
+    if (partial.Failed) {
+        TlsBufFree(&partial);
+        return false;
+    }
+    BYTE zeros[48] = {}, early[48], empty[48], binder_key[48], key[48], th[48];
+    mime_hash(h, partial.Data, partial.Size, th);
+    TlsBufFree(&partial);
+    mime_hkdf_extract(h, zeros, hl, t->Offered->Secret, hl, early);
+    mime_hash(h, nullptr, 0, empty);
+    expand_label(h, early, "res binder", empty, hl, binder_key, hl);
+    expand_label(h, binder_key, "finished", nullptr, 0, key, hl);
+    mime_hmac(h, key, hl, th, hl, m->Data + m->Size - hl);
+    mime_wipe(early, sizeof(early));
+    mime_wipe(binder_key, sizeof(binder_key));
+    mime_wipe(key, sizeof(key));
+    return true;
 }
 
 static SECURITY_STATUS send_client_hello(TLS *t)
 {
     TLS_BUF m = {};
     build_client_hello(t, &m);
-    if (m.Failed) {
+    if (m.Failed || (t->OfferPsk && !psk_binder(t, &m))) {
         TlsBufFree(&m);
         return no_memory(t);
     }
@@ -917,6 +1005,8 @@ void TlsDestroy(TLS *t)
         return;
     if (t->ServerCert)
         SchFreeCertificate(t->ServerCert);
+    TlsSessionFree(t->Offered);
+    TlsBufFree(&t->NewTicket);
     TlsBufFree(&t->Cookie);
     TlsBufFree(&t->Transcript);
     TlsBufFree(&t->HandshakeIn);
@@ -926,6 +1016,15 @@ void TlsDestroy(TLS *t)
     SecHeapFree(t->Target);
     mime_wipe(t, sizeof(*t));
     SecHeapFree(t);
+}
+
+/* CCipherMill::IsCipherSuiteAllowed for the session's suite, and something to resume it with. */
+static bool session_usable(const TLS_SESSION *s, void *context)
+{
+    const TLS_SUITE *suite = suite_by_id(s->Suite);
+    if (!suite || !suite_allowed(context, suite))
+        return false;
+    return s->Version == 0x0304 ? s->TicketSize != 0 : s->TicketSize || s->SessionIdSize;
 }
 
 SECURITY_STATUS TlsStart(TLS *t, const BYTE *alpn, SIZE_T alpn_size)
@@ -938,6 +1037,19 @@ SECURITY_STATUS TlsStart(TLS *t, const BYTE *alpn, SIZE_T alpn_size)
     t->AlpnSize = alpn_size;
     if (!SchRandom(t->ClientRandom, 32))
         return SEC_E_INTERNAL_ERROR;
+    /*
+     * CSslContextManager::InstantiateClientContext: a cached tls 1.2 session makes a tls 1.2 ClientHello, with its ticket
+     * or its session id. a tls 1.3 one goes in as a psk.
+     */
+    t->Offered = TlsSessionFind(t->Config.Tag, t->Target, t->Config.Protocols, session_usable, t);
+    if (t->Offered && t->Offered->Version == 0x0303) {
+        t->Config.Protocols &= ~SP_PROT_TLS1_3_CLIENT;
+        if (!t->Offered->TicketSize) {
+            memcpy(t->SessionId, t->Offered->SessionId, t->Offered->SessionIdSize);
+            t->SessionIdSize = t->Offered->SessionIdSize;
+        }
+    }
+    t->OfferPsk = t->Offered && t->Offered->Version == 0x0304;
     if (t->Config.Protocols & SP_PROT_TLS1_3_CLIENT) {
         /* a session id makes the tls 1.3 handshake look like a resumed tls 1.2 one, appendix d.4. */
         t->SessionIdSize = 32;
@@ -1059,8 +1171,8 @@ static bool verify_signature(TLS *t, unsigned scheme, const BYTE *content, SIZE_
 /* the extension types a server may send back, each at most once. */
 typedef struct EXTENSIONS {
     UINT64 Seen;
-    READER Versions, KeyShare, Cookie, Alpn, Renegotiation;
-    bool HaveVersions, HaveKeyShare, HaveCookie, HaveAlpn, HaveEms, HaveRenegotiation;
+    READER Versions, KeyShare, Cookie, Alpn, Renegotiation, Psk;
+    bool HaveVersions, HaveKeyShare, HaveCookie, HaveAlpn, HaveEms, HaveRenegotiation, HavePsk, HaveTicket;
 } EXTENSIONS;
 
 static int extension_bit(unsigned type)
@@ -1084,6 +1196,10 @@ static int extension_bit(unsigned type)
         return 7;
     case EXT_RENEGOTIATION_INFO:
         return 8;
+    case EXT_SESSION_TICKET:
+        return 9;
+    case EXT_PRE_SHARED_KEY:
+        return 10;
     }
     return -1;
 }
@@ -1133,6 +1249,15 @@ static BYTE read_extensions(READER *block, UINT64 allowed, EXTENSIONS *e)
             if (data.Left)
                 return ALERT_DECODE_ERROR;
             break;
+        case EXT_SESSION_TICKET:
+            if (data.Left)
+                return ALERT_DECODE_ERROR;
+            e->HaveTicket = true;
+            break;
+        case EXT_PRE_SHARED_KEY:
+            e->Psk = data;
+            e->HavePsk = true;
+            break;
         }
     }
     return 0;
@@ -1157,6 +1282,66 @@ static BYTE take_alpn(TLS *t, READER data)
         }
     }
     return ALERT_ILLEGAL_PARAMETER;
+}
+
+/* a resumed connection reports the certificates of the session it resumes. */
+static bool resume_certificates(TLS *t)
+{
+    SchCopyCertificates(&t->Certs, &t->Offered->Certs);
+    if (t->Offered->Certs.Leaf && !t->Certs.Leaf)
+        return false;
+    if (t->Certs.Leaf)
+        SchLeafKey(&t->Certs, &t->Key);
+    return true;
+}
+
+/* 6.3: the key block, client then server keys, then the implicit nonce parts. */
+static void key_block12(TLS *t)
+{
+    BYTE seed[64], block[2 * 32 + 2 * 4];
+    UINT k = t->Suite->KeySize;
+    memcpy(seed, t->ServerRandom, 32);
+    memcpy(seed + 32, t->ClientRandom, 32);
+    prf12(t, t->Master, 48, "key expansion", seed, 64, block, 2 * k + 8);
+    mime_aes_init(&t->Write.Aes, block, k);
+    memcpy(t->Write.Iv, block + 2 * k, 4);
+    mime_aes_init(&t->PendingRead.Aes, block + k, k);
+    memcpy(t->PendingRead.Iv, block + 2 * k + 4, 4);
+    mime_wipe(block, sizeof(block));
+}
+
+/* the abbreviated handshake of 5246 7.3: the master secret of the session, the server's Finished first. */
+static SECURITY_STATUS resume12(TLS *t)
+{
+    const TLS_SESSION *o = t->Offered;
+    t->ResumeUndecided = false;
+    if (t->Suite->Id != o->Suite)
+        return fail(t, ALERT_ILLEGAL_PARAMETER, 0);
+    /* 7627 5.3: a resumed session keeps whether it had the extended master secret. */
+    if (t->Ems != o->Ems)
+        return fail(t, ALERT_HANDSHAKE_FAILURE, 0);
+    if (!resume_certificates(t))
+        return no_memory(t);
+    memcpy(t->Master, o->Secret, 48);
+    key_block12(t);
+    t->Resumed = true;
+    t->State = ST12_WAIT_CCS;
+    return SEC_E_OK;
+}
+
+/* 5077 3.3: the ticket the server sends before its ChangeCipherSpec. */
+static SECURITY_STATUS on_ticket12(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
+{
+    unsigned hint;
+    READER ticket;
+    if (!read_int(&body, 4, &hint) || !read_vector(&body, 2, &ticket) || body.Left)
+        return fail(t, ALERT_DECODE_ERROR, 0);
+    t->TicketPending = false;
+    t->NewTicket.Size = 0;
+    TlsBufPut(&t->NewTicket, ticket.P, ticket.Left);
+    t->HaveNewTicket = true;
+    add_transcript(t, raw, raw_size);
+    return t->NewTicket.Failed ? no_memory(t) : SEC_E_OK;
 }
 
 static SECURITY_STATUS on_hello_retry(TLS *t, const BYTE *raw, SIZE_T raw_size, const EXTENSIONS *e)
@@ -1187,6 +1372,9 @@ static SECURITY_STATUS on_hello_retry(TLS *t, const BYTE *raw, SIZE_T raw_size, 
             return fail(t, ALERT_DECODE_ERROR, 0);
         TlsBufPut(&t->Cookie, value.P, value.Left);
     }
+    /* 4.1.4: a psk of another hash than the suite the server picked is left out of the second ClientHello. */
+    if (t->OfferPsk && suite_by_id(t->Offered->Suite)->Hash != t->Suite->Hash)
+        t->OfferPsk = false;
     /* 4.4.1: the first ClientHello becomes a message_hash of it. */
     BYTE hash[48];
     UINT hl = hash_size(t);
@@ -1217,9 +1405,11 @@ static SECURITY_STATUS on_server_hello(TLS *t, READER body, const BYTE *raw, SIZ
         return fail(t, ALERT_DECODE_ERROR, 0);
     bool retry = !memcmp(random, hello_retry_random, 32);
     EXTENSIONS e;
-    UINT64 allowed13 = EXT(EXT_SUPPORTED_VERSIONS) | EXT(EXT_KEY_SHARE) | (retry ? EXT(EXT_COOKIE) : 0);
+    UINT64 allowed13 = EXT(EXT_SUPPORTED_VERSIONS) | EXT(EXT_KEY_SHARE) |
+                       (retry ? EXT(EXT_COOKIE) : t->OfferPsk ? EXT(EXT_PRE_SHARED_KEY) : 0);
     UINT64 allowed12 = EXT(EXT_SERVER_NAME) | EXT(EXT_EC_POINT_FORMATS) | EXT(EXT_ALPN) |
-                       EXT(EXT_EXTENDED_MASTER_SECRET) | EXT(EXT_RENEGOTIATION_INFO) | EXT(EXT_SUPPORTED_VERSIONS);
+                       EXT(EXT_EXTENDED_MASTER_SECRET) | EXT(EXT_RENEGOTIATION_INFO) | EXT(EXT_SUPPORTED_VERSIONS) |
+                       EXT(EXT_SESSION_TICKET);
     BYTE alert = read_extensions(&block, allowed13 | allowed12, &e);
     if (alert)
         return fail(t, alert, 0);
@@ -1273,13 +1463,25 @@ static SECURITY_STATUS on_server_hello(TLS *t, READER body, const BYTE *raw, SIZ
                     (group == GROUP_P384 && t->HaveP384);
         if (!sent || (t->Retried && group != t->Group))
             return fail(t, ALERT_ILLEGAL_PARAMETER, 0);
+        if (e.HavePsk) {
+            /* the one identity offered, with a psk of the hash of the suite. */
+            READER k = e.Psk;
+            unsigned selected;
+            if (!read_int(&k, 2, &selected) || k.Left)
+                return fail(t, ALERT_DECODE_ERROR, 0);
+            if (selected || suite_by_id(t->Offered->Suite)->Hash != suite->Hash)
+                return fail(t, ALERT_ILLEGAL_PARAMETER, 0);
+            if (!resume_certificates(t))
+                return no_memory(t);
+            t->Resumed = true;
+        }
         t->PeerGroup = (USHORT)group;
         BYTE secret[66];
         SIZE_T secret_size;
         if (!agree(t, (USHORT)group, share.P, share.Left, secret, &secret_size))
             return fail(t, ALERT_ILLEGAL_PARAMETER, 0);
         add_transcript(t, raw, raw_size);
-        derive_handshake13(t, secret, secret_size);
+        derive_handshake13(t, secret, secret_size, t->Resumed ? t->Offered->Secret : nullptr);
         mime_wipe(secret, sizeof(secret));
         t->State = ST13_WAIT_EXTENSIONS;
         return SEC_E_OK;
@@ -1294,8 +1496,16 @@ static SECURITY_STATUS on_server_hello(TLS *t, READER body, const BYTE *raw, SIZ
     if (e.HaveAlpn && (alert = take_alpn(t, e.Alpn)))
         return fail(t, alert, 0);
     t->Ems = e.HaveEms;
+    t->TicketPending = e.HaveTicket;
     add_transcript(t, raw, raw_size);
     t->State = ST12_WAIT_CERTIFICATE;
+    const TLS_SESSION *o = t->Offered;
+    if (o && o->Version == 0x0303) {
+        /* 5077 3.4: the session id echoed back resumes; with a ticket and no id, what follows tells. */
+        if (o->SessionIdSize && session.Left == o->SessionIdSize && !memcmp(session.P, o->SessionId, session.Left))
+            return resume12(t);
+        t->ResumeUndecided = o->TicketSize && !session.Left;
+    }
     return SEC_E_OK;
 }
 
@@ -1311,9 +1521,12 @@ static SECURITY_STATUS on_encrypted_extensions(TLS *t, READER body, const BYTE *
     if (alert)
         return fail(t, alert, 0);
     add_transcript(t, raw, raw_size);
-    t->State = ST13_WAIT_CERTIFICATE_OR_REQUEST;
+    /* a psk handshake has no certificates. */
+    t->State = t->Resumed ? ST13_WAIT_FINISHED : ST13_WAIT_CERTIFICATE_OR_REQUEST;
     return SEC_E_OK;
 }
+
+static void take_request_schemes(TLS *t, READER data);
 
 static SECURITY_STATUS on_certificate_request(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
 {
@@ -1323,14 +1536,26 @@ static SECURITY_STATUS on_certificate_request(TLS *t, READER body, const BYTE *r
             return fail(t, ALERT_DECODE_ERROR, 0);
         memcpy(t->RequestContext, context.P, context.Left);
         t->RequestContextSize = (BYTE)context.Left;
+        /* 4.3.2: the schemes the server takes are its signature_algorithms extension. */
+        while (block.Left) {
+            unsigned type;
+            READER data;
+            if (!read_int(&block, 2, &type) || !read_vector(&block, 2, &data))
+                return fail(t, ALERT_DECODE_ERROR, 0);
+            if (type == 13)
+                take_request_schemes(t, data);
+        }
         t->State = ST13_WAIT_CERTIFICATE;
     } else {
         READER types, algorithms, authorities;
         if (!read_vector(&body, 1, &types) || !read_vector(&body, 2, &algorithms) ||
             !read_vector(&body, 2, &authorities) || body.Left)
             return fail(t, ALERT_DECODE_ERROR, 0);
+        READER list = {};
+        list.P = algorithms.P - 2;
+        list.Left = algorithms.Left + 2;
+        take_request_schemes(t, list);
     }
-    /* mime has no client certificates: the answer is an empty Certificate, as with SCH_CRED_NO_DEFAULT_CREDS. */
     t->CertRequested = true;
     add_transcript(t, raw, raw_size);
     return SEC_E_OK;
@@ -1422,6 +1647,142 @@ static void send_ccs(TLS *t)
     t->CcsSent = true;
 }
 
+/* the schemes of a signature_algorithms list, a vector of two byte entries. */
+static void take_request_schemes(TLS *t, READER data)
+{
+    READER list;
+    if (!read_vector(&data, 2, &list))
+        return;
+    t->RequestSchemeCount = 0;
+    while (list.Left >= 2 && t->RequestSchemeCount < RTL_NUMBER_OF(t->RequestSchemes)) {
+        unsigned v;
+        read_int(&list, 2, &v);
+        t->RequestSchemes[t->RequestSchemeCount++] = (USHORT)v;
+    }
+}
+
+static bool request_takes(const TLS *t, unsigned scheme)
+{
+    for (BYTE i = 0; i < t->RequestSchemeCount; i++)
+        if (t->RequestSchemes[i] == scheme)
+            return true;
+    return false;
+}
+
+/*
+ * the scheme the client signs its CertificateVerify in: tls 1.3 wants pss for rsa and the certificate's curve for
+ * ecdsa, tls 1.2 takes pkcs1 first. 0 when the server takes none the key can make.
+ */
+static unsigned client_scheme(const TLS *t, PCCERT_CONTEXT cert)
+{
+    static const USHORT rsa13[] = {0x0804, 0x0805, 0x0806};
+    static const USHORT rsa12[] = {0x0401, 0x0501, 0x0601, 0x0804, 0x0805, 0x0806};
+    static const USHORT ec12[] = {0x0403, 0x0503, 0x0603};
+    unsigned bits = 0;
+    int kind = SchCertificateKeyKind(cert, &bits);
+    const USHORT *list = nullptr;
+    SIZE_T count = 0;
+    USHORT curve = 0;
+    if (kind == 1) {
+        list = is13(t) ? rsa13 : rsa12;
+        count = is13(t) ? RTL_NUMBER_OF(rsa13) : RTL_NUMBER_OF(rsa12);
+    } else if (kind == 2) {
+        curve = bits == 256 ? 0x0403 : bits == 384 ? 0x0503 : bits == 521 ? 0x0603 : 0;
+        if (is13(t)) {
+            list = &curve;
+            count = curve ? 1 : 0;
+        } else {
+            list = ec12;
+            count = RTL_NUMBER_OF(ec12);
+        }
+    }
+    for (SIZE_T i = 0; i < count; i++)
+        if (request_takes(t, list[i]))
+            return list[i];
+    return 0;
+}
+
+/*
+ * the server asked for a certificate and the caller gave none: the caller decides, once. without
+ * SCH_CRED_NO_DEFAULT_CREDS windows first looks for a default certificate in the user's store and asks when it finds
+ * none. mime does not look.
+ */
+static bool ask_credentials(TLS *t)
+{
+    return t->CertRequested && !t->Config.Certificate && !(t->Requested & ISC_REQ_USE_SUPPLIED_CREDS) &&
+           !t->CredentialsAsked;
+}
+
+/* the client's Certificate: its certificate alone, or none when it has no key the server takes. */
+static unsigned send_client_certificate(TLS *t)
+{
+    PCCERT_CONTEXT cert = t->Config.Certificate;
+    unsigned scheme = cert ? client_scheme(t, cert) : 0;
+    TLS_BUF m = {};
+    put8(&m, HS_CERTIFICATE);
+    SIZE_T at = open_vector(&m, 3);
+    if (is13(t)) {
+        put8(&m, t->RequestContextSize);
+        TlsBufPut(&m, t->RequestContext, t->RequestContextSize);
+    }
+    SIZE_T list_at = open_vector(&m, 3);
+    if (scheme) {
+        SIZE_T cert_at = open_vector(&m, 3);
+        TlsBufPut(&m, cert->pbCertEncoded, cert->cbCertEncoded);
+        close_vector(&m, cert_at, 3);
+        if (is13(t))
+            put16(&m, 0);
+    }
+    close_vector(&m, list_at, 3);
+    close_vector(&m, at, 3);
+    t->CertSent = scheme != 0;
+    if (!m.Failed)
+        send_message(t, m.Data, m.Size);
+    else
+        t->Out.Failed = true;
+    TlsBufFree(&m);
+    return scheme;
+}
+
+/*
+ * the client's CertificateVerify, made with the private key of its certificate: over the whole transcript in tls 1.2,
+ * over the context string and the transcript hash in tls 1.3. a certificate without a usable key ends the handshake.
+ */
+static SECURITY_STATUS send_client_verify(TLS *t, unsigned scheme)
+{
+    static const char label[] = "TLS 1.3, client CertificateVerify";
+    BYTE context[64 + sizeof(label) + 48];
+    const BYTE *content = t->Transcript.Data;
+    SIZE_T size = t->Transcript.Size;
+    if (is13(t)) {
+        memset(context, 0x20, 64);
+        memcpy(context + 64, label, sizeof(label));
+        transcript_hash(t, context + 64 + sizeof(label));
+        content = context;
+        size = 64 + sizeof(label) + hash_size(t);
+    }
+    BYTE signature[1024];
+    SIZE_T signature_size = sizeof(signature);
+    const MimeHashAlg *hash = scheme_hash(scheme);
+    if (!hash || !SchSignWithCertificate(t->Config.Certificate, scheme, hash, content, size, signature, &signature_size))
+        return fail(t, ALERT_INTERNAL_ERROR, SEC_E_NO_CREDENTIALS);
+    TLS_BUF m = {};
+    put8(&m, HS_CERTIFICATE_VERIFY);
+    SIZE_T at = open_vector(&m, 3);
+    put16(&m, scheme);
+    put16(&m, (unsigned)signature_size);
+    TlsBufPut(&m, signature, signature_size);
+    close_vector(&m, at, 3);
+    if (!m.Failed)
+        send_message(t, m.Data, m.Size);
+    else
+        t->Out.Failed = true;
+    TlsBufFree(&m);
+    return SEC_E_OK;
+}
+
+static SECURITY_STATUS client_flight13(TLS *t);
+
 static SECURITY_STATUS on_finished13(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
 {
     UINT hl = hash_size(t);
@@ -1436,29 +1797,35 @@ static SECURITY_STATUS on_finished13(TLS *t, READER body, const BYTE *raw, SIZE_
     transcript_hash(t, th);
     expand_label(t->Suite->Hash, t->Master, "c ap traffic", th, hl, t->ClientTraffic, hl);
     expand_label(t->Suite->Hash, t->Master, "s ap traffic", th, hl, t->ServerTraffic, hl);
+    if (ask_credentials(t)) {
+        t->CredentialsAsked = true;
+        t->State = ST13_AWAIT_CREDENTIALS;
+        return SEC_I_INCOMPLETE_CREDENTIALS;
+    }
+    return client_flight13(t);
+}
 
+static SECURITY_STATUS client_flight13(TLS *t)
+{
+    UINT hl = hash_size(t);
+    BYTE th[48];
     if (!t->CcsSent)
         send_ccs(t);
     set_keys13(t, &t->Write, t->ClientHandshake);
     if (t->CertRequested) {
-        BYTE m[4 + 1 + 255 + 3];
-        SIZE_T n = 0;
-        m[n++] = HS_CERTIFICATE;
-        m[n++] = 0;
-        m[n++] = 0;
-        m[n++] = (BYTE)(1 + t->RequestContextSize + 3);
-        m[n++] = t->RequestContextSize;
-        memcpy(m + n, t->RequestContext, t->RequestContextSize);
-        n += t->RequestContextSize;
-        m[n++] = 0;
-        m[n++] = 0;
-        m[n++] = 0;
-        send_message(t, m, n);
+        unsigned scheme = send_client_certificate(t);
+        if (scheme) {
+            SECURITY_STATUS status = send_client_verify(t, scheme);
+            if (status)
+                return status;
+        }
     }
     BYTE fin[4 + 48] = {HS_FINISHED, 0, 0, (BYTE)hl};
     transcript_hash(t, th);
     finished_mac(t, t->ClientHandshake, th, fin + 4);
     send_message(t, fin, 4 + hl);
+    transcript_hash(t, th);
+    expand_label(t->Suite->Hash, t->Master, "res master", th, hl, t->ResumptionMaster, hl);
     set_keys13(t, &t->Write, t->ClientTraffic);
     set_keys13(t, &t->Read, t->ServerTraffic);
     if (t->Out.Failed || t->Transcript.Failed)
@@ -1501,6 +1868,8 @@ static SECURITY_STATUS on_server_key_exchange(TLS *t, READER body, const BYTE *r
     return SEC_E_OK;
 }
 
+static SECURITY_STATUS client_flight12(TLS *t);
+
 static SECURITY_STATUS on_server_hello_done(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
 {
     if (body.Left)
@@ -1509,15 +1878,21 @@ static SECURITY_STATUS on_server_hello_done(TLS *t, READER body, const BYTE *raw
     if (status)
         return status;
     add_transcript(t, raw, raw_size);
+    if (ask_credentials(t)) {
+        t->CredentialsAsked = true;
+        t->State = ST12_AWAIT_CREDENTIALS;
+        return SEC_I_INCOMPLETE_CREDENTIALS;
+    }
+    return client_flight12(t);
+}
 
+static SECURITY_STATUS client_flight12(TLS *t)
+{
     BYTE secret[66];
     SIZE_T secret_size;
     if (!agree(t, t->Group, t->Cookie.Data, t->Cookie.Size, secret, &secret_size))
         return fail(t, ALERT_ILLEGAL_PARAMETER, 0);
-    if (t->CertRequested) {
-        static const BYTE empty[7] = {HS_CERTIFICATE, 0, 0, 3, 0, 0, 0};
-        send_message(t, empty, sizeof(empty));
-    }
+    unsigned scheme = t->CertRequested ? send_client_certificate(t) : 0;
     TLS_BUF m = {};
     put8(&m, HS_CLIENT_KEY_EXCHANGE);
     SIZE_T body_at = open_vector(&m, 3);
@@ -1543,18 +1918,12 @@ static SECURITY_STATUS on_server_hello_done(TLS *t, READER body, const BYTE *raw
         prf12(t, secret, secret_size, "master secret", seed, 64, t->Master, 48);
     }
     mime_wipe(secret, sizeof(secret));
-    /* 6.3: the key block, client then server keys, then the implicit nonce parts. */
-    BYTE block[2 * 32 + 2 * 4];
-    UINT k = t->Suite->KeySize;
-    memcpy(seed, t->ServerRandom, 32);
-    memcpy(seed + 32, t->ClientRandom, 32);
-    prf12(t, t->Master, 48, "key expansion", seed, 64, block, 2 * k + 8);
-    mime_aes_init(&t->Write.Aes, block, k);
-    memcpy(t->Write.Iv, block + 2 * k, 4);
-    mime_aes_init(&t->PendingRead.Aes, block + k, k);
-    memcpy(t->PendingRead.Iv, block + 2 * k + 4, 4);
-    mime_wipe(block, sizeof(block));
-
+    if (scheme) {
+        SECURITY_STATUS status = send_client_verify(t, scheme);
+        if (status)
+            return status;
+    }
+    key_block12(t);
     send_ccs(t);
     t->Write.Seq = 0;
     t->Write.Active = true;
@@ -1568,6 +1937,35 @@ static SECURITY_STATUS on_server_hello_done(TLS *t, READER body, const BYTE *raw
     return SEC_E_OK;
 }
 
+/* the session a tls 1.2 connection leaves for the next one, with its id or its ticket. */
+static void cache12(TLS *t)
+{
+    if (t->NoReconnect)
+        return;
+    TLS_SESSION *s = TlsSessionNew(t->Config.Tag, t->Target);
+    if (!s)
+        return;
+    s->Version = 0x0303;
+    s->Suite = t->Suite->Id;
+    s->Ems = t->Ems;
+    memcpy(s->Secret, t->Master, 48);
+    memcpy(s->Origin, t->Master, 48);
+    memcpy(s->SessionId, t->ServerSessionId, t->ServerSessionIdSize);
+    s->SessionIdSize = t->ServerSessionIdSize;
+    const BYTE *ticket = t->HaveNewTicket ? t->NewTicket.Data : t->Resumed ? t->Offered->Ticket : nullptr;
+    SIZE_T size = t->HaveNewTicket ? t->NewTicket.Size : t->Resumed ? t->Offered->TicketSize : 0;
+    if (size && (s->Ticket = SecHeapAlloc(size))) {
+        memcpy(s->Ticket, ticket, size);
+        s->TicketSize = size;
+    }
+    SchCopyCertificates(&s->Certs, &t->Certs);
+    if ((!s->SessionIdSize && !s->TicketSize) || (t->Certs.Leaf && !s->Certs.Leaf)) {
+        TlsSessionFree(s);
+        return;
+    }
+    TlsSessionAdd(s);
+}
+
 static SECURITY_STATUS on_finished12(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
 {
     BYTE th[48], expected[12];
@@ -1578,7 +1976,20 @@ static SECURITY_STATUS on_finished12(TLS *t, READER body, const BYTE *raw, SIZE_
     if (!mime_ct_equal(expected, body.P, 12))
         return fail(t, ALERT_DECRYPT_ERROR, 0);
     add_transcript(t, raw, raw_size);
+    if (t->Resumed) {
+        /* the client's ChangeCipherSpec and Finished close an abbreviated handshake. */
+        send_ccs(t);
+        t->Write.Seq = 0;
+        t->Write.Active = true;
+        BYTE fin[4 + 12] = {HS_FINISHED, 0, 0, 12};
+        transcript_hash(t, th);
+        prf12(t, t->Master, 48, "client finished", th, hash_size(t), fin + 4, 12);
+        send_message(t, fin, sizeof(fin));
+        if (t->Out.Failed || t->Transcript.Failed)
+            return no_memory(t);
+    }
     t->State = ST_CONNECTED;
+    cache12(t);
     return SEC_E_OK;
 }
 
@@ -1891,8 +2302,17 @@ static SECURITY_STATUS on_client_message(TLS *t, unsigned type, READER body, con
         [[fallthrough]];
     case ST13_WAIT_CERTIFICATE:
     case ST12_WAIT_CERTIFICATE:
+        if (type == HS_NEW_SESSION_TICKET && t->ResumeUndecided && t->TicketPending) {
+            SECURITY_STATUS status = resume12(t);
+            return status ? status : on_ticket12(t, body, raw, raw_size);
+        }
+        t->ResumeUndecided = false;
         if (type == HS_CERTIFICATE)
             return on_certificate(t, body, raw, raw_size);
+        break;
+    case ST12_WAIT_CCS:
+        if (type == HS_NEW_SESSION_TICKET && t->TicketPending)
+            return on_ticket12(t, body, raw, raw_size);
         break;
     case ST13_WAIT_VERIFY:
         if (type == HS_CERTIFICATE_VERIFY)
@@ -1936,6 +2356,9 @@ static SECURITY_STATUS run_messages(TLS *t)
         int before = t->State;
         READER body = {p + 4, length};
         SECURITY_STATUS status = on_message(t, p[0], body, p, 4 + length);
+        /* the message was taken in: the caller is asked for credentials before the client answers it. */
+        if (status == SEC_I_INCOMPLETE_CREDENTIALS)
+            drop_front(&t->HandshakeIn, 4 + length);
         if (status)
             return status;
         drop_front(&t->HandshakeIn, 4 + length);
@@ -1982,6 +2405,11 @@ static SECURITY_STATUS handshake_record(TLS *t, BYTE *record, SIZE_T total)
             t->Read.Active = true;
             t->State = ST_SRV_WAIT_FINISHED;
             return SEC_E_OK;
+        }
+        if (t->State == ST12_WAIT_CERTIFICATE && t->ResumeUndecided && !t->HandshakeIn.Size) {
+            SECURITY_STATUS status = resume12(t);
+            if (status)
+                return status;
         }
         if (t->State == ST12_WAIT_CCS && !t->HandshakeIn.Size) {
             t->Read = t->PendingRead;
@@ -2038,6 +2466,14 @@ SECURITY_STATUS TlsHandshake(TLS *t, BYTE *input, SIZE_T size, SIZE_T *consumed,
         t->Error = SEC_E_CONTEXT_EXPIRED;
         return SEC_E_OK;
     }
+    /* the caller decided to go on without a certificate: what it hands in again was read already. */
+    if (t->State == ST12_AWAIT_CREDENTIALS || t->State == ST13_AWAIT_CREDENTIALS) {
+        *consumed = size;
+        SECURITY_STATUS status = t->State == ST12_AWAIT_CREDENTIALS ? client_flight12(t) : client_flight13(t);
+        if (status)
+            return status;
+        return t->State == ST_CONNECTED ? SEC_E_OK : SEC_I_CONTINUE_NEEDED;
+    }
     SIZE_T at = 0;
     bool any = false;
     while (t->State != ST_CONNECTED) {
@@ -2059,6 +2495,10 @@ SECURITY_STATUS TlsHandshake(TLS *t, BYTE *input, SIZE_T size, SIZE_T *consumed,
         SECURITY_STATUS status = handshake_record(t, record, 5 + length);
         at += 5 + length;
         any = true;
+        if (status == SEC_I_INCOMPLETE_CREDENTIALS) {
+            *consumed = at;
+            return status;
+        }
         if (status)
             return status;
     }
@@ -2126,6 +2566,35 @@ void TlsQueueAlert(TLS *t, BYTE level, BYTE number)
     t->AlertNumber = number;
 }
 
+/* 4.6.1: each ticket is a psk of its own, from the resumption master secret and the ticket's nonce. */
+static void cache13(TLS *t, unsigned lifetime, unsigned age_add, READER nonce, READER ticket)
+{
+    if (t->NoReconnect)
+        return;
+    TLS_SESSION *s = TlsSessionNew(t->Config.Tag, t->Target);
+    if (!s)
+        return;
+    UINT hl = hash_size(t);
+    s->Version = 0x0304;
+    s->Suite = t->Suite->Id;
+    expand_label(t->Suite->Hash, t->ResumptionMaster, "resumption", nonce.P, nonce.Left, s->Secret, hl);
+    memcpy(s->Origin, t->ResumptionMaster, hl);
+    s->AgeAdd = age_add;
+    /* at most seven days. */
+    s->Lifetime = lifetime > 604800 ? 604800 : lifetime;
+    s->Ticket = SecHeapAlloc(ticket.Left);
+    if (s->Ticket) {
+        memcpy(s->Ticket, ticket.P, ticket.Left);
+        s->TicketSize = ticket.Left;
+    }
+    SchCopyCertificates(&s->Certs, &t->Certs);
+    if (!s->Ticket || (t->Certs.Leaf && !s->Certs.Leaf)) {
+        TlsSessionFree(s);
+        return;
+    }
+    TlsSessionAdd(s);
+}
+
 /* the messages a tls 1.3 server may send after the handshake. */
 static SECURITY_STATUS post_handshake_messages(TLS *t)
 {
@@ -2138,12 +2607,13 @@ static SECURITY_STATUS post_handshake_messages(TLS *t)
             break;
         READER body = {p + 4, length};
         if (p[0] == HS_NEW_SESSION_TICKET) {
-            /* 4.6.1: checked and dropped, mime does not resume sessions. */
             unsigned lifetime, age;
             READER nonce, ticket, extensions;
             if (!read_int(&body, 4, &lifetime) || !read_int(&body, 4, &age) || !read_vector(&body, 1, &nonce) ||
                 !read_vector(&body, 2, &ticket) || !ticket.Left || !read_vector(&body, 2, &extensions) || body.Left)
                 return SEC_E_ILLEGAL_MESSAGE;
+            if (lifetime)
+                cache13(t, lifetime, age, nonce, ticket);
         } else if (p[0] == HS_KEY_UPDATE) {
             if (length != 1 || p[4] > 1)
                 return SEC_E_ILLEGAL_MESSAGE;
@@ -2357,6 +2827,10 @@ void TlsApplicationProtocol(const TLS *t, SCH_APPLICATION_PROTOCOL *protocol)
 void TlsSessionInfo(const TLS *t, SCH_SESSION_INFO *info)
 {
     memset(info, 0, sizeof(*info));
+    info->dwFlags = t->Resumed ? SSL_SESSION_RECONNECT : 0;
+    /* tls 1.3 has no session id of its own. */
+    if (is13(t))
+        return;
     info->cbSessionId = t->ServerSessionIdSize;
     memcpy(info->rgbSessionId, t->ServerSessionId, t->ServerSessionIdSize);
 }
@@ -2395,6 +2869,18 @@ SECURITY_STATUS TlsKeyInfo(const TLS *t, SCH_KEY_INFO_W *info, bool ansi)
 PCCERT_CONTEXT TlsRemoteCertificate(const TLS *t)
 {
     return t->Certs.Leaf ? SchDuplicate(t->Certs.Leaf) : nullptr;
+}
+
+PCCERT_CONTEXT TlsLocalCertificate(const TLS *t)
+{
+    return t->CertSent && t->Config.Certificate ? SchDuplicate(t->Config.Certificate) : nullptr;
+}
+
+void TlsDisableReconnects(TLS *t)
+{
+    t->NoReconnect = true;
+    if (t->State == ST_CONNECTED && !t->Server)
+        TlsSessionForget(t->Config.Tag, t->Target, is13(t) ? t->ResumptionMaster : t->Master);
 }
 
 void TlsExpiry(const TLS *t, PTimeStamp expiry)

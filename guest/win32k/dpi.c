@@ -447,3 +447,104 @@ UINT DpiWindowDpi(WND *w)
         return DpiScaleOf(w->Awareness);
     return DpiChildMessageEnabled(w) ? WndGetDpi(w) : W32SystemDpi();
 }
+
+/*
+ * the dpi of the session when the process started, whatever it is aware of: xxxInitProcessInfo of win32kbase keeps
+ * the one of gpsi. user32 makes the context of a system aware program from it.
+ */
+UINT NTAPI NtUserGetDpiForCurrentProcess(void)
+{
+    return W32SystemDpi();
+}
+
+/*
+ * the dpi awareness contexts as win32k keeps them, which ValidateDpiAwarenessContextEx of user32 26300 makes from the
+ * handles: the awareness in the low nibble, the dpi of an unaware or system aware one in bits 8 to 16, 0x10 for the
+ * first version, 0x20 for the second of per monitor, 0x40000000 for gdi scaling.
+ */
+#define DPI_CONTEXT_UNAWARE 0x6010u
+#define DPI_CONTEXT_SYSTEM 0x11u
+#define DPI_CONTEXT_PER_MONITOR 0x12u
+#define DPI_CONTEXT_PER_MONITOR_V2 0x22u
+#define DPI_CONTEXT_GDISCALED 0x40000000u
+
+static ULONG process_context(const W32PROCESS *p)
+{
+    switch (p->DpiAwareness) {
+    case DPI_AWARE_SYSTEM:
+        return (W32SystemDpi() & 0x1FF) << 8 | DPI_CONTEXT_SYSTEM;
+    case DPI_AWARE_PER_MONITOR:
+        return DPI_CONTEXT_PER_MONITOR;
+    case DPI_AWARE_PER_MONITOR_V2:
+        return DPI_CONTEXT_PER_MONITOR_V2;
+    }
+    return DPI_CONTEXT_UNAWARE | (p->DpiGdiScaled ? DPI_CONTEXT_GDISCALED : 0);
+}
+
+/* null or the pseudo handle for the caller, otherwise a process handle; anything else is ERROR_INVALID_PARAMETER. */
+static W32PROCESS *process_of(HANDLE process)
+{
+    if (!process || process == NtCurrentProcess())
+        return W32GetProcess();
+    PEPROCESS object;
+    if (!NT_SUCCESS(ObReferenceObjectByHandle(process, 0x1000, PsProcessType, UserMode, (PVOID *)&object, nullptr)))
+        return nullptr;
+    W32PROCESS *p = PsGetProcessWin32Process(object);
+    ObDereferenceObject(object);
+    return p;
+}
+
+/*
+ * SetProcessDpiAwarenessContext. user32 refuses a second call itself unless it forced per monitor awareness on the
+ * process, which is when forced is set. an unaware context is taken and changes nothing, measured on windows 11 26100.
+ */
+BOOL NTAPI NtUserSetProcessDpiAwarenessContext(ULONG context, ULONG forced)
+{
+    ULONG awareness;
+    switch (context & 0xF) {
+    case 0:
+        awareness = DPI_AWARE_UNAWARE;
+        break;
+    case 1:
+        awareness = DPI_AWARE_SYSTEM;
+        break;
+    case 2:
+        awareness = (context & 0x20) ? DPI_AWARE_PER_MONITOR_V2 : DPI_AWARE_PER_MONITOR;
+        break;
+    default:
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    W32PROCESS *p = W32GetProcess();
+    BOOL ok = p && DpiProcessSetAwareness(p, awareness, forced != 0);
+    if (ok)
+        p->DpiGdiScaled = (context & DPI_CONTEXT_GDISCALED) != 0;
+    UserLeave();
+    return ok;
+}
+
+/* 0 with ERROR_INVALID_PARAMETER for a handle that is not a process, as user32's callers see it. */
+ULONG NTAPI NtUserGetProcessDpiAwarenessContext(HANDLE process)
+{
+    UserEnter();
+    W32PROCESS *p = process_of(process);
+    ULONG context = p ? process_context(p) : 0;
+    UserLeave();
+    if (!context)
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    return context;
+}
+
+/* the dpi of the system the process started with, whatever it is aware of. */
+UINT NTAPI NtUserGetSystemDpiForProcess(HANDLE process)
+{
+    UserEnter();
+    W32PROCESS *p = process_of(process);
+    UserLeave();
+    if (!p) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    return W32SystemDpi();
+}

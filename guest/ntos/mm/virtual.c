@@ -14,7 +14,8 @@
 #define MM_LOWEST_USER_ADDRESS 0x10000ull
 #define MM_HIGHEST_USER_ADDRESS 0x7FFFFFFEFFFFull
 #define MM_ALLOCATION_GRANULARITY 0x10000ull
-#define MM_TOP_DOWN_START 0x7FF000000000ull
+/* where windows 11 starts a search from above: under the programs, whose images sit from here to 0x7FF8'00000000. */
+#define MM_TOP_DOWN_START 0x7FF600000000ull
 #define MM_TABLE_SPAN (1ull << 21) /* the range one table of ptes covers. */
 
 #define MM_VAD_TAG KI_TAG('M', 'm', 'V', 'd')
@@ -28,6 +29,19 @@ static ULONG64 g_kuser_page;
 void MiSetKuserPage(ULONG64 pa)
 {
     g_kuser_page = pa;
+}
+
+/* the page of the hypervisor every process sees read only, see MIME_HYPERVISOR_SHARED_PAGE. 0 without one. */
+static ULONG64 g_hypervisor_page;
+
+void MiSetHypervisorSharedPage(ULONG64 pa)
+{
+    g_hypervisor_page = pa;
+}
+
+ULONG_PTR MmHypervisorSharedPageVa(void)
+{
+    return g_hypervisor_page ? MIME_HYPERVISOR_SHARED_PAGE_VA : 0;
 }
 
 static inline ULONG64 sw_pte(ULONG protect)
@@ -63,6 +77,51 @@ BOOLEAN MiProtectionIsValid(ULONG protect)
     if (modifiers & PAGE_NOCACHE)
         return !(modifiers & PAGE_WRITECOMBINE);
     return !(base & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+}
+
+/*
+ * whether a view may be mapped with a protection from its section's, or a page of a view take one from the view's.
+ * measured on windows 11 with scratch/dlls/crash3/protmx.c and commit.c of the research repository: a view that
+ * cannot write may still copy on write, and only an executable one executes.
+ */
+BOOLEAN MiProtectionCompatible(ULONG granted, ULONG wanted)
+{
+    ULONG allowed;
+    switch (granted & 0xFF) {
+    case PAGE_READONLY:
+    case PAGE_WRITECOPY:
+        allowed = PAGE_NOACCESS | PAGE_READONLY | PAGE_WRITECOPY;
+        break;
+    case PAGE_READWRITE:
+        allowed = PAGE_NOACCESS | PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY;
+        break;
+    case PAGE_EXECUTE:
+        allowed = PAGE_NOACCESS | PAGE_EXECUTE;
+        break;
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_WRITECOPY:
+        allowed = PAGE_NOACCESS | PAGE_READONLY | PAGE_WRITECOPY | PAGE_EXECUTE | PAGE_EXECUTE_READ |
+                  PAGE_EXECUTE_WRITECOPY;
+        break;
+    case PAGE_EXECUTE_READWRITE:
+        allowed = 0xFF;
+        break;
+    default:
+        allowed = PAGE_NOACCESS;
+        break;
+    }
+    return (wanted & 0xFF & allowed) != 0;
+}
+
+/* what a protection change or a commit over a view may ask, by the view's protection. */
+static NTSTATUS view_protection_allowed(PMMVAD vad, ULONG protect)
+{
+    if (vad->Type != MiVadMapped)
+        return STATUS_SUCCESS;
+    /* windows keeps a SEC_NO_CHANGE view at the protection it was mapped with. */
+    if (vad->Flags & MM_VAD_NO_CHANGE)
+        return protect == vad->InitialProtect ? STATUS_SUCCESS : STATUS_INVALID_PAGE_PROTECTION;
+    return MiProtectionCompatible(vad->InitialProtect, protect) ? STATUS_SUCCESS : STATUS_SECTION_PROTECTION;
 }
 
 /* ----------------------------------------------------------------- commit charge */
@@ -274,10 +333,60 @@ static void vad_destroy(PMMVAD vad)
     ExFreePool(vad);
 }
 
+/*
+ * where windows 11 puts the memory of a 64-bit program whose image is marked for high entropy address space layout,
+ * measured over forty processes of build 26300 with scratch/dlls/probe/lowmap.c of the research repository. a search
+ * from below starts at a base drawn for the process between 1 and 3 TiB, on a 64 KiB boundary: heaps, allocations at
+ * no address and views all sit there, first fit. stacks, the peb and the tebs start at another base drawn below
+ * 1 TiB. the low 4 GiB holds nothing but the shared user page, and a program can count on that. a search that must
+ * end below 2 GiB, the one ceiling measured, starts at a third base, drawn below 1 GiB.
+ */
+/* splitmix64 over the counter: a layout to draw, not a secret to keep. */
+ULONG64 MiRandom(void)
+{
+    static volatile ULONG64 state;
+    ULONG64 z = __atomic_add_fetch(&state, 0x9E3779B97F4A7C15ull, __ATOMIC_RELAXED) + HalReadCounter();
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+void MiRandomizeAddressSpace(PMMADDRESS_SPACE as)
+{
+    ULONG64 draws[3];
+    for (ULONG i = 0; i < 3; i++)
+        draws[i] = MiRandom();
+    as->BottomUpBase = (1ull << 40) + ((draws[0] & 0x1FFFFFF) << 16);
+    as->StackBase = (draws[1] & 0xFFFFFF) << 16;
+    if (as->StackBase < MM_ALLOCATION_GRANULARITY)
+        as->StackBase = MM_ALLOCATION_GRANULARITY;
+    as->LowBase = (draws[2] & 0x3FFF) << 16;
+    if (as->LowBase < MM_ALLOCATION_GRANULARITY)
+        as->LowBase = MM_ALLOCATION_GRANULARITY;
+}
+
+/*
+ * where a search from above starts in a program whose image allows a base of the system's choice: up to 4 GiB under
+ * the programs, on a 64 KiB boundary. windows 11 puts the leap second data of the process there first, then what
+ * its ntdll reserves, 4 GiB of it, which is why a program sees its own searches land near 0x7FF4'00000000. a program
+ * that keeps its base starts right under the programs. measured on build 26300 with scratch/dlls/probe/pebteb.c of
+ * the research repository.
+ */
+void MiRandomizeTopDown(PMMADDRESS_SPACE as)
+{
+    as->TopDownStart = MM_TOP_DOWN_START - ((MiRandom() & 0xFFFF) << 16);
+}
+
 /* the lowest or highest aligned free range inside [lowest, highest], found by scanning the vad array. */
 NTSTATUS MiFindFreeRangeEx(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, ULONG_PTR lowest,
                            ULONG_PTR highest, BOOLEAN top_down, ULONG_PTR *out)
 {
+    /* a search from below with no floor of its own starts at a base of the process: the low one when it has to end below the other. */
+    if (!top_down && !lowest && as->BottomUpBase) {
+        ULONG_PTR from = !highest || highest > as->BottomUpBase ? as->BottomUpBase : as->LowBase;
+        if (NT_SUCCESS(MiFindFreeRangeEx(as, size, alignment, from, highest, FALSE, out)))
+            return STATUS_SUCCESS;
+    }
     /* a search from above a 32-bit program's limit is native code's, which windows lets past it too. */
     ULONG_PTR maximum = as->AllocationLimit && lowest < as->AllocationLimit ? as->AllocationLimit
                                                                             : MM_HIGHEST_USER_ADDRESS + 1;
@@ -291,8 +400,9 @@ NTSTATUS MiFindFreeRangeEx(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment
         return STATUS_NO_MEMORY;
     ULONG_PTR limit = highest + 1;
     if (top_down) {
-        if (limit > MM_TOP_DOWN_START && highest == maximum - 1)
-            limit = MM_TOP_DOWN_START;
+        ULONG_PTR top = as->TopDownStart ? as->TopDownStart : MM_TOP_DOWN_START;
+        if (limit > top && highest == maximum - 1)
+            limit = top;
         /* the first vad ending at or above the limit holds the limit if it starts below it. */
         ULONG i = vad_lower_bound(as, limit - 1);
         for (;;) {
@@ -413,6 +523,27 @@ static SIZE_T count_committed(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR en
 }
 
 /*
+ * the commit a view charges, as MemoryRegionInformation reports it on windows 11, measured with
+ * scratch/dlls/crash3/region.c of the research repository: a page that may still be copied on write and a page
+ * already copied. shared pages a view writes in place charge nothing.
+ */
+static SIZE_T count_view_commit(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
+{
+    PTE_CURSOR c = {as->Root, start, end};
+    SIZE_T charged = 0, count;
+    ULONG_PTR va;
+    for (ULONG64 *pte; (pte = cursor_next(&c, &va, &count));)
+        for (SIZE_T i = 0; i < count; i++) {
+            ULONG64 e = pte[i];
+            if (!pte_committed(e))
+                continue;
+            BOOLEAN copied = (e & MM_PTE_VALID) && !(e & MM_PTE_SW_SHARED);
+            charged += copied || (MiPteToProtect(e) & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY));
+        }
+    return charged;
+}
+
+/*
  * a write to x86 code xta64 translated, see MIME_VM_CODE_WATCH. the address space lock orders the entries, and the
  * count is published after the page so xta64 never reads an entry before it is there.
  */
@@ -481,13 +612,21 @@ SIZE_T MiReleasePages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 }
 
 /* keeps the page's contents. a write watched page stays read-only while clean and writable once written. */
-static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch)
+static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch, PMMVAD vad)
 {
+    BOOLEAN image = vad->Type == MiVadImage;
     if (v & MM_PTE_VALID) {
+        /* a page a view already copied is private: copy on write asked of it is plain write, as on windows. */
+        if (vad->Type == MiVadMapped && !(v & MM_PTE_SW_SHARED) && (protect & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)))
+            protect = (protect & ~0xFFu) | ((protect & PAGE_WRITECOPY) ? PAGE_READWRITE : PAGE_EXECUTE_READWRITE);
         ULONG64 attrs = MiProtectToPte(protect, TRUE) | (v & MM_PTE_SW_SHARED);
-        /* shared pages become copy on write when they are made writable. */
+        /*
+         * a shared page of an image made writable is copied on write. one of a data view stays the section's, so
+         * other views see what is written, unless the page itself cannot be written.
+         */
         if ((v & MM_PTE_SW_SHARED) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
-            attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
+            attrs = !image && vad->Section ? MiSectionPteAttrs(vad->Section, protect, v & MM_PTE_ADDR_MASK, TRUE)
+                                           : MI_PTE_SET_RO(attrs) | MM_PTE_SW_COW;
         if (watch && !(v & MM_PTE_SW_SHARED) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
             BOOLEAN written = !(v & MM_PTE_SW_WATCH) && (MiPteToProtect(v) & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE));
             if (!written)
@@ -499,6 +638,9 @@ static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch)
             attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_CODE;
         return (v & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE;
     }
+    /* a page of an image nobody wrote yet still is the file's: asked to be writable, it is copied on write. */
+    if (image && (v & MM_SWPTE_SECTION) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
+        protect = (protect & ~0xFFu) | ((protect & PAGE_READWRITE) ? PAGE_WRITECOPY : PAGE_EXECUTE_WRITECOPY);
     return sw_pte(protect) | (v & MM_SWPTE_SECTION);
 }
 
@@ -512,7 +654,7 @@ static void apply_protection(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR start, U
     ULONG_PTR va;
     for (ULONG64 *pte; (pte = cursor_next(&c, &va, &count));) {
         for (SIZE_T i = 0; i < count; i++)
-            values[i] = reprotect_pte(pte[i], protect, watch);
+            values[i] = reprotect_pte(pte[i], protect, watch, vad);
         MiRewritePtes(pte, va, count, values, as->Asid);
     }
 }
@@ -573,6 +715,7 @@ static void reset_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as)
 {
     ExInitializeFastMutex(&as->Lock);
+    ExInitializeFastMutex(&as->TebLock);
     as->RootPhys = MmAllocatePage();
     if (!as->RootPhys)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -584,6 +727,14 @@ NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as)
     if (g_kuser_page)
         MiMapPage(as->Root, MIME_USER_KUSER_SHARED, g_kuser_page,
                   MiProtectToPte(PAGE_READONLY, TRUE) | MM_PTE_SW_SHARED);
+    if (g_hypervisor_page) {
+        vad = vad_create(MIME_HYPERVISOR_SHARED_PAGE_VA, MIME_HYPERVISOR_SHARED_PAGE_VA + PAGE_SIZE, MiVadShared,
+                         PAGE_READONLY, 0);
+        if (!vad || !NT_SUCCESS(MiInsertVad(as, vad)))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        MiMapPage(as->Root, MIME_HYPERVISOR_SHARED_PAGE_VA, g_hypervisor_page,
+                  MiProtectToPte(PAGE_READONLY, TRUE) | MM_PTE_SW_SHARED);
+    }
     return STATUS_SUCCESS;
 }
 
@@ -756,6 +907,8 @@ NTSTATUS MiCaptureExtendedParameters(const MEM_EXTENDED_PARAMETER *parameters, U
             out->Partition = p.Handle;
             break;
         case MemExtendedParameterUserPhysicalHandle:
+            if (!p.ULong64)
+                return STATUS_INVALID_PARAMETER;
             out->PhysicalHandle = p.Handle;
             break;
         case MemExtendedParameterAttributeFlags:
@@ -953,8 +1106,11 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
             status = STATUS_SECTION_PROTECTION;
         else if (type & MEM_RESET)
             reset_range(as, start, end);
-        else if (type & MEM_COMMIT)
-            status = commit_range(as, vad, start, end, protect);
+        else if (type & MEM_COMMIT) {
+            status = view_protection_allowed(vad, protect);
+            if (NT_SUCCESS(status))
+                status = commit_range(as, vad, start, end, protect);
+        }
     }
     MiUnlockAddressSpace(as);
     if (NT_SUCCESS(status)) {
@@ -967,6 +1123,134 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
 NTSTATUS MiAllocateVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect)
 {
     return MiAllocateVirtualEx(process, base, size, type, protect, 0, nullptr);
+}
+
+static NTSTATUS allocate_thread_memory(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect,
+                                       ULONG_PTR alignment)
+{
+    MI_EXTENDED ext = {.Lowest = process->AddressSpace.StackBase, .Alignment = alignment};
+    if (!ext.Lowest)
+        type |= MEM_TOP_DOWN;
+    else if (alignment)
+        ext.Lowest = (ext.Lowest + alignment - 1) & ~(alignment - 1);
+    return MiAllocateVirtualEx(process, base, size, type, protect, 0, &ext);
+}
+
+/* a stack, or the memory of a peb and tebs: from the base the process has for them, see MiRandomizeAddressSpace, or else from the top. */
+NTSTATUS MiAllocateThreadMemory(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect)
+{
+    return allocate_thread_memory(process, base, size, type, protect, 0);
+}
+
+/*
+ * where windows 11 keeps the peb and the tebs of a 64-bit process, measured on build 26300 with
+ * scratch/dlls/probe/pebteb.c of the research repository: in one reservation of 2 MiB, on a 2 MiB boundary, found
+ * like a stack is. the peb is one page of it, drawn anywhere in it, and the teb of the first thread is the two pages
+ * that follow. each later teb takes the next two pages, and the pages of a thread that ended are given back but
+ * only taken again once the search has gone round the reservation. a process with more threads than one reservation
+ * holds, 255 or so, gets another, started at a page drawn in it too.
+ */
+#define MI_TEB_REGION_SIZE 0x200000ull
+#define MI_TEB_REGION_PAGES (MI_TEB_REGION_SIZE >> PAGE_SHIFT)
+
+typedef struct _MI_TEB_REGION {
+    struct _MI_TEB_REGION *Next;
+    ULONG_PTR Base;
+    ULONG Hint; /* the page a search starts at. */
+    ULONG64 Used[MI_TEB_REGION_PAGES / 64];
+} MI_TEB_REGION;
+
+static BOOLEAN teb_pages_free(const MI_TEB_REGION *region, ULONG first, ULONG pages)
+{
+    if (first + pages > MI_TEB_REGION_PAGES)
+        return FALSE;
+    for (ULONG i = first; i < first + pages; i++)
+        if (region->Used[i / 64] & (1ull << (i % 64)))
+            return FALSE;
+    return TRUE;
+}
+
+static void teb_pages_mark(MI_TEB_REGION *region, ULONG first, ULONG pages, BOOLEAN used)
+{
+    for (ULONG i = first; i < first + pages; i++) {
+        if (used)
+            region->Used[i / 64] |= 1ull << (i % 64);
+        else
+            region->Used[i / 64] &= ~(1ull << (i % 64));
+    }
+}
+
+/* the first free run at or after the hint, then from the start of the reservation. */
+static BOOLEAN teb_pages_find(const MI_TEB_REGION *region, ULONG pages, ULONG *out)
+{
+    for (ULONG n = 0; n < MI_TEB_REGION_PAGES; n++) {
+        ULONG first = (region->Hint + n) % MI_TEB_REGION_PAGES;
+        if (teb_pages_free(region, first, pages)) {
+            *out = first;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+NTSTATUS MiAllocatePebOrTeb(PEPROCESS process, SIZE_T size, BOOLEAN peb, PVOID *out)
+{
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG pages = (ULONG)BYTES_TO_PAGES(size), first = 0;
+    NTSTATUS status = STATUS_SUCCESS;
+    ExAcquireFastMutex(&as->TebLock);
+    MI_TEB_REGION *region = as->TebRegions;
+    while (region && !teb_pages_find(region, pages, &first))
+        region = region->Next;
+    if (!region) {
+        region = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*region), KI_TAG('M', 'm', 'T', 'r'));
+        PVOID base = nullptr;
+        SIZE_T reserve = MI_TEB_REGION_SIZE;
+        status = region ? allocate_thread_memory(process, &base, &reserve, MEM_RESERVE, PAGE_READWRITE, MI_TEB_REGION_SIZE)
+                        : STATUS_INSUFFICIENT_RESOURCES;
+        if (!NT_SUCCESS(status)) {
+            if (region)
+                ExFreePool(region);
+            ExReleaseFastMutex(&as->TebLock);
+            return status;
+        }
+        region->Base = (ULONG_PTR)base;
+        /* a reservation starts at a page drawn in it, and the peb leaves room behind it for the teb of the first thread. */
+        first = (ULONG)(MiRandom() % (MI_TEB_REGION_PAGES - pages - (peb ? BYTES_TO_PAGES(MIME_TEB_SIZE) : 0) + 1));
+        MI_TEB_REGION **link = &as->TebRegions;
+        while (*link)
+            link = &(*link)->Next;
+        *link = region;
+    }
+    PVOID at = (PVOID)(region->Base + ((ULONG_PTR)first << PAGE_SHIFT));
+    SIZE_T commit = (SIZE_T)pages << PAGE_SHIFT;
+    status = MiAllocateVirtual(process, &at, &commit, MEM_COMMIT, PAGE_READWRITE);
+    if (NT_SUCCESS(status)) {
+        teb_pages_mark(region, first, pages, TRUE);
+        region->Hint = (first + pages) % MI_TEB_REGION_PAGES;
+        *out = at;
+    }
+    ExReleaseFastMutex(&as->TebLock);
+    return status;
+}
+
+/* gives the pages of a teb back. false when the teb is not one of MiAllocatePebOrTeb. */
+BOOLEAN MiFreeTeb(PEPROCESS process, PVOID teb, SIZE_T size)
+{
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG_PTR va = (ULONG_PTR)teb;
+    ExAcquireFastMutex(&as->TebLock);
+    MI_TEB_REGION *region = as->TebRegions;
+    while (region && (va < region->Base || va >= region->Base + MI_TEB_REGION_SIZE))
+        region = region->Next;
+    if (region) {
+        PVOID at = teb;
+        SIZE_T bytes = ROUND_TO_PAGES(size);
+        MiFreeVirtual(process, &at, &bytes, MEM_DECOMMIT);
+        teb_pages_mark(region, (ULONG)((va - region->Base) >> PAGE_SHIFT), (ULONG)BYTES_TO_PAGES(size), FALSE);
+    }
+    ExReleaseFastMutex(&as->TebLock);
+    return region != nullptr;
 }
 
 /* ----------------------------------------------------------------- freeing */
@@ -1047,6 +1331,14 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
         *size = end - start;
         return STATUS_SUCCESS;
     }
+    /* a view takes no cache attribute, and of the rest only what its own protection allows. */
+    NTSTATUS allowed = vad->Type != MiVadPrivate && (protect & (PAGE_NOCACHE | PAGE_WRITECOMBINE))
+                           ? STATUS_INVALID_PARAMETER_4
+                           : view_protection_allowed(vad, protect);
+    if (!NT_SUCCESS(allowed)) {
+        MiUnlockAddressSpace(as);
+        return allowed;
+    }
     /* every page must be committed before any is changed. */
     if (count_committed(as, start, end) != (end - start) >> PAGE_SHIFT) {
         MiUnlockAddressSpace(as);
@@ -1117,7 +1409,9 @@ static BOOLEAN query_region(PMMADDRESS_SPACE as, ULONG_PTR va, PMEMORY_BASIC_INF
     info->RegionSize = end - va;
     info->State = committed ? MEM_COMMIT : MEM_RESERVE;
     info->Protect = prot;
-    info->Type = vad->Type == MiVadImage ? MEM_IMAGE : vad->Type == MiVadPrivate ? MEM_PRIVATE : MEM_MAPPED;
+    /* windows reports the shared user data page and the hypervisor's as private memory. */
+    BOOLEAN system_page = vad->StartVa == MIME_USER_KUSER_SHARED || vad->StartVa == MIME_HYPERVISOR_SHARED_PAGE_VA;
+    info->Type = vad->Type == MiVadImage ? MEM_IMAGE : vad->Type == MiVadPrivate || system_page ? MEM_PRIVATE : MEM_MAPPED;
     return TRUE;
 }
 
@@ -1131,6 +1425,21 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     query_region(as, va, info, (SIZE_T)-1);
     MiUnlockAddressSpace(as);
     return STATUS_SUCCESS;
+}
+
+/*
+ * a writable page of an image is copy on write until its first write, as windows reports it. a first touch that
+ * writes takes the private copy at once rather than fault a second time.
+ */
+static ULONG image_touch_protect(PMMVAD vad, ULONG protect, BOOLEAN write)
+{
+    if (!write || vad->Type != MiVadImage)
+        return protect;
+    if ((protect & 0xFF) == PAGE_WRITECOPY)
+        return (protect & ~0xFFu) | PAGE_READWRITE;
+    if ((protect & 0xFF) == PAGE_EXECUTE_WRITECOPY)
+        return (protect & ~0xFFu) | PAGE_EXECUTE_READWRITE;
+    return protect;
 }
 
 /* maps the prototype page, a relocated one, or a private copy. */
@@ -1257,6 +1566,9 @@ static BOOLEAN fast_section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR pag
         if (va == page || (w & MM_PTE_VALID) || !(w & MM_SWPTE_COMMITTED) || !(w & MM_SWPTE_SECTION) ||
             (wp & 0xFF) == PAGE_NOACCESS || (wp & PAGE_GUARD))
             continue;
+        /* an unwritten writable image page waits for its own touch, which may well be a write. */
+        if (vad->Type == MiVadImage && (wp & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)))
+            continue;
         ULONG64 ready = MiSectionReadyPage(vad, (vad->SectionOffset + (va - vad->StartVa)) >> PAGE_SHIFT, wp);
         if (!ready)
             continue;
@@ -1292,7 +1604,7 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
     if (!(v & MM_SWPTE_COMMITTED) || (protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))
         return FALSE;
     if (v & MM_SWPTE_SECTION)
-        return vad->Section && !(KiOptions & KI_OPT_NO_SECTION_FAULT) && fast_section_fault(as, vad, page, pte, v, protect);
+        return vad->Section && fast_section_fault(as, vad, page, pte, v, image_touch_protect(vad, protect, write));
 
     BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
     ULONG stream = (ULONG)-1;
@@ -1369,7 +1681,7 @@ MM_FAULT_STATS MmFaultStats[MAXIMUM_PROCESSORS];
 
 BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 {
-    if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
+    if (va > MM_HIGHEST_USER_ADDRESS)
         return FALSE;
     /* a thread preempted inside the gate would keep a writer waiting. */
     ULONG64 state = KiDisableInterrupts();
@@ -1408,7 +1720,7 @@ BOOLEAN MmFastQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMAT
 {
     PMMADDRESS_SPACE as = &(process ? process : (PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
     ULONG_PTR va = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
-    if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
+    if (va > MM_HIGHEST_USER_ADDRESS)
         return FALSE;
     ULONG gate = __atomic_load_n(&as->FaultGate, __ATOMIC_RELAXED);
     do {
@@ -1451,10 +1763,10 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
 }
 
 /*
- * touching a guard page raises STATUS_GUARD_PAGE_VIOLATION, or STATUS_STACK_OVERFLOW for the thread's own
- * last stack guard. the guard is removed, so the access runs again if the exception is handled.
+ * touching a guard page raises STATUS_GUARD_PAGE_VIOLATION and removes the guard, so the access runs again if the
+ * exception is handled.
  */
-/* a guard of the thread's own stack above its last one: the stack grows instead of faulting, see MiGrowUserStack. */
+/* a guard of the thread's own stack: the stack grows instead of faulting, see grow_user_stack. */
 static BOOLEAN stack_growth_guard(ULONG_PTR page)
 {
     PETHREAD thread = PsCurrentThread();
@@ -1465,36 +1777,47 @@ static BOOLEAN stack_growth_guard(ULONG_PTR page)
 
 static void guard_fault(ULONG_PTR page)
 {
-    PETHREAD thread = PsCurrentThread();
-    BOOLEAN own = page == thread->UserStackGuard && thread->Tcb.ApcStateProcess == thread->Tcb.Process;
-    thread->Tcb.FaultStatus = own ? STATUS_STACK_OVERFLOW : STATUS_GUARD_PAGE_VIOLATION;
+    KiCurrentThread()->FaultStatus = STATUS_GUARD_PAGE_VIOLATION;
 }
 
 /*
  * like MiCheckForUserStackOverflow: the guard page the thread touched is now plain committed memory, the three pages
- * below it are the guard down to the last guard, and the stack limit of the teb follows. the access
- * runs again without an exception.
+ * below it are the guard, and the stack limit of the teb follows. the access runs again without an exception.
+ *
+ * a guard that would reach the zone at the bottom of the reservation is not made: the zone is committed for the
+ * exception to be dispatched on, all but the lowest page, which stays reserved as on windows, and the access is a
+ * STATUS_STACK_OVERFLOW. FALSE then.
  */
-static void grow_user_stack(ULONG_PTR page)
+static BOOLEAN grow_user_stack(ULONG_PTR page)
 {
     PETHREAD thread = PsCurrentThread();
     PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
-    ULONG_PTR next = page - MI_STACK_GUARD_SIZE;
-    if (next <= thread->UserStackGuard)
-        next = thread->UserStackGuard + PAGE_SIZE;
+    BOOLEAN overflow = page < thread->UserStackGuard + PAGE_SIZE + MI_STACK_GUARD_SIZE;
+    ULONG_PTR next = overflow ? (ULONG_PTR)thread->UserStackAllocation + PAGE_SIZE : page - MI_STACK_GUARD_SIZE;
     if (next < page) {
         PVOID at = (PVOID)next;
         SIZE_T size = page - next;
-        MiAllocateVirtual(process, &at, &size, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD);
+        MiAllocateVirtual(process, &at, &size, MEM_COMMIT, overflow ? PAGE_READWRITE : PAGE_READWRITE | PAGE_GUARD);
+        if (overflow) {
+            /* what was guard above the zone is plain memory as well. */
+            ULONG old;
+            at = (PVOID)next;
+            size = page - next;
+            MiProtectVirtual(process, &at, &size, PAGE_READWRITE, &old);
+        }
     }
+    ULONG_PTR low = overflow && next < page ? next : page;
     PUCHAR teb = (PUCHAR)thread->Tcb.Teb;
     if (PspIsWow64Process(process)) {
-        ULONG limit = (ULONG)page;
+        ULONG limit = (ULONG)low;
         KiCopyToUser(teb + MIME_TEB_SIZE + 8, &limit, sizeof(limit));
     } else {
-        PVOID limit = (PVOID)page;
+        PVOID limit = (PVOID)low;
         KiCopyToUser(&((PTEB)teb)->NtTib.StackLimit, &limit, sizeof(limit));
     }
+    if (overflow)
+        thread->Tcb.FaultStatus = STATUS_STACK_OVERFLOW;
+    return !overflow;
 }
 
 static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
@@ -1521,7 +1844,7 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
         ULONG sw_protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
         if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_SECTION) && vad->Section && (sw_protect & 0xFF) != PAGE_NOACCESS &&
             !(sw_protect & PAGE_GUARD)) {
-            handled = section_fault(as, vad, page, pte, sw_protect);
+            handled = section_fault(as, vad, page, pte, image_touch_protect(vad, sw_protect, write));
         } else if (!(v & MM_PTE_VALID) && (v & MM_SWPTE_COMMITTED)) {
             ULONG protect = (ULONG)((v & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
             if ((protect & 0xFF) != PAGE_NOACCESS && !(protect & PAGE_GUARD)) {
@@ -1536,6 +1859,10 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
                     handled = FALSE;
                 }
             }
+        } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_COW) && !(v & MM_PTE_SW_SHARED)) {
+            /* the page is the process's own already, a relocated image page for one: nothing to copy. */
+            MiUpgradePte(as->Root, page, MI_PTE_SET_RW(v & ~MM_PTE_SW_COW), as->Asid);
+            handled = TRUE;
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_COW)) {
             ULONG64 pa = MmAllocatePageNoZero();
             if (pa) {
@@ -1580,7 +1907,7 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
     }
     MiUnlockAddressSpace(as);
     if (grow)
-        grow_user_stack(page);
+        handled = grow_user_stack(page);
     return handled;
 }
 
@@ -1644,6 +1971,11 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
     MiFlushTlbAsid(as->Asid);
     as->Root = nullptr;
     MiUnlockAddressSpace(as);
+    while (as->TebRegions) {
+        MI_TEB_REGION *region = as->TebRegions;
+        as->TebRegions = region->Next;
+        ExFreePool(region);
+    }
 }
 
 void MmFreeAddressSpaceRoot(PMMADDRESS_SPACE as)
@@ -1814,6 +2146,64 @@ NTSTATUS NTAPI NtAllocateVirtualMemory(HANDLE process_handle, PVOID *base, ULONG
     return status;
 }
 
+/*
+ * what the 64-bit service does for a 32-bit program, measured on windows 11 26300 with scratch/dlls/probe/avm32.c of
+ * the research repository. the space of such a program is what lies under its limit and what lies over 4 GiB, never
+ * between the two. a search with no highest address stays under the limit, and a lowest address at or over it is
+ * refused. a highest address under 4 GiB is brought down to the limit. the highest address of all asks for the space
+ * over 4 GiB alone, and any other one over 4 GiB for both parts, the one the search starts in first.
+ */
+static NTSTATUS allocate_in_32bit(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect, MI_EXTENDED *ext)
+{
+    const ULONG_PTR four = 0x100000000ull;
+    ULONG_PTR limit = process->AddressSpace.AllocationLimit, at = (ULONG_PTR)*base;
+    if (!limit)
+        return MiAllocateVirtualEx(process, base, size, type, protect, 0, ext);
+    if (at) {
+        if (at < four && at + *size > limit)
+            return STATUS_CONFLICTING_ADDRESSES;
+        return MiAllocateVirtualEx(process, base, size, type, protect, 0, ext);
+    }
+    ULONG_PTR lowest = ext->Lowest, highest = ext->Highest;
+    if (!highest) {
+        if (lowest >= limit)
+            return STATUS_INVALID_PARAMETER;
+        return MiAllocateVirtualEx(process, base, size, type, protect, 0, ext);
+    }
+    if (highest < four) {
+        if (highest >= limit) {
+            ext->Highest = limit - 1;
+            if (lowest < highest && highest - lowest + 1 >= *size && (lowest >= limit || limit - lowest < *size))
+                return STATUS_NO_MEMORY;
+        }
+        return MiAllocateVirtualEx(process, base, size, type, protect, 0, ext);
+    }
+    MI_EXTENDED under = *ext, over = *ext;
+    under.Highest = limit - 1;
+    if (over.Lowest < four)
+        over.Lowest = four;
+    BOOLEAN both = highest != MM_HIGHEST_USER_ADDRESS && lowest < limit;
+    BOOLEAN over_first = !both || (type & MEM_TOP_DOWN);
+    PVOID b = nullptr;
+    SIZE_T s = *size;
+    NTSTATUS status = MiAllocateVirtualEx(process, &b, &s, type, protect, 0, over_first ? &over : &under);
+    if (!NT_SUCCESS(status) && both) {
+        b = nullptr;
+        s = *size;
+        NTSTATUS second = MiAllocateVirtualEx(process, &b, &s, type, protect, 0, over_first ? &under : &over);
+        /* a part too small for the size says so as a parameter, which the other part's answer stands for. */
+        if (NT_SUCCESS(second) || status == STATUS_INVALID_PARAMETER)
+            status = second;
+    }
+    if (status == STATUS_INVALID_PARAMETER && highest - lowest + 1 >= *size)
+        status = STATUS_NO_MEMORY;
+    if (NT_SUCCESS(status)) {
+        *base = b;
+        *size = s;
+    }
+    return status;
+}
+
 NTSTATUS NTAPI NtAllocateVirtualMemoryEx(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG type, ULONG protect,
                                          PMEM_EXTENDED_PARAMETER parameters, ULONG count)
 {
@@ -1821,8 +2211,9 @@ NTSTATUS NTAPI NtAllocateVirtualMemoryEx(HANDLE process_handle, PVOID *base, PSI
     SIZE_T s;
     if (!NT_SUCCESS(KiCopyFromUser(&b, base, sizeof(b))) || !NT_SUCCESS(KiCopyFromUser(&s, size, sizeof(s))))
         return STATUS_ACCESS_VIOLATION;
+    /* measured on windows 11 26300: the machine of an image is no parameter of an allocation. */
     MI_EXTENDED ext;
-    NTSTATUS status = MiCaptureExtendedParameters(parameters, count, 0x7E, KeGetPreviousMode() == UserMode, &ext);
+    NTSTATUS status = MiCaptureExtendedParameters(parameters, count, 0x3E, KeGetPreviousMode() == UserMode, &ext);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS process;
@@ -1834,7 +2225,7 @@ NTSTATUS NTAPI NtAllocateVirtualMemoryEx(HANDLE process_handle, PVOID *base, PSI
     else if ((type & (MEM_COMMIT | MEM_RESERVE)) && (protect & EXECUTABLE_PROTECTION) && PsDynamicCodeBlocked(process))
         status = STATUS_DYNAMIC_CODE_BLOCKED;
     else
-        status = MiAllocateVirtualEx(process, &b, &s, type, protect, 0, &ext);
+        status = allocate_in_32bit(process, &b, &s, type, protect, &ext);
     ObDereferenceObject(process);
     if (NT_SUCCESS(status)) {
         KiCopyToUser(base, &b, sizeof(b));
@@ -1928,6 +2319,25 @@ static BOOLEAN region_is_image(PEPROCESS process, PVOID base)
     return image;
 }
 
+/* writes one byte of the current process's code whatever the page allows, and leaves the protection as it was. */
+NTSTATUS MmPatchUserCode(PVOID address, UCHAR value)
+{
+    NTSTATUS status = KiCopyToUser(address, &value, 1);
+    if (NT_SUCCESS(status))
+        return status;
+    PEPROCESS process = PsCurrentProcess();
+    PVOID base = address;
+    SIZE_T size = 1;
+    ULONG old = PAGE_NOACCESS, restored;
+    status = MiProtectVirtual(process, &base, &size,
+                              region_is_image(process, address) ? PAGE_EXECUTE_WRITECOPY : PAGE_EXECUTE_READWRITE, &old);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = KiCopyToUser(address, &value, 1);
+    MiProtectVirtual(process, &base, &size, old, &restored);
+    return status;
+}
+
 NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG protect, PULONG old)
 {
     PVOID b;
@@ -1976,7 +2386,7 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
  */
 static BOOLEAN page_locked(PEPROCESS process, ULONG_PTR page);
 
-static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T length)
+static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T length, PSIZE_T returned)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
     if (length < 16)
@@ -1994,12 +2404,29 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
             if (vad && !(vad->Flags & MM_VAD_PLACEHOLDER)) {
                 ULONG64 pte = MiReadPte(as->Root, va & ~(ULONG_PTR)(PAGE_SIZE - 1));
                 ULONG prot = pte_committed(pte) ? MiPteToProtect(pte) : 0;
-                if ((pte & MM_PTE_VALID) && !(pte & MM_PTE_SW_TRIMMED) && !(prot & (PAGE_NOACCESS | PAGE_GUARD))) {
-                    attributes = 1 | (ULONG64)(prot & 0x7FF) << 4 | 5ull << 24;
-                    if (vad->Type != MiVadPrivate)
-                        attributes |= 1ull << 1 | 1ull << 15;
+                BOOLEAN view = vad->Type != MiVadPrivate;
+                /*
+                 * a page a view copied on write is the process's own, which windows reports as a private page. an
+                 * image mime relocated into pages of its own, where windows shares relocated pages, keeps the word.
+                 */
+                BOOLEAN own_relocation = vad->Type == MiVadImage && vad->Section &&
+                                         vad->StartVa != vad->Section->Image.ImageBase &&
+                                         !(vad->Flags & MM_VAD_RELOCATED_SHARED);
+                BOOLEAN shared = view && (vad->Type == MiVadShared || own_relocation || !(pte & MM_PTE_VALID) ||
+                                          (pte & MM_PTE_SW_SHARED));
+                BOOLEAN live = (pte & MM_PTE_VALID) && !(pte & MM_PTE_SW_TRIMMED) &&
+                               !(prot & (PAGE_NOACCESS | PAGE_GUARD));
+                if (live) {
+                    /* a private page carries the private class word, a view page the image one plus the
+                       view bits windows reports for it. */
+                    attributes = 1 | (ULONG64)(prot & 0x7FF) << 4;
+                    attributes |= shared ? 1ull << 1 | 1ull << 2 | 1ull << 3 | 1ull << 30 | 1ull << 15
+                                         : 5ull << 24;
                     if (page_locked(process, va & ~(ULONG_PTR)(PAGE_SIZE - 1)))
                         attributes |= 1ull << 22; /* Locked */
+                } else if (shared) {
+                    /* an image page that is not resident still reports the class and the shared bit. */
+                    attributes = 1ull << 30 | 1ull << 15;
                 }
             }
             MiUnlockAddressSpace(as);
@@ -2007,6 +2434,10 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
         status = KiCopyToUser(entry + 8, &attributes, sizeof(attributes));
         if (!NT_SUCCESS(status))
             return status;
+    }
+    if (returned) {
+        ULONG n = (ULONG)(length / 16 * 16);
+        KiCopyToUser(returned, &n, sizeof(n));
     }
     return STATUS_SUCCESS;
 }
@@ -2135,11 +2566,19 @@ ULONG MmQueryVmCounters(PEPROCESS process, PVOID out, ULONG length)
 NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_INFORMATION_CLASS klass, PVOID info,
                                     SIZE_T length, PSIZE_T returned)
 {
+    /*
+     * class 8 answers as the basic class does: WriteProcessMemory asks it to learn whether the pages take a write.
+     * both ask no more of the handle than the limited query right, measured with qvm.c of the research repository.
+     */
+    BOOLEAN basic = klass == MemoryBasicInformation || (ULONG)klass == 8;
     PEPROCESS process;
-    NTSTATUS status = reference_process(process_handle, PROCESS_QUERY_INFORMATION, &process);
+    NTSTATUS status = basic ? reference_process(process_handle, PROCESS_QUERY_LIMITED_INFORMATION, &process)
+                            : STATUS_ACCESS_DENIED;
+    if (status == STATUS_ACCESS_DENIED)
+        status = reference_process(process_handle, PROCESS_QUERY_INFORMATION, &process);
     if (!NT_SUCCESS(status))
         return status;
-    if (klass == MemoryBasicInformation) {
+    if (basic) {
         MEMORY_BASIC_INFORMATION mbi;
         if (length < sizeof(mbi)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
@@ -2147,8 +2586,9 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
             status = MiQueryVirtual(process, base, &mbi);
             if (NT_SUCCESS(status))
                 status = KiCopyToUser(info, &mbi, sizeof(mbi));
+            /* a query that fails leaves the returned length alone, as on windows. */
             SIZE_T n = sizeof(mbi);
-            if (returned)
+            if (NT_SUCCESS(status) && returned)
                 KiCopyToUser(returned, &n, sizeof(n));
         }
     } else if (klass == MemoryImageInformation) {
@@ -2164,7 +2604,14 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
                 status = STATUS_INVALID_ADDRESS;
             } else if (vad->Type == MiVadImage && vad->Section) {
                 mi.ImageBase = (PVOID)vad->StartVa;
-                mi.SizeOfImage = (SIZE_T)vad->Section->Size;
+                /*
+                 * measured on windows 11 26100 with imgsig.exe and imgsig2.exe of scratch/dlls/probe in the research
+                 * repository: the size is the one of the headers, and the flags hold the signing level of the image
+                 * from bit 2 up. a file of windows reads 0x70, the level of windows with the bit above it, and a
+                 * program from elsewhere 0x08, signed or not. the files the system came with stand for the first.
+                 */
+                mi.SizeOfImage = vad->Section->Image.SizeOfImage ? vad->Section->Image.SizeOfImage : (SIZE_T)vad->Section->Size;
+                mi.ImageFlags |= vad->Section->SystemImage ? 0x70 : 0x08;
                 if (vad->SectionOffset + (vad->EndVa - vad->StartVa) < vad->Section->Size)
                     mi.ImageFlags |= MEMORY_IMAGE_PARTIAL_MAP;
             }
@@ -2176,10 +2623,121 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
                     KiCopyToUser(returned, &n, sizeof(n));
             }
         }
+    } else if ((ULONG)klass == 14) {
+        /*
+         * MemoryImageExtensionInformation, measured on windows 11 with scratch/dlls/probe/qvm14.c of the research
+         * repository: the kind asked, no flags, and what the kernel mapped after the image, its offset from the base and
+         * its size, for any address of the image. an image that got none answers zeros. the loader asks it of every
+         * image it starts, and a failure ends the process.
+         */
+        struct {
+            ULONG ExtensionType, Flags;
+            ULONG64 ExtensionImageBaseRva, ExtensionSize;
+        } extension;
+        PMMADDRESS_SPACE as = &process->AddressSpace;
+        if (length < sizeof(extension)) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        } else if (!base || (ULONG_PTR)base > MM_HIGHEST_USER_ADDRESS) {
+            status = STATUS_INVALID_PARAMETER;
+        } else if (NT_SUCCESS(status = KiCopyFromUser(&extension, info, sizeof(extension)))) {
+            if (extension.ExtensionType > 1 || extension.Flags) {
+                status = STATUS_INVALID_PARAMETER;
+            } else if (extension.ExtensionType == 1) {
+                status = STATUS_NOT_SUPPORTED;
+            } else {
+                MiLockAddressSpace(as);
+                PMMVAD vad = MiFindVad(as, (ULONG_PTR)base);
+                if (!vad)
+                    status = STATUS_MEMORY_NOT_ALLOCATED;
+                else if (vad->Type != MiVadImage)
+                    status = STATUS_INVALID_ADDRESS;
+                else {
+                    BOOLEAN some = vad->Section && vad->Section->ExtensionRva;
+                    extension.ExtensionImageBaseRva = some ? vad->Section->ExtensionRva : 0;
+                    extension.ExtensionSize = some ? PAGE_SIZE : 0;
+                }
+                MiUnlockAddressSpace(as);
+            }
+            if (NT_SUCCESS(status)) {
+                status = KiCopyToUser(info, &extension, sizeof(extension));
+                SIZE_T n = sizeof(extension);
+                if (NT_SUCCESS(status) && returned)
+                    KiCopyToUser(returned, &n, sizeof(n));
+            }
+        }
+    } else if (klass == MemoryRegionInformation || (ULONG)klass == 7) {
+        /*
+         * measured on windows 11 26100 with region.exe of scratch/assets2/probe in the research repository: the whole
+         * allocation, its first protection and its type, then the committed bytes it charges, a partition and a node
+         * preference of -1. any length from 0x18 gets as much of the 0x30 bytes as it holds. the loader asks it of the
+         * views of a .mun file before it takes resources from it. the type is MEM_PRIVATE, MEM_IMAGE, MEM_MAPPED for a
+         * file's data and SEC_COMMIT for a view of the paging file, and the extended class 7 has flags instead:
+         * private 1, file data 2, image 4, paging file 8. measured with scratch/dlls/crash3/region.c.
+         */
+        struct {
+            PVOID AllocationBase;
+            ULONG AllocationProtect, RegionType;
+            SIZE_T RegionSize, CommitSize;
+            ULONG_PTR PartitionId, NodePreference;
+        } region = {};
+        PMMADDRESS_SPACE as = &process->AddressSpace;
+        if (length < 0x18) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        } else if ((ULONG_PTR)base > MM_HIGHEST_USER_ADDRESS) {
+            status = STATUS_INVALID_PARAMETER;
+        } else {
+            MiLockAddressSpace(as);
+            PMMVAD vad = MiFindVad(as, (ULONG_PTR)base);
+            if (!vad) {
+                status = STATUS_INVALID_ADDRESS;
+            } else {
+                BOOLEAN pagefile = vad->Type != MiVadImage && vad->Type != MiVadPrivate &&
+                                   !(vad->Section && vad->Section->File);
+                region.AllocationBase = (PVOID)vad->StartVa;
+                region.AllocationProtect = vad->InitialProtect;
+                if (klass == MemoryRegionInformation)
+                    region.RegionType = vad->Type == MiVadImage ? MEM_IMAGE : vad->Type == MiVadPrivate ? MEM_PRIVATE
+                                                                     : pagefile                 ? SEC_COMMIT
+                                                                                                : MEM_MAPPED;
+                else
+                    region.RegionType = vad->Type == MiVadImage ? 4 : vad->Type == MiVadPrivate ? 1 : pagefile ? 8 : 2;
+                region.RegionSize = vad->EndVa - vad->StartVa;
+                if (vad->Type == MiVadPrivate)
+                    region.CommitSize = (SIZE_T)count_committed(as, vad->StartVa, vad->EndVa) << PAGE_SHIFT;
+                else
+                    region.CommitSize = count_view_commit(as, vad->StartVa, vad->EndVa) << PAGE_SHIFT;
+                region.NodePreference = 0xFFFFFFFF;
+            }
+            MiUnlockAddressSpace(as);
+            if (NT_SUCCESS(status)) {
+                SIZE_T n = length < sizeof(region) ? length : sizeof(region);
+                status = KiCopyToUser(info, &region, n);
+                if (NT_SUCCESS(status) && returned)
+                    KiCopyToUser(returned, &n, sizeof(n));
+            }
+        }
     } else if (klass == MemoryWorkingSetExInformation) {
-        status = query_working_set_ex(process, info, length);
+        status = query_working_set_ex(process, info, length, returned);
+        /* measured on windows 11 26300: the entries answered come back as the length. */
+        if (NT_SUCCESS(status) && returned) {
+            SIZE_T n = length & ~(SIZE_T)0xF;
+            KiCopyToUser(returned, &n, sizeof(n));
+        }
     } else if (klass == MemoryWorkingSetInformation) {
-        status = query_working_set(process, info, length);
+        /* a base above the user range is refused once the buffer can hold the count, as on windows. */
+        if (length >= sizeof(ULONG_PTR) && (ULONG_PTR)base > MM_HIGHEST_USER_ADDRESS)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            status = query_working_set(process, info, length);
+    } else if (klass == MemoryMappedFilenameInformation && (ULONG_PTR)base > MM_HIGHEST_USER_ADDRESS) {
+        /* windows refuses a base above the user range before it looks for a view. */
+        status = STATUS_INVALID_PARAMETER;
+    } else if ((ULONG)klass == 0xc && !base) {
+        /* MemoryBasicInformationCapped, measured on windows 11 26300: a null base succeeds with nothing written. */
+        SIZE_T n = 0;
+        status = STATUS_SUCCESS;
+        if (returned)
+            KiCopyToUser(returned, &n, sizeof(n));
     } else if (klass == MemoryMappedFilenameInformation) {
         PMMADDRESS_SPACE as = &process->AddressSpace;
         MiLockAddressSpace(as);
@@ -2188,28 +2746,82 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         if (section)
             ObReferenceObject(section);
         MiUnlockAddressSpace(as);
-        if (!section || !section->FileName.Buffer) {
+        if (!section) {
             status = STATUS_INVALID_ADDRESS;
+        } else if (!section->FileName.Buffer) {
+            /* a view of the paging file has no file to name, measured on windows 11 with scratch/dlls/crash3/remap.c. */
+            status = (NTSTATUS)0xC0000098L; /* STATUS_FILE_INVALID */
         } else {
-            SIZE_T need = sizeof(UNICODE_STRING) + section->FileName.Length + sizeof(WCHAR);
+            /* the name is the one of the file object: its volume, \Device\HarddiskVolumeN, then its path. */
+            USHORT device = section->DeviceName.Length;
+            SIZE_T need = sizeof(UNICODE_STRING) + device + section->FileName.Length + sizeof(WCHAR);
             if (returned)
                 KiCopyToUser(returned, &need, sizeof(need));
             if (length < need) {
-                status = STATUS_BUFFER_OVERFLOW;
+                status = STATUS_INFO_LENGTH_MISMATCH;
             } else {
                 UNICODE_STRING us;
-                us.Length = section->FileName.Length;
+                us.Length = (USHORT)(device + section->FileName.Length);
                 us.MaximumLength = (USHORT)(us.Length + sizeof(WCHAR));
                 us.Buffer = (PWSTR)((PUCHAR)info + sizeof(UNICODE_STRING));
                 status = KiCopyToUser(info, &us, sizeof(us));
+                if (NT_SUCCESS(status) && device)
+                    status = KiCopyToUser(us.Buffer, section->DeviceName.Buffer, device);
                 if (NT_SUCCESS(status))
-                    status = KiCopyToUser(us.Buffer, section->FileName.Buffer, us.Length + sizeof(WCHAR));
+                    status = KiCopyToUser((PUCHAR)us.Buffer + device, section->FileName.Buffer,
+                                          section->FileName.Length + sizeof(WCHAR));
             }
         }
         if (section)
             ObDereferenceObject(section);
     } else {
-        status = STATUS_INVALID_INFO_CLASS;
+        /* the class chain above covers the ones this kernel serves; a caller that sweeps the classes sees which
+           of them exist and what the reference kernel says, so answer with the same status. */
+        static const struct { UCHAR klass; ULONG status, need; } reference[] = {
+{0x0, 0xc0000004, 0x0},
+{0x1, 0xc0000004, 0x0},
+{0x2, 0xc0000004, 0x66},
+{0x3, 0xc0000004, 0x0},
+{0x4, 0xc0000004, 0x0},
+{0x5, 0xc0000004, 0x0},
+{0x6, 0xc0000004, 0x0},
+{0x7, 0xc0000004, 0x0},
+{0x8, 0xc0000004, 0x0},
+{0x9, 0xc0000003, 0x0},
+{0xa, 0xc0000003, 0x0},
+{0xb, 0xc0000004, 0x0},
+{0xc, 0xc000000d, 0x0},
+{0xd, 0xc00000bb, 0x0},
+{0xe, 0xc0000004, 0x0},
+{0xf, 0xc0000003, 0x0},
+{0x10, 0xc0000003, 0x0},
+{0x11, 0xc0000003, 0x0},
+{0x12, 0xc0000003, 0x0},
+{0x13, 0xc0000003, 0x0},
+{0x14, 0xc0000003, 0x0},
+{0x15, 0xc0000003, 0x0},
+{0x16, 0xc0000003, 0x0},
+{0x17, 0xc0000003, 0x0},
+{0x18, 0xc0000003, 0x0},
+{0x19, 0xc0000003, 0x0},
+{0x1a, 0xc0000003, 0x0},
+{0x1b, 0xc0000003, 0x0},
+{0x1c, 0xc0000003, 0x0},
+{0x1d, 0xc0000003, 0x0},
+{0x1e, 0xc0000003, 0x0},
+{0x1f, 0xc0000003, 0x0},
+{0x20, 0xc0000003, 0x0},
+{0x21, 0xc0000003, 0x0},
+{0x22, 0xc0000003, 0x0},
+{0x23, 0xc0000003, 0x0},
+{0x24, 0xc0000003, 0x0}
+        };
+        status = STATUS_NOT_IMPLEMENTED;
+        for (ULONG i = 0; i < RTL_NUMBER_OF(reference); i++)
+            if (reference[i].klass == (UCHAR)klass) {
+                status = reference[i].status;
+                break;
+            }
     }
     ObDereferenceObject(process);
     return status;
@@ -2402,6 +3014,10 @@ NTSTATUS NTAPI NtReadVirtualMemory(HANDLE process_handle, PVOID base, PVOID buff
     if (!NT_SUCCESS(status))
         return status;
     SIZE_T done = 0;
+    if (size && ((ULONG_PTR)base + size < (ULONG_PTR)base || (ULONG_PTR)base + size > MmUserProbeAddress)) {
+        ObDereferenceObject(process);
+        return STATUS_ACCESS_VIOLATION;
+    }
     if (process == PsCurrentProcess()) {
         PUCHAR tmp = ExAllocatePool2(POOL_FLAG_PAGED, size ? size : 1, KI_TAG('M', 'm', 'R', 'v'));
         if (!tmp) {
@@ -2414,9 +3030,19 @@ NTSTATUS NTAPI NtReadVirtualMemory(HANDLE process_handle, PVOID base, PVOID buff
         if (NT_SUCCESS(status))
             done = size;
         ExFreePool(tmp);
+        /* the slow way finds how far the copy gets. */
+        if (!NT_SUCCESS(status) && size)
+            status = MmCopyVirtualMemory(process, base, process, buffer, size, UserMode, &done);
     } else {
         status = MmCopyVirtualMemory(process, base, PsCurrentProcess(), buffer, size, UserMode, &done);
     }
+    /*
+     * measured on windows 11 26300 with scratch/dlls/probe/gate32res.c of the research repository: a read that
+     * stops, at the source or at a buffer that is missing or read only, is a partial copy with the bytes it got, and
+     * a source outside user space is an access violation that leaves the count alone.
+     */
+    if (status == STATUS_ACCESS_VIOLATION)
+        status = (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY. */;
     if (read)
         KiCopyToUser(read, &done, sizeof(done));
     ObDereferenceObject(process);

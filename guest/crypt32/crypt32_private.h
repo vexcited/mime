@@ -151,6 +151,9 @@ DWORD CrRsaModulusBits(const CERT_PUBLIC_KEY_INFO *key);
 BOOL CrSignData(HCRYPTPROV provider, DWORD key_spec, ALG_ID alg, const BYTE *data, DWORD size, BYTE *signature,
                 DWORD *signature_size);
 void CrReleaseProvider(HCRYPTPROV provider);
+BOOL CrSignDigestNcrypt(NCRYPT_KEY_HANDLE key, ALG_ID alg, BYTE *digest, DWORD digest_size, BYTE *signature,
+                        DWORD *size, BOOL silent);
+void CrReleaseNcryptKey(NCRYPT_KEY_HANDLE key);
 
 /* ------------------------------------------------------------------ oids, oid.c */
 

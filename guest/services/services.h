@@ -51,6 +51,7 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE_ {
 #define TOKEN_ADJUST_DEFAULT 0x0080
 #define TOKEN_ADJUST_SESSIONID 0x0100
 #define TOKEN_ALL_ACCESS 0xF01FF
+#define SE_PRIVILEGE_ENABLED_BY_DEFAULT 0x1
 #define SE_PRIVILEGE_ENABLED 0x2
 #define SE_PRIVILEGE_REMOVED 0x4
 #define GENERIC_ALL_RIGHT 0x10000000
@@ -61,6 +62,8 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE_ {
 #define LABEL_SECURITY_INFORMATION 0x10
 #define SDDL_REVISION_1 1
 #define TokenUser 1
+#define TokenGroups 2
+#define TokenPrivileges 3
 #define TokenPrimary 1
 #define TokenImpersonation 2
 #define TokenSessionId 12
@@ -126,6 +129,8 @@ WINBASEAPI NTSTATUS NTAPI NtCreateToken(PHANDLE token, ACCESS_MASK access, POBJE
                                         PLUID authentication_id, PLARGE_INTEGER expiration, PVOID user, PVOID groups,
                                         PVOID privileges, PVOID owner, PVOID primary_group, PVOID default_dacl,
                                         PVOID source);
+WINBASEAPI NTSTATUS NTAPI NtFilterToken(HANDLE token, ULONG flags, PVOID sids_to_disable, PVOID privileges_to_delete,
+                                        PVOID restricted_sids, PHANDLE new_token);
 
 /* ------------------------------------------------------------------ records */
 
@@ -146,6 +151,7 @@ struct SERVICE {
     WCHAR *DepServices; /* DependOnService, a multi sz. */
     WCHAR *DepGroups;   /* DependOnGroup. */
     DWORD Type, Start, ErrorControl, Tag;
+    BOOL Split;             /* a share process service that got a process of its own, see RunStatusType. */
     BOOL MarkedForDelete;   /* freed once nothing holds it and it has stopped. */
     BOOL DelayedStart;      /* DelayedAutostart: started after the other automatic services. */
     BOOL FailureOnNonCrash; /* failure actions also run when it stops with an error. */
@@ -170,6 +176,17 @@ struct SERVICE {
     ULONGLONG Stamp; /* when the state last changed, for notifications. */
 };
 
+/* a control waiting in an image's mailbox for its dispatcher to take it. */
+typedef struct SCM_CONTROL_POST {
+    DWORD Control, Reason;
+    UINT64 StatusId;
+    WCHAR *Name;
+    DWORD Count;
+    WCHAR **Arguments;
+    BYTE *EventData;
+    DWORD EventSize;
+} SCM_CONTROL_POST;
+
 struct IMAGE {
     IMAGE *Next;
     WCHAR *Key;       /* the command line, which share process services match on. */
@@ -186,6 +203,16 @@ struct IMAGE {
     DWORD Type;
     BOOL Connected;
     DWORD Refs;
+    /*
+     * a dispatcher of genuine sechost talks over the svcctl channel interface instead of the pipe: it answers the
+     * last control and takes the next one in one call, see rpc.c. the mailbox is guarded by MailLock.
+     */
+    BOOL Rpc;
+    CRITICAL_SECTION MailLock;
+    CONDITION_VARIABLE Mail;
+    BOOL Posted, Awaiting, Answered, Quit;
+    DWORD Answer;
+    SCM_CONTROL_POST Post;
 };
 
 typedef struct SCHANDLE SCHANDLE;
@@ -255,6 +282,13 @@ extern SERVICE *g_services;
 extern BOOL g_shutdown;
 extern BOOL g_database_ready;
 extern DWORD g_control_timeout, g_handler_timeout, g_autostart_timeout;
+/* services of svchost get a process each, SvcHostSplitThresholdInKB of the control key against the memory. */
+extern BOOL g_split_svchost;
+/* the type the status and the enumerations give: the registered one, with the own process bit once split. */
+static inline DWORD RunStatusType(const SERVICE *s)
+{
+    return s->Type | (s->Split ? SERVICE_WIN32_OWN_PROCESS : 0);
+}
 extern BOOL g_autostart_running;
 extern BOOL g_phase1_running;
 extern DWORD g_start_timeout;
@@ -272,6 +306,7 @@ void *SvcAlloc(SIZE_T size);
 void *SvcAllocZero(SIZE_T size);
 void SvcFree(void *p);
 HANDLE SvcCreateWorldEvent(const WCHAR *name);
+void SvcCreateSessionReadyEvent(void);
 WCHAR *SvcDup(const WCHAR *s);
 WCHAR *SvcDupN(const WCHAR *s, SIZE_T chars);
 DWORD SvcMultiSzChars(const WCHAR *m);
@@ -297,6 +332,8 @@ DWORD DbCheckParameters(BOOL creating, const WCHAR *name, DWORD type, DWORD star
 void DbRemove(SERVICE *s);
 HKEY DbOpenKey(const WCHAR *name, REGSAM access, BOOL create);
 WCHAR *DbReadString(HKEY key, const WCHAR *value, DWORD *chars);
+WCHAR *DbReadDisplayName(HKEY key);
+WCHAR *DbReadMuiString(HKEY key, const WCHAR *value);
 BOOL DbReadDword(HKEY key, const WCHAR *value, DWORD *out);
 DWORD DbWriteString(HKEY key, const WCHAR *value, const WCHAR *text, DWORD type);
 DWORD DbWriteDword(HKEY key, const WCHAR *value, DWORD data);
@@ -319,6 +356,9 @@ void RunStartTimeoutInit(void);
 DWORD RunControl(SERVICE *s, DWORD control, DWORD event_type, const void *event_data, DWORD event_size, DWORD *result);
 DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *status);
 DWORD RunOpenChannel(HANDLE pipe, DWORD pid);
+DWORD RunRpcOpenChannel(DWORD pid);
+DWORD RunRpcExchange(DWORD pid, DWORD answer, SCM_CONTROL_POST *post);
+void RunRpcChannelClosed(DWORD pid);
 void RunChannelOpened(HANDLE pipe, DWORD pid, BOOL ok);
 void RunStatusSnapshot(SERVICE *s, SERVICE_STATUS_PROCESS *out);
 void RunStateChanged(SERVICE *s, DWORD old_state);
@@ -351,8 +391,13 @@ DWORD AccessReadSd(SERVICE *s);
 DWORD AccessWriteSd(SERVICE *s);
 DWORD AccessQuerySd(PSECURITY_DESCRIPTOR sd, DWORD information, void *out, DWORD size, DWORD *needed);
 DWORD AccessSetSd(PSECURITY_DESCRIPTOR *sd, DWORD information, PSECURITY_DESCRIPTOR modification);
-HANDLE AccessServiceToken(SERVICE *s, DWORD *error);
+HANDLE AccessServiceToken(SERVICE *s, const WCHAR *const *sid_names, DWORD sid_count, PSECURITY_DESCRIPTOR *process_sd,
+                          DWORD *error);
 void AccessEnablePrivilege(const WCHAR *name);
+DWORD AccessPrivilegeValue(const WCHAR *name);
+HANDLE AccessManagerToken(DWORD *error);
+BOOL AccessValidPrivileges(const WCHAR *list);
+DWORD AccessRemovePrivileges(HANDLE token, const WCHAR *const *lists, DWORD count, BOOL strip);
 
 /* elevate.c: the broker for processes that need administrator rights. */
 typedef struct ELEVATE_REQUEST {
@@ -368,6 +413,10 @@ typedef struct ELEVATE_RESULT {
 } ELEVATE_RESULT;
 
 DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
+DWORD ElevateLaunchAs(HANDLE caller, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
+
+/* appinfo.c: the same broker as windows offers it, over rpc. */
+void AppInfoStart(void);
 
 /* lsa.c */
 DWORD SspiPublish(HANDLE pipe, UCHAR *id);
@@ -381,6 +430,73 @@ void TimerInit(void);
 
 /* main.c */
 void MainWake(void);
+DWORD MainRpcRequest(DWORD pid, DWORD op, SCM_WRITER *request, SCM_WRITER *reply);
+
+/* rpc.c: svcctl and the service channel over ncalrpc:[ntsvcs], as genuine sechost calls them. */
+void RpcStart(void);
+/* lsalookup.c: the lookup interface of the lsa over ncalrpc:[lsapolicylookup]. */
+void LsaLookupStart(void);
+BOOL LsaMachineUser(BYTE sid[68], WCHAR name[64]);
+/* lsarpc.c: the policy interface of the lsa over ncalrpc:[LSARPC_ENDPOINT]. */
+void LsaPolicyStart(void);
+void DpapiStart(void);
+/* dpapi.c: blobs of the data protection service for the security authority itself, in memory of MIDL_user_allocate. */
+DWORD DpapiProtect(DWORD flags, const WCHAR *description, const BYTE *in, DWORD in_size, const BYTE *entropy,
+                   DWORD entropy_size, BYTE **out, DWORD *out_size);
+DWORD DpapiUnprotect(const BYTE *in, DWORD in_size, const BYTE *entropy, DWORD entropy_size, BOOL system, BYTE **out,
+                     DWORD *out_size, WCHAR **description);
+
+/* cred.c: the credential sets of the accounts. a record has the layout of the credential of lsarpc's interface. */
+typedef struct CRED_ATTRIBUTE {
+    WCHAR *Keyword;
+    DWORD Flags;
+    DWORD ValueSize;
+    BYTE *Value;
+} CRED_ATTRIBUTE;
+
+typedef struct CRED_RECORD {
+    DWORD Flags;
+    DWORD Type;
+    WCHAR *TargetName;
+    WCHAR *Comment;
+    FILETIME LastWritten;
+    DWORD CredentialBlobSize;
+    BYTE *CredentialBlob;
+    DWORD Persist;
+    DWORD AttributeCount;
+    CRED_ATTRIBUTE *Attributes;
+    WCHAR *TargetAlias;
+    WCHAR *UserName;
+} CRED_RECORD;
+
+/* what a server says of itself, as CREDENTIAL_TARGET_INFORMATIONW. */
+typedef struct CRED_TARGET {
+    WCHAR *TargetName, *NetbiosServerName, *DnsServerName, *NetbiosDomainName, *DnsDomainName, *DnsTreeName, *PackageName;
+    DWORD Flags;
+    DWORD CredTypeCount;
+    DWORD *CredTypes;
+} CRED_TARGET;
+
+long CredStoreWrite(const CRED_RECORD *given, DWORD clear_size, DWORD flags);
+long CredStoreWriteDomain(const CRED_TARGET *target, const CRED_RECORD *given, DWORD clear_size, DWORD flags);
+long CredStoreReadDomain(const CRED_TARGET *target, DWORD flags, CRED_RECORD **items, DWORD **clear_sizes, DWORD *count);
+long CredStoreTargetInfo(const WCHAR *name, DWORD flags);
+long CredStoreSessionTypes(DWORD count, DWORD *persist);
+long CredStoreBackup(void);
+long CredStoreFindBest(const WCHAR *target, DWORD type, DWORD flags, CRED_RECORD *out, DWORD *clear_size);
+long CredStoreRead(const WCHAR *target, DWORD type, DWORD flags, CRED_RECORD *out, DWORD *clear_size);
+long CredStoreDelete(const WCHAR *target, DWORD type, DWORD flags);
+long CredStoreEnumerate(const WCHAR *filter, DWORD flags, CRED_RECORD **items, DWORD **clear_sizes, DWORD *count);
+void CredFreeRecord(CRED_RECORD *c);
+/* the task scheduler of schedule.c, and the wait for its endpoint to be known to the mapper. */
+void ScheduleStart(void);
+void TriggerStart(void);
+/* trigger.c: the triggers of the key of a service, as RQueryServiceConfigEx gives them. */
+DWORD TriggerWriteInfo(HKEY service, SCM_WRITER *w);
+void ScheduleWaitRegistered(DWORD milliseconds);
+void AppInfoWaitRegistered(DWORD milliseconds);
+/* a pipe value that stands for the caller of the current rpc call, for the access checks. */
+#define SCM_RPC_CALLER ((HANDLE)(LONG_PTR)-10)
 void MainCollect(void);
 void entry(void);
 

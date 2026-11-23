@@ -45,7 +45,7 @@ void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length)
 {
     UCHAR buffer[1024];
     MimeEvtDebugOutput *evt = (MimeEvtDebugOutput *)buffer;
-    ULONG64 request = process ? process->MimeRequestId : 0;
+    ULONG64 request = process ? process->MimeDebugRequest : 0;
     while (length) {
         SIZE_T n = length;
         if (n > sizeof(buffer) - sizeof(*evt))
@@ -178,8 +178,37 @@ static NTSTATUS choose_token(PCUNICODE_STRING image, ULONG level, BOOLEAN *eleva
     return STATUS_SUCCESS;
 }
 
+/*
+ * the first program waits for the services to have started, as a session of windows opens after them: a program that
+ * runs before the endpoints of the manager answer finds no lsa, no data protection and no elevation. the manager
+ * makes the event when it starts and sets it once its services run. the wait is bounded, a machine without the
+ * manager still runs programs.
+ */
+static void wait_for_services(void)
+{
+    static BOOLEAN waited;
+    if (waited)
+        return;
+    waited = TRUE;
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\BaseNamedObjects\\SC_AutoStartComplete");
+    LARGE_INTEGER step = {.QuadPart = -10 * 10000ll}, limit = {.QuadPart = -5000 * 10000ll};
+    PVOID event = nullptr;
+    for (ULONG tries = 0; tries < 300; tries++) {
+        if (NT_SUCCESS(ObReferenceObjectByName(&name, OBJ_CASE_INSENSITIVE, nullptr, 0, ExEventType, KernelMode,
+                                               nullptr, &event)))
+            break;
+        event = nullptr;
+        KeDelayExecutionThread(KernelMode, FALSE, &step);
+    }
+    if (!event)
+        return;
+    KeWaitForSingleObject(event, Executive, KernelMode, FALSE, &limit);
+    ObDereferenceObject(event);
+}
+
 static void handle_run(const MimeCtrlRun *run, ULONG size)
 {
+    wait_for_services();
     ULONG64 chars = (ULONG64)run->image_chars + run->cmdline_chars + run->cwd_chars;
     if (sizeof(*run) + chars * sizeof(WCHAR) > size || run->image_chars == 0) {
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)STATUS_INVALID_PARAMETER, 0);
@@ -257,7 +286,23 @@ static void load_elevation_policy(void)
         if (value)
             flags |= policies[i].Bit;
     }
-    SharedUserData->SharedDataFlags = (SharedUserData->SharedDataFlags & ~0xEu) | flags;
+    /* DbgSplitTokenEnabled follows user account control. */
+    if (flags & 2)
+        flags |= 0x800;
+    SharedUserData->SharedDataFlags = (SharedUserData->SharedDataFlags & ~0x80Eu) | flags;
+}
+
+/* the count of boots windows keeps for the prefetcher, one more at each boot. */
+static void load_boot_id(void)
+{
+    static const WCHAR key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management"
+                               L"\\PrefetchParameters";
+    ULONG type = 0, length = sizeof(ULONG), id = 0;
+    if (!NT_SUCCESS(CmQueryValue(key, L"BootId", &type, &id, &length)) || type != 4 /* REG_DWORD */ || length < sizeof(ULONG))
+        id = 0;
+    id++;
+    CmSetValue(key, L"BootId", 4, &id, sizeof(id));
+    SharedUserData->BootId = id;
 }
 
 /* runs on the phase 1 system thread and never returns. */
@@ -281,6 +326,7 @@ void MiSessionInitialize(void)
     send_message(&ready, sizeof(ready));
     KiLogPrintf("session ready");
     load_elevation_policy();
+    load_boot_id();
     /* the host gets its answer first; the services start alongside the first requests. */
     PsStartServiceController();
     ExStartupRunOnce();

@@ -76,8 +76,11 @@ static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
 
 static void host_icon(WND *w)
 {
+    /* a window with no icon of its own shows the one of its program's file, as the taskbar of windows does. */
+    BOOLEAN own = w->Icon || w->IconSmall || (w->Class && (w->Class->Icon || w->Class->IconSmall));
     HICON handles[] = {w->Icon, w->IconSmall, w->Class ? w->Class->Icon : nullptr,
-                       w->Class ? w->Class->IconSmall : nullptr};
+                       w->Class ? w->Class->IconSmall : nullptr,
+                       !own && w->Thread ? CursorProcessIcon(w->Thread->Process) : nullptr};
     SURFACE *surface = nullptr;
     HICON icon = nullptr;
     for (ULONG i = 0; i < RTL_NUMBER_OF(handles); i++) {
@@ -305,14 +308,18 @@ void HostConfigure(WND *w, BOOLEAN activate)
         w->HostIcon = nullptr;
 }
 
-/* the compositor takes over the button during a move or resize; release it in the guest. */
-BOOLEAN HostMoveSize(WND *w, ULONG edge)
+/*
+ * the compositor takes over the button during a move or resize; release it in the guest. held keeps it down for a
+ * caller that is told when the drag ends, as the button is down all through a drag on windows.
+ */
+BOOLEAN HostMoveSize(WND *w, ULONG edge, BOOLEAN held)
 {
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
         return FALSE;
     if (HalMimeHypercall(MIME_HC_WIN_MOVESIZE, window_id(w), edge, 0, 0, 0, 0, nullptr) != MIME_HC_STATUS_OK)
         return FALSE;
-    InputReleaseLeftButton();
+    if (!held)
+        InputReleaseLeftButton();
     return TRUE;
 }
 
@@ -477,6 +484,7 @@ void PaintPresent(WND *top)
     /* draw a pending frame before the first present. */
     if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && !(top->LayerFlags & MIME_LAYER_UPDATE))
         return;
+    DeskTouch();
     RECT dirty = s->Dirty;
     s->Dirty = (RECT){0, 0, 0, 0};
     /* the border only changes when the program painted against the client edge. */
@@ -659,7 +667,18 @@ HDC NTAPI NtUserGetWindowDC(HWND hwnd)
     return NtUserGetDCEx(hwnd, nullptr, DCX_WINDOW | DCX_USESTYLE);
 }
 
-int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
+/* the window of a dc of the cache, the desktop for the screen; a memory dc or one of a single monitor has none. */
+HWND NTAPI NtUserWindowFromDC(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    HWND hwnd = dc && (dc->Flags & DC_WINDOW) && !dc->OfMonitor && dc->Window ? WndHandle(dc->Window) : nullptr;
+    UserLeave();
+    return hwnd;
+}
+
+/* user32 26300.9457 gives the device context alone. */
+int NTAPI NtUserReleaseDC(HDC hdc)
 {
     UserEnter();
     DC *dc = DcLookup(hdc);
@@ -685,7 +704,6 @@ int NTAPI NtUserReleaseDC(HWND hwnd, HDC hdc)
         ok = 1;
     }
     UserLeave();
-    (void)hwnd;
     return ok;
 }
 
@@ -863,7 +881,8 @@ BOOL NTAPI NtUserInvalidateRect(HWND hwnd, const RECT *rect, BOOL erase)
 
 BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect)
 {
-    return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE | RDW_NOCHILDREN);
+    /* as on windows, the children of a window that does not clip them are validated with it: see upd.c. */
+    return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE);
 }
 
 static void erase_update(WND *w)
@@ -915,4 +934,80 @@ int NTAPI NtUserGetUpdateRgn(HWND hwnd, HRGN region, BOOL erase)
     }
     UserLeave();
     return kind;
+}
+
+/*
+ * xxxDoSyncPaint: SetWindowPos of a window of the calling thread that it shows or makes larger has its frame
+ * drawn and its background erased before WM_WINDOWPOSCHANGED, unless SWP_DEFERERASE asks to wait. the children
+ * wait for their WM_PAINT.
+ */
+void PaintSync(WND *w)
+{
+    if (!w || w->Thread != W32GetThread() || !WndIsVisible(w))
+        return;
+    UserReference(&w->Header);
+    if (w->Flags & WNDF_FRAME_DIRTY) {
+        w->Flags &= ~WNDF_FRAME_DIRTY;
+        MsgSend(w, WM_NCPAINT, 1, 0);
+    }
+    if (!w->Header.Destroyed)
+        erase_update(w);
+    UserDereference(&w->Header);
+}
+
+void PaintUpdateNow(WND *w)
+{
+    if (w->Thread == W32GetThread())
+        update_now(w, TRUE);
+}
+
+/* paints what the window and its children have to paint now, as RedrawWindow with RDW_UPDATENOW does. */
+BOOL NTAPI NtUserUpdateWindow(HWND hwnd)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w && w->Thread == W32GetThread()) {
+        /*
+         * measured on windows 11 26300 with upd.c of the research repository: what a child is about to paint is
+         * taken out of the update regions of its parents that do not clip their children, so a parent that erases
+         * later leaves what the child drew. a child that is only validated is drawn over.
+         */
+        if (!RgnIsEmpty(&w->Update))
+            for (WND *c = w; (c->Style & WS_CHILD) && c->Parent && c->Parent != WndDesktop(); c = c->Parent) {
+                WND *p = c->Parent;
+                if ((p->Style & WS_CLIPCHILDREN) || RgnIsEmpty(&p->Update))
+                    continue;
+                RgnCombine(&p->Update, &p->Update, &w->Update, RGN_DIFF);
+                if (RgnIsEmpty(&p->Update))
+                    p->Flags &= ~(WNDF_NEEDS_ERASE | WNDF_ERASE_PENDING);
+            }
+        update_now(w, TRUE);
+    }
+    UserLeave();
+    return w != nullptr;
+}
+
+/*
+ * PrintWindow: what the window shows, frame and all or its client area alone with PW_CLIENTONLY, copied into the
+ * device context. a window of windows 11 is kept whole by the compositor; a window of mime is kept whole by the
+ * surface of its top level window, which the copy reads.
+ */
+BOOL NTAPI NtUserPrintWindow(HWND hwnd, HDC hdc, UINT flags)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = FALSE;
+    if (w && w != WndDesktop()) {
+        BOOLEAN client = (flags & 1) != 0; /* PW_CLIENTONLY */
+        RECT r = client ? w->ClientRect : w->WindowRect;
+        HDC from = PaintGetDC(w, nullptr, client ? DCX_CACHE : DCX_WINDOW | DCX_CACHE);
+        if (from) {
+            ok = NtGdiBitBlt(hdc, 0, 0, r.right - r.left, r.bottom - r.top, from, 0, 0, SRCCOPY, 0, 0);
+            DC *dc = DcLookup(from);
+            if (dc)
+                PaintReleaseDC(dc);
+        }
+    }
+    UserLeave();
+    return ok;
 }

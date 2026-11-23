@@ -1,0 +1,18 @@
+LIBRARY winsta.dll
+EXPORTS
+    LogonIdFromWinStationNameA@12
+    LogonIdFromWinStationNameW@12
+    WinStationCloseServer@4
+    WinStationEnumerateW@12
+    WinStationFreeMemory@4
+    WinStationGetCurrentSessionCapabilities@8
+    WinStationGetLoggedOnCount@8
+    WinStationIsCurrentSessionRemoteable@4
+    WinStationIsSessionRemoteable@12
+    WinStationNameFromLogonIdA@12
+    WinStationNameFromLogonIdW@12
+    WinStationOpenServerW@4
+    WinStationQueryInformationW@24
+    WinStationRegisterCurrentSessionNotificationEvent@12
+    WinStationUnRegisterNotificationEvent@4
+    WinStationVerify@8

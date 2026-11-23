@@ -324,7 +324,7 @@ BOOL WhPickProxy(WH_OBJECT *request, LPCWSTR host, BOOL secure, PWSTR proxy_host
 
 /* auto proxy. */
 
-static BOOL ValidOptions(const WINHTTP_AUTOPROXY_OPTIONS *options)
+BOOL WhValidAutoProxyOptions(const WINHTTP_AUTOPROXY_OPTIONS *options)
 {
     DWORD flags = options->dwFlags;
     if (!(flags & 0x703) || flags & 0xF800F8F0 || (flags & 0x30000) == 0x30000)
@@ -535,6 +535,11 @@ static DWORD Resolve(LPCWSTR url, const WINHTTP_AUTOPROXY_OPTIONS *options, WINH
     return error;
 }
 
+DWORD WhAutoProxy(LPCWSTR url, const WINHTTP_AUTOPROXY_OPTIONS *options, WINHTTP_PROXY_RESULT *result)
+{
+    return Resolve(url, options, result);
+}
+
 void WINAPI WinHttpFreeProxyResult(WINHTTP_PROXY_RESULT *result)
 {
     if (!result)
@@ -561,7 +566,7 @@ BOOL WINAPI WinHttpGetProxyForUrl(HINTERNET handle, LPCWSTR url, WINHTTP_AUTOPRO
 {
     if (!handle)
         return WhFail(ERROR_INVALID_HANDLE);
-    if (!url || !options || !info || !ValidOptions(options))
+    if (!url || !options || !info || !WhValidAutoProxyOptions(options))
         return WhFail(ERROR_INVALID_PARAMETER);
     WH_OBJECT *session = WhReference(handle);
     if (!session)
@@ -685,7 +690,7 @@ DWORD WINAPI WinHttpGetProxyForUrlEx2(HINTERNET handle, PCWSTR url, WINHTTP_AUTO
 {
     if (!handle)
         return ERROR_INVALID_HANDLE;
-    if (!url || !options || !selection_size != !selection || !ValidOptions(options))
+    if (!url || !options || !selection_size != !selection || !WhValidAutoProxyOptions(options))
         return ERROR_INVALID_PARAMETER;
     WH_OBJECT *resolver = WhReference(handle);
     if (!resolver)

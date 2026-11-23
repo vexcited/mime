@@ -47,6 +47,8 @@
 #define SE_PRIVILEGE_ENABLED_BY_DEFAULT 0x1
 #define SE_PRIVILEGE_ENABLED 0x2
 #define SE_PRIVILEGE_REMOVED 0x4
+#define SE_PRIVILEGE_USED_FOR_ACCESS 0x80000000u
+#define PRIVILEGE_SET_ALL_NECESSARY 1
 #define SE_PRIVILEGE_VALID (SE_PRIVILEGE_ENABLED_BY_DEFAULT | SE_PRIVILEGE_ENABLED | SE_PRIVILEGE_REMOVED)
 
 /* privilege luids. */
@@ -162,5 +164,6 @@ NTSTATUS SepImpersonateClient(PETHREAD thread, PTOKEN token, BOOLEAN copy_on_ope
 NTSTATUS SepSetThreadToken(HANDLE thread_handle, PVOID info, ULONG length);
 NTSTATUS SepSetProcessAccessToken(HANDLE process_handle, PVOID info, ULONG length);
 NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, PTOKEN *out);
+void SeSetVirtualizationToken(PTOKEN token, BOOLEAN enable);
 
 #endif

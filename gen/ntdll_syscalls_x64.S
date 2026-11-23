@@ -6360,3 +6360,13 @@ ZwWaitLowEventPair:
     ret
 1:  int $0x2E
     ret
+    /* Windows keeps NtGetTickCount right behind the last service stub, and it is no service: it reads the shared
+     * page. Programs rank the Nt* exports by address, so its place decides the number of every stub before it. */
+    .globl NtGetTickCount
+    .p2align 5
+NtGetTickCount:
+    movl 0x7FFE0004, %ecx
+    movq 0x7FFE0320, %rax
+    mulq %rcx
+    shrdq $24, %rdx, %rax
+    ret

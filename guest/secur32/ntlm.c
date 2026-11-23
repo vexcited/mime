@@ -19,8 +19,9 @@ WINBASEAPI_SEC BOOL WINAPI LookupAccountSidW(LPCWSTR system, PVOID sid, LPWSTR n
 WINBASEAPI_SEC BOOL WINAPI SetThreadToken(PHANDLE thread, HANDLE token);
 WINBASEAPI_SEC BOOL WINAPI OpenThreadToken(HANDLE thread, DWORD access, BOOL as_self, PHANDLE token);
 WINBASEAPI_SEC BOOL WINAPI OpenProcessToken(HANDLE process, DWORD access, PHANDLE token);
-WINBASEAPI_SEC DWORD WINAPI SspiPublishToken(BYTE *ticket);
-WINBASEAPI_SEC DWORD WINAPI SspiRedeemToken(const BYTE *ticket, HANDLE *token);
+/* see ticket.c. */
+DWORD SecPublishToken(BYTE *ticket);
+DWORD SecRedeemToken(const BYTE *ticket, HANDLE *token);
 
 #define TOKEN_QUERY_ 0x0008
 #define TOKEN_USER_ 1
@@ -361,7 +362,7 @@ static SECURITY_STATUS accept_authenticate(AUTH_CONTEXT *a, const UCHAR *m, ULON
     if (nt_length != 24 || memcmp(nt + 16, a->ContextId, 8))
         return SEC_E_LOGON_DENIED;
     HANDLE token;
-    if (SspiRedeemToken(nt, &token))
+    if (SecRedeemToken(nt, &token))
         return SEC_E_LOGON_DENIED;
     PWSTR name = token_name(token);
     /* the account it says it is must be the one the ticket belongs to. */
@@ -725,7 +726,7 @@ SECURITY_STATUS SecAuthEstablish(const SEC_PACKAGE *package, PCredHandle credent
                 goto done;
             }
             UCHAR ticket[16];
-            if (SspiPublishToken(ticket)) {
+            if (SecPublishToken(ticket)) {
                 status = SEC_E_NO_CREDENTIALS;
                 goto done;
             }
