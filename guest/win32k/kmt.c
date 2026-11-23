@@ -207,6 +207,67 @@ NTSTATUS NTAPI NtGdiDdDDICloseAdapter(const UINT *user)
     return lookup(handle, &a) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
 }
 
+/*
+ * D3DKMTIsFeatureEnabled, as dxgkrnl 26300 answers it on a desktop with no overrides: {adapter, feature, result}, of
+ * which only the result is written. the top four bits of a feature are its category. adapter 0 asks the features of
+ * the system, and a feature known only to adapters is a wrong parameter then. an adapter answers like a driver with
+ * none of the feature interface, hardware scheduling or a flip queue. a feature nobody knows is 0, and no error.
+ */
+#define FEATURE_KNOWN 0x00020000u        /* the feature exists. */
+#define FEATURE_ON 0x00130001u           /* known, supported and enabled, version 1. */
+#define FEATURE_DRIVER_ON 0x001F0001u    /* the same, and the driver supports it on this configuration. */
+#define FEATURE_SUPPORTED 0x00120000u    /* known and supported, not enabled. */
+#define FEATURE_ADAPTER_ONLY 0xFFFFFFFFu /* known to adapters alone: a wrong parameter for the system. */
+
+static const ULONG g_driver_features[50] = {
+    [0 ... 49] = FEATURE_KNOWN, [3] = FEATURE_DRIVER_ON, [5] = FEATURE_DRIVER_ON,
+    [34] = FEATURE_ON,          [35] = FEATURE_ON,       [36] = FEATURE_ON,
+};
+static const ULONG g_os_features[10] = {FEATURE_ON,        FEATURE_KNOWN, FEATURE_KNOWN, FEATURE_ON,    FEATURE_SUPPORTED,
+                                        FEATURE_ON,        FEATURE_ON,    FEATURE_KNOWN, FEATURE_KNOWN, FEATURE_KNOWN};
+static const ULONG g_os2_features[3] = {FEATURE_ON, FEATURE_ON, FEATURE_ON};
+/* the test features: 0 to 7 follow their defaults and those they depend on, the others are shaped by test settings. */
+static const ULONG g_test_features[19] = {
+    FEATURE_ON, FEATURE_SUPPORTED, FEATURE_ON, FEATURE_SUPPORTED, FEATURE_ON, FEATURE_SUPPORTED, FEATURE_ON, FEATURE_SUPPORTED,
+    [8 ... 17] = FEATURE_KNOWN, [18] = FEATURE_SUPPORTED};
+
+static ULONG feature_answer(UINT id, BOOLEAN adapter)
+{
+    UINT index = id & 0x0FFFFFFF;
+    switch (id >> 28) {
+    case 0:
+        if (index >= RTL_NUMBER_OF(g_driver_features))
+            return 0;
+        return adapter || index == 36 ? g_driver_features[index] : FEATURE_ADAPTER_ONLY;
+    case 1:
+        return index < RTL_NUMBER_OF(g_os_features) ? g_os_features[index] : 0;
+    case 2:
+        if (index >= RTL_NUMBER_OF(g_os2_features))
+            return 0;
+        return adapter || index == 2 ? g_os2_features[index] : FEATURE_ADAPTER_ONLY;
+    case 3:
+        if (index >= RTL_NUMBER_OF(g_test_features))
+            return 0;
+        return adapter || index == 18 ? g_test_features[index] : FEATURE_ADAPTER_ONLY;
+    default:
+        return 0;
+    }
+}
+
+NTSTATUS NTAPI NtDxgkIsFeatureEnabled(UINT *user)
+{
+    UINT in[3];
+    KMT_ADAPTER a;
+    if (!NT_SUCCESS(MimeCopyFromUser(in, user, sizeof(in))))
+        return STATUS_INVALID_PARAMETER;
+    if (in[0] && !lookup(in[0], &a))
+        return STATUS_INVALID_PARAMETER;
+    ULONG result = feature_answer(in[1], in[0] != 0);
+    if (result == FEATURE_ADAPTER_ONLY)
+        return STATUS_INVALID_PARAMETER;
+    return NT_SUCCESS(MimeCopyToUser(&user[2], &result, sizeof(result))) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+}
+
 static NTSTATUS answer(PVOID data, UINT size, const void *value, UINT length)
 {
     if (size != length)
@@ -282,4 +343,178 @@ NTSTATUS NTAPI NtGdiDdDDIQueryAdapterInfo(const KMT_QUERYADAPTERINFO *user)
         /* as windows refuses a type an adapter has no answer for. */
         return STATUS_INVALID_PARAMETER;
     }
+}
+
+/*
+ * D3DKMTQueryStatistics, as dxgkrnl 26300 and dxgmms2 answer it: spec-querystatistics.md of scratch/syscalls in the
+ * research repository. the request is 0x328 bytes, the result the 0x308 at +0x18, written back only on success. Mime
+ * has no video memory manager or scheduler, so every counter is 0 and only the shape of each adapter shows. no process
+ * creates a dxgkrnl device here, so the queries about a process on an adapter fail as they do on windows without one.
+ */
+#define QS_SIZE 0x328
+#define QS_RESULT 0x18
+#define QS_INPUT 0x320
+
+enum {
+    QS_ADAPTER, QS_PROCESS, QS_PROCESS_ADAPTER, QS_SEGMENT, QS_PROCESS_SEGMENT, QS_NODE, QS_PROCESS_NODE,
+    QS_VIDPNSOURCE, QS_PROCESS_VIDPNSOURCE, QS_PROCESS_SEGMENT_GROUP, QS_PHYSICAL_ADAPTER, QS_ADAPTER2, QS_SEGMENT2,
+    QS_PROCESS_ADAPTER2, QS_PROCESS_SEGMENT2, QS_PROCESS_SEGMENT_GROUP2, QS_SEGMENT_USAGE, QS_SEGMENT_GROUP_USAGE,
+    QS_NODE2, QS_PROCESS_NODE2,
+};
+
+typedef struct KMT_SEGMENT {
+    ULONG64 Size;       /* all ones for the system memory segment video memory management adds. */
+    BOOLEAN Aperture;   /* an aperture or system memory segment. */
+    ULONG Power;        /* PowerFlags. */
+    ULONG Properties;   /* SegmentProperties: system memory, type, memory group, all cpu visible. */
+} KMT_SEGMENT;
+
+typedef struct KMT_SHAPE {
+    ULONG Segments, Nodes, Sources, Groups;
+    ULONG64 Group[2];
+    BOOLEAN Driver; /* the driver answers the performance data queries. */
+    BOOLEAN VSync;
+    KMT_SEGMENT Segment[2];
+} KMT_SHAPE;
+
+/*
+ * the basic render driver has one aperture segment the size of the memory, cpu visible, a 3d engine per processor and
+ * one more, between 3 and 62, and no performance data; its memory group is half the memory. measured on windows 11
+ * with qs.c of scratch/syscalls/querystatistics in the research repository. a gpu has its local memory and the
+ * system memory group, and one engine: Mime submits on one queue. both get the system memory segment of video memory
+ * management last.
+ */
+static void shape_of(const KMT_ADAPTER *a, KMT_SHAPE *s)
+{
+    memset(s, 0, sizeof(*s));
+    s->Sources = 1;
+    s->Segments = 2;
+    if (a->Vendor == 0x1414) {
+        ULONG nodes = HalBootInfo->cpu_count + 1;
+        s->Nodes = nodes < 3 ? 3 : nodes > 62 ? 62 : nodes;
+        s->Groups = 1;
+        s->Group[0] = HalBootInfo->ram_size / 2;
+        s->Segment[0] = (KMT_SEGMENT){HalBootInfo->ram_size, TRUE, 0, 0x101};
+        s->Segment[1] = (KMT_SEGMENT){~0ull, TRUE, 3, 0x109};
+        return;
+    }
+    s->Nodes = 1;
+    s->Groups = 2;
+    s->Group[0] = a->Dedicated;
+    s->Group[1] = HalBootInfo->ram_size / 2;
+    s->Driver = TRUE;
+    s->VSync = (a->Type & ADAPTER_DISPLAY) != 0;
+    s->Segment[0] = (KMT_SEGMENT){a->Dedicated, FALSE, 0, 1 << 2};
+    s->Segment[1] = (KMT_SEGMENT){~0ull, TRUE, 3, 0x149};
+}
+
+static const KMT_ADAPTER *adapter_by_luid(const KMT_ADAPTER *list, ULONG count, LUID luid)
+{
+    for (ULONG i = 0; i < count; i++)
+        if (!luid.HighPart && luid.LowPart == list[i].Luid)
+            return &list[i];
+    return nullptr;
+}
+
+static NTSTATUS query_statistics(const UCHAR *in, const KMT_ADAPTER *a, PUCHAR out)
+{
+    KMT_SHAPE s;
+    shape_of(a, &s);
+    ULONG type = *(const ULONG *)in;
+    ULONG id = *(const ULONG *)(in + QS_INPUT);
+    USHORT physical = *(const USHORT *)(in + QS_INPUT), second = *(const USHORT *)(in + QS_INPUT + 2);
+    switch (type) {
+    case QS_ADAPTER:
+    case QS_ADAPTER2:
+        if (type == QS_ADAPTER2 && physical)
+            return STATUS_INVALID_PARAMETER;
+        *(ULONG *)(out + 0) = s.Segments;
+        *(ULONG *)(out + 4) = s.Nodes;
+        *(ULONG *)(out + 8) = s.Sources;
+        *(ULONG *)(out + 12) = s.VSync;
+        *(ULONG *)(out + 712) = s.Groups;
+        return STATUS_SUCCESS;
+    case QS_PROCESS:
+        *(ULONG *)(out + 0) = s.Nodes;
+        *(ULONG *)(out + 4) = s.Sources;
+        return STATUS_SUCCESS;
+    case QS_SEGMENT:
+    case QS_SEGMENT2:
+    case QS_SEGMENT_USAGE: {
+        ULONG segment = type == QS_SEGMENT ? id : second;
+        if ((type != QS_SEGMENT && physical) || segment >= s.Segments)
+            return STATUS_INVALID_PARAMETER;
+        const KMT_SEGMENT *g = &s.Segment[segment];
+        if (type == QS_SEGMENT_USAGE) {
+            *(ULONG64 *)(out + 8) = g->Size;
+            return STATUS_SUCCESS;
+        }
+        *(ULONG64 *)(out + 0) = g->Size;
+        *(ULONG *)(out + 40) = g->Aperture;
+        *(ULONG64 *)(out + 96) = g->Power;
+        *(ULONG64 *)(out + 104) = g->Properties;
+        return STATUS_SUCCESS;
+    }
+    case QS_SEGMENT_GROUP_USAGE: {
+        if (physical || second > 1)
+            return STATUS_INVALID_PARAMETER;
+        *(ULONG64 *)(out + 8) = s.Group[second];
+        return STATUS_SUCCESS;
+    }
+    case QS_NODE:
+    case QS_NODE2:
+        if ((type == QS_NODE2 && physical) || (type == QS_NODE ? id : second) >= s.Nodes)
+            return STATUS_INVALID_PARAMETER;
+        /* the driver's frequencies and voltages follow the counters: a driver without them fails the query. */
+        return s.Driver ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case QS_VIDPNSOURCE:
+        if (id >= s.Sources)
+            return STATUS_INVALID_PARAMETER;
+        *(ULONG *)(out + 16) = s.VSync;
+        return STATUS_SUCCESS;
+    case QS_PHYSICAL_ADAPTER:
+        if (a->Wddm < 2400)
+            return STATUS_NOT_IMPLEMENTED;
+        if (id || !s.Driver)
+            return STATUS_INVALID_PARAMETER;
+        return STATUS_SUCCESS;
+    default:
+        /* the process ones need a device of the process on the adapter, and other types are unknown. */
+        return STATUS_INVALID_PARAMETER;
+    }
+}
+
+NTSTATUS NTAPI NtGdiDdDDIQueryStatistics(PVOID user)
+{
+    UCHAR request[QS_SIZE];
+    if (!NT_SUCCESS(MimeCopyFromUser(request, user, sizeof(request))))
+        return STATUS_INVALID_PARAMETER;
+    UCHAR result[QS_INPUT - QS_RESULT];
+    memset(result, 0, sizeof(result));
+    KMT_ADAPTER list[KMT_ADAPTERS];
+    ULONG count = adapters(list);
+    LUID luid;
+    memcpy(&luid, request + 4, sizeof(luid));
+    const KMT_ADAPTER *a = adapter_by_luid(list, count, luid);
+    if (!a)
+        return STATUS_INVALID_PARAMETER;
+    HANDLE process = *(HANDLE *)(request + 0x10);
+    if (process) {
+        PEPROCESS target;
+        if (!NT_SUCCESS(ObReferenceObjectByHandle(process, PROCESS_QUERY_INFORMATION, PsProcessType, UserMode,
+                                                  (PVOID *)&target, nullptr)))
+            return STATUS_INVALID_PARAMETER;
+        BOOLEAN exiting = PsGetProcessExitStatus(target) != STATUS_PENDING;
+        ObDereferenceObject(target);
+        if (exiting)
+            return STATUS_INVALID_PARAMETER;
+    }
+    /* a display adapter with no render engine is answered by the basic render driver it is paired with. */
+    if (!(a->Type & ADAPTER_RENDER))
+        a = &list[count - 1];
+    NTSTATUS status = query_statistics(request, a, result);
+    if (!NT_SUCCESS(status))
+        return status;
+    return NT_SUCCESS(MimeCopyToUser((PUCHAR)user + QS_RESULT, result, sizeof(result))) ? STATUS_SUCCESS
+                                                                                         : STATUS_INVALID_PARAMETER;
 }

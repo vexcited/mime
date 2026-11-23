@@ -26,9 +26,11 @@ void NtGdiCreateRoundRectRgn(void);
 void NtGdiCreateSolidBrush(void);
 void NtGdiDdDDICreateDCFromMemory(void);
 void NtDxgkEnumAdapters3(void);
+void NtDxgkIsFeatureEnabled(void);
 void NtGdiDdDDIOpenAdapterFromLuid(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
+void NtGdiDdDDIQueryStatistics(void);
 void NtGdiDdDDIDestroyDCFromMemory(void);
 void NtGdiDeleteObjectApp(void);
 void NtGdiDoPalette(void);
@@ -441,8 +443,6 @@ void NtUserUpdateLayeredWindow(void);
 void NtUserValidateRect(void);
 void NtUserWaitForInputIdle(void);
 void NtUserWaitMessage(void);
-
-void Win32kInitializeServices(SERVICE *table)
 void NtGdiGetPublicFontTableChangeCookie(void);
 void NtUserChangeWindowMessageFilterEx(void);
 void NtUserChildWindowFromPointEx(void);
@@ -456,6 +456,8 @@ void NtUserSetProcessLaunchForegroundPolicy(void);
 void NtUserSetWindowDisplayAffinity(void);
 void NtUserThreadMessageQueueAttached(void);
 void NtUserZapActiveAndFocus(void);
+
+void Win32kInitializeServices(SERVICE *table)
 {
 #ifdef MIME_SVC_NtGdiAbortPath
     table[MIME_SVC_NtGdiAbortPath & 0xFFF] = (SERVICE){(void *)NtGdiAbortPath, STACK_ARGS(1), 1, 0};
@@ -547,6 +549,11 @@ void NtUserZapActiveAndFocus(void);
 #else
 #warning "NtDxgkEnumAdapters3 has no syscall number"
 #endif
+#ifdef MIME_SVC_NtDxgkIsFeatureEnabled
+    table[MIME_SVC_NtDxgkIsFeatureEnabled & 0xFFF] = (SERVICE){(void *)NtDxgkIsFeatureEnabled, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtDxgkIsFeatureEnabled has no syscall number"
+#endif
 #ifdef MIME_SVC_NtGdiDdDDIOpenAdapterFromLuid
     table[MIME_SVC_NtGdiDdDDIOpenAdapterFromLuid & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIOpenAdapterFromLuid, STACK_ARGS(1), 1, 0};
 #else
@@ -561,6 +568,11 @@ void NtUserZapActiveAndFocus(void);
     table[MIME_SVC_NtGdiDdDDIQueryAdapterInfo & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIQueryAdapterInfo, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtGdiDdDDIQueryAdapterInfo has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiDdDDIQueryStatistics
+    table[MIME_SVC_NtGdiDdDDIQueryStatistics & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIQueryStatistics, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiDdDDIQueryStatistics has no syscall number"
 #endif
 #ifdef MIME_SVC_NtGdiDdDDICreateDCFromMemory
     table[MIME_SVC_NtGdiDdDDICreateDCFromMemory & 0xFFF] = (SERVICE){(void *)NtGdiDdDDICreateDCFromMemory, STACK_ARGS(1), 1, 0};
@@ -2623,7 +2635,6 @@ void NtUserZapActiveAndFocus(void);
 #else
 #warning "NtUserWaitMessage has no syscall number"
 #endif
-}
 #ifdef MIME_SVC_NtGdiGetPublicFontTableChangeCookie
     table[MIME_SVC_NtGdiGetPublicFontTableChangeCookie & 0xFFF] = (SERVICE){(void *)NtGdiGetPublicFontTableChangeCookie, STACK_ARGS(0), 1, 0};
 #else
@@ -2689,3 +2700,4 @@ void NtUserZapActiveAndFocus(void);
 #else
 #warning "NtUserZapActiveAndFocus has no syscall number"
 #endif
+}
