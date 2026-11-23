@@ -632,15 +632,17 @@ static SIGNING_ENTRY *find_entry(const LARGE_INTEGER *id)
 }
 
 /*
- * measured on windows 11 26300: a level is set only for the files given, with flag 4; flags 0, 1 and 8 are refused,
- * flag 2 and an empty list are wrong parameters, a handle that may write the file is refused. a file signed for microsoft
- * gets level 8 and the sha-256 of the signer's tbs certificate as thumbprint, an unsigned one level 2 and none.
+ * measured on windows 11 26300: a level is set only for the files given, with flag 4 whatever else is set; without it
+ * the call is refused, flag 2 and an empty list are wrong parameters, a handle that may write the file is refused. a
+ * file signed for microsoft gets level 8 and the sha-256 of the signer's tbs certificate as thumbprint, an unsigned one
+ * level 2 and none.
  */
 NTSTATUS NTAPI NtSetCachedSigningLevel(ULONG flags, UCHAR input_level, PHANDLE sources, ULONG count, HANDLE target)
 {
     if (!count || !sources || (flags & 2))
         return STATUS_INVALID_PARAMETER;
-    if (!(flags & SIGNING_FLAG_CACHE) || (flags & ~SIGNING_FLAG_CACHE))
+    /* measured: without flag 4 it is refused, and the other flags are let through. */
+    if (!(flags & SIGNING_FLAG_CACHE))
         return STATUS_ACCESS_DENIED;
     ACCESS_MASK granted = 0;
     NTSTATUS status = file_handle(target, &granted);
