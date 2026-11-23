@@ -496,6 +496,8 @@ static void close_object_handle(PEPROCESS process, PVOID object)
     __atomic_sub_fetch(&header->Type->TotalHandles, 1, __ATOMIC_RELAXED);
     if (header->Type->Init.CloseProcedure)
         header->Type->Init.CloseProcedure(process, object, (ULONG)remaining + 1);
+    if (!remaining)
+        ObpDeleteNameCheck(object);
     ObDereferenceObject(object);
 }
 
@@ -1158,8 +1160,6 @@ NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, 
     return status;
 }
 
-NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOID info, ULONG length,
-                             PULONG returned)
 /* measured on windows 11 26300: no right is needed, a pseudo handle is the object it stands for. */
 NTSTATUS NTAPI NtCompareObjects(HANDLE first, HANDLE second)
 {
@@ -1179,6 +1179,8 @@ NTSTATUS NTAPI NtCompareObjects(HANDLE first, HANDLE second)
     return status;
 }
 
+NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOID info, ULONG length,
+                             PULONG returned)
 {
     /* windows probes the buffer, then the return length, before it looks at the handle or the class. */
     NTSTATUS status = KiProbeQueryBuffer(info, length, klass == ObjectHandleFlagInformation ? 1 : sizeof(ULONG), TRUE);

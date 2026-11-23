@@ -408,6 +408,17 @@ static void remove_from_directory(OBJECT_HEADER *h)
 }
 
 /*
+ * ObpDeleteNameCheck: a named object that is not permanent leaves the namespace with its last handle, while references
+ * may keep it alive, so the name is free for a new object.
+ */
+void ObpDeleteNameCheck(PVOID object)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    if (h->Directory && !(h->Flags & OB_FLAG_PERMANENT) && !__atomic_load_n(&h->HandleCount, __ATOMIC_ACQUIRE))
+        remove_from_directory(h);
+}
+
+/*
  * symbolic links are followed. when a component has a parse procedure, as devices do, the rest of the
  * path is handed to it, which is how file opens reach file system drivers.
  */
