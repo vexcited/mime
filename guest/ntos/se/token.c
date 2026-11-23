@@ -188,8 +188,8 @@ static BOOLEAN token_groups(PTOKEN t, const GROUP_SPEC *user, const GROUP_SPEC *
     return TRUE;
 }
 
-/* an acl of two aces granting everything to the given sids, and one that lets a third read and execute. */
-static void token_dacl(PTOKEN t, const void *first, const void *second, const void *reader)
+/* an acl of an ace granting everything to the first sid, the given rights to the second, and read and execute to a third. */
+static void token_dacl(PTOKEN t, const void *first, const void *second, ULONG second_rights, const void *reader)
 {
     ULONG a = SepSidLength(first), b = SepSidLength(second);
     ULONG size = 8 + (8 + a) + (8 + b) + (reader ? 8 + SepSidLength(reader) : 0);
@@ -205,7 +205,7 @@ static void token_dacl(PTOKEN t, const void *first, const void *second, const vo
         ULONG length = SepSidLength(sids[i]);
         ace[0] = 0; /* ACCESS_ALLOWED_ACE_TYPE. */
         *(PUSHORT)(ace + 2) = (USHORT)(8 + length);
-        *(PULONG)(ace + 4) = i == 2 ? 0xA0000000 : 0x10000000; /* GENERIC_ALL, or GENERIC_READ and GENERIC_EXECUTE. */
+        *(PULONG)(ace + 4) = i == 2 ? 0xA0000000 : i == 1 ? second_rights : 0x10000000; /* GENERIC_READ, GENERIC_EXECUTE, GENERIC_ALL. */
         memcpy(ace + 8, sids[i], length);
         ace += 8 + length;
     }
@@ -229,8 +229,10 @@ static const ULONG g_admin_privileges[] = {5, 8, 9, 10, 11, 12, 13, 14, 15, 17, 
                                           33, 34, 35, 36};
 static const ULONG g_admin_enabled[] = {23, 29, 30};
 
-static const ULONG g_system_privileges[] = {2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-                                           25, 28, 29, 30, 32, 33, 34, 35, 36};
+/* the system's privileges and the ones it has enabled, as smss.exe holds them on windows 11. */
+static const ULONG g_system_privileges[] = {2,  3,  4,  5,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                           19, 20, 21, 22, 23, 25, 28, 29, 30, 31, 32, 33, 34, 35, 36};
+static const ULONG g_system_enabled[] = {4, 7, 11, 13, 14, 15, 16, 20, 21, 23, 29, 30, 33, 34, 35, 36};
 
 #define LOGON_SESSION_ID 0x3E8D2
 #define SYSTEM_LUID 0x3E7
@@ -240,7 +242,7 @@ static PTOKEN make_system_token(void)
 {
     static const GROUP_SPEC user = {5, 1, {18}, 0};
     static const GROUP_SPEC groups[] = {
-        {5, 2, {32, 544}, SE_GROUP_NORMAL | SE_GROUP_OWNER},
+        {5, 2, {32, 544}, (SE_GROUP_NORMAL | SE_GROUP_OWNER) & ~SE_GROUP_MANDATORY},
         {1, 1, {0}, SE_GROUP_NORMAL},
         {5, 1, {11}, SE_GROUP_NORMAL},
         {16, 1, {0x4000}, SE_GROUP_LABEL},
@@ -256,7 +258,7 @@ static PTOKEN make_system_token(void)
     t->MandatoryPolicy = 1;
     t->Flags = TOKEN_VIRTUALIZE_ALLOWED | TOKEN_NOT_LOW;
     t->Present = privilege_set(g_system_privileges, RTL_NUMBER_OF(g_system_privileges));
-    t->Enabled = t->EnabledByDefault = t->Present & ~privilege_bit(2);
+    t->Enabled = t->EnabledByDefault = privilege_set(g_system_enabled, RTL_NUMBER_OF(g_system_enabled));
     if (!token_groups(t, &user, groups, RTL_NUMBER_OF(groups))) {
         ObDereferenceObject(t);
         return nullptr;
@@ -264,7 +266,8 @@ static PTOKEN make_system_token(void)
     t->OwnerIndex = 1; /* the administrators group owns what the system creates. */
     memcpy(t->PrimaryGroup, t->Groups[0].Sid, SepSidLength(t->Groups[0].Sid));
     static const UCHAR system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
-    token_dacl(t, system_sid, t->Groups[1].Sid, nullptr);
+    /* measured: administrators read, execute and read the descriptor of what the system makes. */
+    token_dacl(t, system_sid, t->Groups[1].Sid, 0xA0020000, nullptr);
     return t;
 }
 
@@ -332,7 +335,7 @@ static PTOKEN make_user_token(BOOLEAN elevated)
     ULONG primary[5] = {21, HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2], 513};
     SepMakeSid(t->PrimaryGroup, 5, 5, primary); /* None */
     UCHAR system_sid[12] = {1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
-    token_dacl(t, elevated ? t->Groups[4].Sid : t->Groups[0].Sid, system_sid, t->Groups[11].Sid);
+    token_dacl(t, elevated ? t->Groups[4].Sid : t->Groups[0].Sid, system_sid, 0x10000000, t->Groups[11].Sid);
     return t;
 }
 
