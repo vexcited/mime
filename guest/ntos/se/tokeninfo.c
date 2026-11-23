@@ -1939,8 +1939,12 @@ NTSTATUS NTAPI NtImpersonateAnonymousToken(HANDLE thread_handle)
 
 /* ------------------------------------------------------------------ the token of a process */
 
-/* a process may hand a token it descends from to a new process without a privilege. */
-static BOOLEAN token_assignable(PTOKEN token)
+/*
+ * a process may hand a token it descends from to a new process without a privilege. for a new process,
+ * PspAllocateProcess first runs RtlAcquirePrivilege on a self impersonation of the process token, so the privilege
+ * only has to be present there. NtSetInformationProcess does not, it needs the privilege enabled.
+ */
+static BOOLEAN token_assignable(PTOKEN token, BOOLEAN acquire)
 {
     PTOKEN pt = SepReferencePrimaryToken(PsCurrentProcess());
     BOOLEAN free = FALSE;
@@ -1950,6 +1954,8 @@ static BOOLEAN token_assignable(PTOKEN token)
         if (SepIntegrityRid(pt) >= SepIntegrityRid(token) &&
             (token->ParentTokenId == pt->TokenId ||
              (token->ParentTokenId == pt->ParentTokenId && token->AuthenticationId == pt->AuthenticationId)))
+            free = TRUE;
+        if (acquire && (pt->Present & (1ull << SE_ASSIGNPRIMARYTOKEN_PRIVILEGE)))
             free = TRUE;
         ExReleaseFastMutex(&SeLock);
         ObDereferenceObject(pt);
@@ -1972,7 +1978,7 @@ NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, PTOKEN *out)
         ObDereferenceObject(t);
         return STATUS_BAD_IMPERSONATION_LEVEL;
     }
-    if (!token_assignable(t)) {
+    if (!token_assignable(t, TRUE)) {
         ObDereferenceObject(t);
         return STATUS_PRIVILEGE_NOT_HELD;
     }
@@ -2031,7 +2037,7 @@ NTSTATUS SepSetProcessAccessToken(HANDLE process_handle, PVOID info, ULONG lengt
     }
     if (token->Type == TokenImpersonation && token->ImpersonationLevel < SecurityImpersonation)
         status = STATUS_BAD_IMPERSONATION_LEVEL;
-    else if (!token_assignable(token))
+    else if (!token_assignable(token, FALSE))
         status = STATUS_PRIVILEGE_NOT_HELD;
     else if (process->TokenFrozen)
         status = STATUS_NOT_SUPPORTED;
