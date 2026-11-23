@@ -1,7 +1,8 @@
 /*
  * features on demand, where a program meets them. a feature is a runtime windows 11 comes with and mime fetches the
- * first time a program needs it: the WebView2 runtime, the .NET Framework, Windows PowerShell. the system dlls are
- * microsoft's, so the need is seen here, in the two services a program reaches for a feature with:
+ * first time a program needs it: the WebView2 runtime, the .NET Framework, Windows PowerShell, the catalogs of the
+ * system files. the system dlls are microsoft's, so the need is seen here, in the two services a program reaches for a
+ * feature with:
  *
  *   - a file in the folders of a feature that is opened to be read or run and is not there. a look at a name, the
  *     attributes of a file or the listing of a folder, asks for nothing, except for the one program a feature is
@@ -71,12 +72,25 @@ static BOOLEAN powershell_present(void)
     return file_exists(L"\\??\\C:" POWERSHELL_PROGRAM);
 }
 
-enum { FEATURE_WEBVIEW2, FEATURE_NETFX, FEATURE_POWERSHELL };
+#define CATALOG_STORE L"\\Windows\\System32\\CatRoot\\{F750E6C3-38EE-11D1-85E5-00C04FC295EE}\\"
+
+/* the catalog of the build's rollup, which names most of the system files. the catalogs are those of amd64 only. */
+static BOOLEAN catalogs_present(void)
+{
+#ifdef __x86_64__
+    return file_exists(L"\\??\\C:" CATALOG_STORE L"Package_for_RollupFix~31bf3856ad364e35~amd64~~26100.9457.1.0.cat");
+#else
+    return TRUE;
+#endif
+}
+
+enum { FEATURE_WEBVIEW2, FEATURE_NETFX, FEATURE_POWERSHELL, FEATURE_CATALOGS };
 
 static const FEATURE g_features[] = {
     [FEATURE_WEBVIEW2] = {L"WebView2", webview2_present},
     [FEATURE_NETFX] = {L"NetFx4", netfx_present},
     [FEATURE_POWERSHELL] = {L"PowerShell", powershell_present},
+    [FEATURE_CATALOGS] = {L"SystemCatalogs", catalogs_present},
 };
 
 /* the folders programs look into for what a feature holds. the shell comes before the folders it shares. */
@@ -86,6 +100,7 @@ static const FOLDER g_folders[] = {
     {L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\", FEATURE_WEBVIEW2},
     {L"\\Windows\\Microsoft.NET\\", FEATURE_NETFX},
     {L"\\Windows\\assembly\\", FEATURE_NETFX},
+    {CATALOG_STORE, FEATURE_CATALOGS},
 };
 
 /* the programs a feature is started by: a search for one looks at its attributes and opens nothing. */

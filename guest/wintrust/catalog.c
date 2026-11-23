@@ -200,6 +200,25 @@ static BOOL find_catalog(const BYTE *hash, DWORD hash_size, PCWSTR after, WCHAR 
     return found;
 }
 
+/*
+ * the catalogs of the system files are the SystemCatalogs feature. a lookup that finds nothing opens the catalog of the
+ * build's rollup, which makes the kernel ask for the feature once in the process, see guest/ntos/ex/feature.c. TRUE
+ * when the catalogs arrived and the lookup is worth another try.
+ */
+static BOOL catalogs_arrived(void)
+{
+    static LONG asked;
+    static const WCHAR rollup[] = CATROOT L"Package_for_RollupFix~31bf3856ad364e35~amd64~~26100.9457.1.0.cat";
+    if (InterlockedExchange(&asked, 1) || GetFileAttributesW(rollup) != INVALID_FILE_ATTRIBUTES)
+        return FALSE;
+    HANDLE file = CreateFileW(rollup, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return FALSE;
+    CloseHandle(file);
+    return TRUE;
+}
+
 /* defaults to the driver signing catalog subsystem. */
 static const GUID g_driver_action = {0xf750e6c3, 0x38ee, 0x11d1, {0x85, 0xe5, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee}};
 
@@ -358,6 +377,8 @@ WINTRUSTAPI HCATINFO WINAPI CryptCATAdminEnumCatalogFromHash(HCATADMIN admin, BY
     HCATINFO result = nullptr;
     WCHAR path[MAX_PATH];
     BOOL found = find_catalog(hash, hash_size, after ? after->Path : nullptr, path);
+    if (!found && !after && catalogs_arrived())
+        found = find_catalog(hash, hash_size, nullptr, path);
     DWORD error = ERROR_NOT_FOUND;
     if (found) {
         CAT_INFO *info = LocalAlloc(LMEM_FIXED, sizeof(*info));
