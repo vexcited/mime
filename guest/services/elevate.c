@@ -169,9 +169,6 @@ DWORD ElevateLaunchAs(HANDLE caller, DWORD pid, const ELEVATE_REQUEST *q, ELEVAT
         CloseHandle(token);
         return error;
     }
-    AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
-    AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
-
     /* the token user's environment, not the caller's modified one. */
     LPVOID environment = nullptr;
     HMODULE userenv = LoadLibraryW(L"userenv.dll");

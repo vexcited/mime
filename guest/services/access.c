@@ -84,24 +84,23 @@ DWORD AccessPrivilegeValue(const WCHAR *name)
     return 0;
 }
 
-static BOOL privilege_luid(const WCHAR *name, LUID *luid)
+NTSYSAPI NTSTATUS NTAPI RtlAcquirePrivilege(PULONG privileges, ULONG count, ULONG flags, PVOID *state);
+NTSYSAPI void NTAPI RtlReleasePrivilege(PVOID state);
+
+/* the privilege is enabled for this thread only, on its own copy of the token, as windows' manager does. */
+PVOID AccessAcquirePrivilege(const WCHAR *name)
 {
-    luid->LowPart = AccessPrivilegeValue(name);
-    luid->HighPart = 0;
-    return luid->LowPart != 0;
+    ULONG luid = AccessPrivilegeValue(name);
+    PVOID state = nullptr;
+    if (!luid || !NT_SUCCESS(RtlAcquirePrivilege(&luid, 1, 0, &state)))
+        return nullptr;
+    return state;
 }
 
-void AccessEnablePrivilege(const WCHAR *name)
+void AccessReleasePrivilege(PVOID state)
 {
-    HANDLE token;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token))
-        return;
-    TOKEN_PRIVILEGES p;
-    p.PrivilegeCount = 1;
-    p.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-    if (privilege_luid(name, &p.Privileges[0].Luid))
-        AdjustTokenPrivileges(token, FALSE, &p, sizeof(p), nullptr, nullptr);
-    CloseHandle(token);
+    if (state)
+        RtlReleasePrivilege(state);
 }
 
 static PSECURITY_DESCRIPTOR from_registry(HKEY key)
@@ -603,10 +602,11 @@ static HANDLE build_service_token(const SERVICE_LOGON *l, BYTE *logon, DWORD *er
     InitializeObjectAttributes(&oa, nullptr, 0, nullptr, nullptr);
     oa.SecurityQualityOfService = &qos;
     LARGE_INTEGER expiration = {.QuadPart = 0x7FFFFFFFFFFFFFFFll};
-    AccessEnablePrivilege(L"SeCreateTokenPrivilege");
+    PVOID acquired = AccessAcquirePrivilege(L"SeCreateTokenPrivilege");
     HANDLE token = nullptr;
     NTSTATUS status = NtCreateToken(&token, TOKEN_ALL_ACCESS, &oa, TokenPrimary, &authentication, &expiration, &user,
                                     groups, &privileges, &owner, &primary, &default_dacl, &source);
+    AccessReleasePrivilege(acquired);
     LocalFree(dacl);
     if (NT_SUCCESS(status) && l->Restricted) {
         GROUP_LIST *restricting = SvcAllocZero(sizeof(*restricting));

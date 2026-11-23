@@ -1411,8 +1411,6 @@ static DWORD WINAPI run_thread(void *context)
         DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
         BOOL ok;
         if (a->Token) {
-            AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
-            AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
             ok = CreateProcessAsUserW(a->Token, nullptr, line, nullptr, nullptr, FALSE, flags, made ? environment : nullptr,
                                       folder && *folder ? folder : nullptr, &si, &pi);
         } else {

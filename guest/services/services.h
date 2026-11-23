@@ -393,7 +393,8 @@ DWORD AccessQuerySd(PSECURITY_DESCRIPTOR sd, DWORD information, void *out, DWORD
 DWORD AccessSetSd(PSECURITY_DESCRIPTOR *sd, DWORD information, PSECURITY_DESCRIPTOR modification);
 HANDLE AccessServiceToken(SERVICE *s, const WCHAR *const *sid_names, DWORD sid_count, PSECURITY_DESCRIPTOR *process_sd,
                           DWORD *error);
-void AccessEnablePrivilege(const WCHAR *name);
+PVOID AccessAcquirePrivilege(const WCHAR *name);
+void AccessReleasePrivilege(PVOID state);
 DWORD AccessPrivilegeValue(const WCHAR *name);
 HANDLE AccessManagerToken(DWORD *error);
 BOOL AccessValidPrivileges(const WCHAR *list);

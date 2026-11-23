@@ -441,8 +441,9 @@ static void handle_failure(SERVICE *s)
         WCHAR message[256];
         _snwprintf(message, RTL_NUMBER_OF(message) - 1, L"%ls", reboot ? reboot : L"");
         message[RTL_NUMBER_OF(message) - 1] = 0;
-        AccessEnablePrivilege(L"SeShutdownPrivilege");
+        PVOID acquired = AccessAcquirePrivilege(L"SeShutdownPrivilege");
         InitiateSystemShutdownExW(nullptr, message, action.Delay / 1000, TRUE, TRUE, 0x80000000u | 0x00040000u);
+        AccessReleasePrivilege(acquired);
         break;
     }
     default:
@@ -944,8 +945,6 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
         ok = FALSE;
         SetLastError(token_error);
     } else {
-        AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
-        AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
         ok = CreateProcessAsUserW(token, nullptr, line, process_sd ? &process_attributes : nullptr, nullptr, FALSE, flags,
                                   made ? environment : nullptr,
                                   n ? directory : nullptr, &si, &pi);
@@ -1098,10 +1097,6 @@ static IMAGE *find_image(const WCHAR *key)
 
 NTSYSAPI NTSTATUS NTAPI NtLoadDriver(PUNICODE_STRING key);
 NTSYSAPI NTSTATUS NTAPI NtUnloadDriver(PUNICODE_STRING key);
-NTSYSAPI NTSTATUS NTAPI RtlAdjustPrivilege(ULONG privilege, BOOLEAN enable, BOOLEAN thread, PBOOLEAN was);
-
-#define SE_LOAD_DRIVER_PRIVILEGE 10
-
 /* a driver service goes to the kernel by its key, which the manager may load and unload drivers through. */
 static DWORD driver_request(SERVICE *s, BOOL unload)
 {
@@ -1110,9 +1105,9 @@ static DWORD driver_request(SERVICE *s, BOOL unload)
     SvcCopyName(key + at, s->Name, SVC_NAME_MAX);
     UNICODE_STRING name;
     RtlInitUnicodeString(&name, key);
-    BOOLEAN was;
-    RtlAdjustPrivilege(SE_LOAD_DRIVER_PRIVILEGE, TRUE, FALSE, &was);
+    PVOID acquired = AccessAcquirePrivilege(L"SeLoadDriverPrivilege");
     NTSTATUS status = unload ? NtUnloadDriver(&name) : NtLoadDriver(&name);
+    AccessReleasePrivilege(acquired);
     switch (status) {
     case STATUS_SUCCESS:
         return ERROR_SUCCESS;
