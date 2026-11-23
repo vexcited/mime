@@ -275,6 +275,9 @@ void NtWaitForSingleObject(void);
 void NtWriteFile(void);
 void NtWriteVirtualMemory(void);
 void NtYieldExecution(void);
+void NtCompareObjects(void);
+void NtGetNextProcess(void);
+void NtGetNextThread(void);
 
 void KiInitializeSystemServices(void)
 {
@@ -1082,5 +1085,14 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtYieldExecution
     KiRegisterService(MIME_SVC_NtYieldExecution, (void *)NtYieldExecution, STACK_ARGS(0));
+#endif
+#ifdef MIME_SVC_NtCompareObjects
+    KiRegisterService(MIME_SVC_NtCompareObjects, (void *)NtCompareObjects, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtGetNextProcess
+    KiRegisterService(MIME_SVC_NtGetNextProcess, (void *)NtGetNextProcess, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtGetNextThread
+    KiRegisterService(MIME_SVC_NtGetNextThread, (void *)NtGetNextThread, STACK_ARGS(6));
 #endif
 }

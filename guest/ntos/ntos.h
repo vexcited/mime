@@ -1397,7 +1397,9 @@ PVOID ObReferenceHandleFast(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type
 /* lets go of a reference unless it is the last one, which takes the kernel lock to let go of. */
 BOOLEAN ObDereferenceObjectFast(PVOID object);
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
+BOOLEAN ObReferenceObjectSafe(PVOID object); /* FALSE once the last reference went. */
 void ObMakeTemporaryObject(PVOID object);
+void ObpDeleteNameCheck(PVOID object);
 
 /* ------------------------------------------------------------------ ps */
 
@@ -1415,6 +1417,8 @@ typedef struct _ETHREAD {
     BOOLEAN DeadThread;
     LIST_ENTRY ThreadListEntry; /* in EPROCESS. */
     PVOID UserStackAllocation;
+    ULONG64 ListSequence;       /* the order of the list. */
+    LIST_ENTRY DeadLinks;       /* in the list of the reaper once it ended. */
     SIZE_T UserStackSize;
     ULONG_PTR UserStackGuard; /* the stack guard page, whose first touch is a stack overflow. */
     PVOID NativeStackAllocation; /* the translator's own stack in x86 and x64 processes. */
@@ -1471,6 +1475,7 @@ typedef struct _EPROCESS {
     LIST_ENTRY ThreadListHead;
     volatile LONG ThreadCount;
     HANDLE_TABLE HandleTable;
+    ULONG64 GoneKernelTime, GoneUserTime; /* of the threads whose objects went, in whole ticks. */
     MMADDRESS_SPACE AddressSpace;
     /* the page ranges NtLockVirtualMemory locked, start and end pairs: MmLockedRanges of them. */
     ULONG_PTR *MmLockedRanges;

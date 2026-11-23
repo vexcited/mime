@@ -73,6 +73,14 @@ PVOID PsCreateIdleThread(PKPRCB prcb)
 void PspThreadDelete(PVOID object)
 {
     PETHREAD thread = object;
+    if (thread->ThreadListEntry.Flink) {
+        PEPROCESS process = CONTAINING_RECORD(thread->Tcb.Process, EPROCESS, Pcb);
+        ULONG64 s = KiAcquireDispatcherLock();
+        RemoveEntryList(&thread->ThreadListEntry);
+        process->GoneKernelTime += thread->Tcb.KernelTime - thread->Tcb.KernelTime % KI_CLOCK_TICK_HNS;
+        process->GoneUserTime += thread->Tcb.UserTime - thread->Tcb.UserTime % KI_CLOCK_TICK_HNS;
+        KiReleaseDispatcherLock(s);
+    }
     if (thread->Tcb.StackAllocation)
         MmFreeKernelStack(thread->Tcb.StackAllocation, thread->Tcb.StackLimit, thread->Tcb.StackAllocationSize);
     if (thread->Cid.UniqueThread)
@@ -97,7 +105,7 @@ static void NTAPI reaper(PVOID context)
                 KiReleaseDispatcherLock(s);
                 break;
             }
-            PETHREAD t = CONTAINING_RECORD(RemoveHeadList(&g_dead_threads), ETHREAD, ThreadListEntry);
+            PETHREAD t = CONTAINING_RECORD(RemoveHeadList(&g_dead_threads), ETHREAD, DeadLinks);
             KiReleaseDispatcherLock(s);
             ObDereferenceObject(t);
         }
@@ -146,8 +154,10 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
     KeQuerySystemTime((PLARGE_INTEGER)&thread->CreateTime);
     KiInitializeThread(&thread->Tcb, &process->Pcb, top, limit, routine, context);
 
+    static ULONG64 sequence;
     ULONG64 s = KiAcquireDispatcherLock();
     InsertTailList(&process->ThreadListHead, &thread->ThreadListEntry);
+    thread->ListSequence = ++sequence;
     process->ThreadCount++;
     KiReleaseDispatcherLock(s);
 
@@ -426,7 +436,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
         stack_reserve = (stack_commit + 0xFFFFF) & ~(SIZE_T)0xFFFFF;
     stack_reserve = (stack_reserve + 0xFFFF) & ~(SIZE_T)0xFFFF;
 
-    BOOLEAN first = IsListEmpty(&process->ThreadListHead);
+    BOOLEAN first = process->ThreadCount == 0;
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
     KiAttachProcess(&process->Pcb);
 
@@ -692,8 +702,8 @@ void PspExitThread(NTSTATUS status)
     if (!process->SystemProcess)
         release_user_memory(process, thread);
 
+    /* as on windows the thread stays in the list of its process until its object goes. */
     ULONG64 s = KiAcquireDispatcherLock();
-    RemoveEntryList(&thread->ThreadListEntry);
     BOOLEAN last = --process->ThreadCount == 0;
     if (last && !process->Terminating) {
         process->Terminating = TRUE;
@@ -711,7 +721,7 @@ void PspExitThread(NTSTATUS status)
     thread->HasTerminated = TRUE;
     thread->Tcb.Header.SignalState = 1;
     KiSignalWaiters(&thread->Tcb.Header, 0);
-    InsertTailList(&g_dead_threads, &thread->ThreadListEntry);
+    InsertTailList(&g_dead_threads, &thread->DeadLinks);
     thread->Tcb.State = Terminated;
     KiSwapThread();
     KeBugCheckEx(0x00000001, (ULONG_PTR)thread, 0, 0, 0);
@@ -1618,8 +1628,10 @@ void PsDumpThreads(void)
         PEPROCESS process = CONTAINING_RECORD(p, EPROCESS, ActiveProcessLinks);
         for (PLIST_ENTRY t = process->ThreadListHead.Flink; t != &process->ThreadListHead && n < MAX; t = t->Flink) {
             threads[n] = CONTAINING_RECORD(t, ETHREAD, ThreadListEntry);
+            if (!ObReferenceObjectSafe(threads[n]))
+                continue;
             satisfied[n] = KiSatisfiedWaitObject(&threads[n]->Tcb);
-            ObReferenceObject(threads[n++]);
+            n++;
         }
     }
     KiReleaseDispatcherLock(s);

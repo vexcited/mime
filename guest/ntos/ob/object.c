@@ -252,6 +252,17 @@ LONG_PTR FASTCALL ObfReferenceObject(PVOID object)
     return __atomic_add_fetch(&OBJECT_TO_HEADER(object)->PointerCount, 1, __ATOMIC_RELAXED);
 }
 
+/* a reference to an object that may already be on its way out, as an entry of a list kept until deletion. */
+BOOLEAN ObReferenceObjectSafe(PVOID object)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    LONG_PTR count = __atomic_load_n(&h->PointerCount, __ATOMIC_RELAXED);
+    while (count > 0)
+        if (__atomic_compare_exchange_n(&h->PointerCount, &count, count + 1, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+            return TRUE;
+    return FALSE;
+}
+
 static void remove_from_directory(OBJECT_HEADER *h);
 
 static void delete_object(OBJECT_HEADER *h)

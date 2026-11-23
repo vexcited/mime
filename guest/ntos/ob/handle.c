@@ -1160,6 +1160,25 @@ NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, 
 
 NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOID info, ULONG length,
                              PULONG returned)
+/* measured on windows 11 26300: no right is needed, a pseudo handle is the object it stands for. */
+NTSTATUS NTAPI NtCompareObjects(HANDLE first, HANDLE second)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    PVOID a, b;
+    NTSTATUS status = ObReferenceHandle(first, nullptr, mode, &a, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandle(second, nullptr, mode, &b, nullptr);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(a);
+        return status;
+    }
+    status = a == b ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+    ObDereferenceObject(b);
+    ObDereferenceObject(a);
+    return status;
+}
+
 {
     /* windows probes the buffer, then the return length, before it looks at the handle or the class. */
     NTSTATUS status = KiProbeQueryBuffer(info, length, klass == ObjectHandleFlagInformation ? 1 : sizeof(ULONG), TRUE);

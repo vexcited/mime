@@ -277,6 +277,8 @@ NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status)
     }
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t->HasTerminated)
+            continue;
         if (!t->Tcb.Terminating) {
             t->Tcb.Terminating = TRUE;
             t->ExitStatus = status;
@@ -303,6 +305,8 @@ static void PspTerminateOtherThreads(PEPROCESS process, NTSTATUS status)
     }
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t->HasTerminated)
+            continue;
         if (t == self)
             continue;
         if (!t->Tcb.Terminating) {
@@ -439,8 +443,8 @@ static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, 
 /* the sum of the times of its threads. */
 static void process_times(PEPROCESS process, ULONG64 *times)
 {
-    ULONG64 kernel = 0, user = 0;
     ULONG64 s = KiAcquireDispatcherLock();
+    ULONG64 kernel = process->GoneKernelTime, user = process->GoneUserTime;
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
         /* windows charges whole clock ticks to each thread. */
@@ -1403,6 +1407,160 @@ NTSTATUS NTAPI NtOpenThread(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     status = ObInsertObject(thread, map_thread_access(granted), handle_attributes, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
+    return status;
+}
+
+/*
+ * NtGetNextProcess and NtGetNextThread, as ntoskrnl 26300 does them. the handle of the caller is cleared first. a
+ * process or thread the caller may not open is passed over, any other failure of the open ends the walk, and the end
+ * of the list is STATUS_NO_MORE_ENTRIES. attributes a caller may not give are dropped, and those a process or a thread
+ * refuses fail the open. processes and threads come in the order they were made, those that ended too, as long as
+ * something holds them.
+ */
+#define NEXT_USER_ATTRIBUTES 0x1DF2
+#define NEXT_KERNEL_ATTRIBUTES 0x11FF2
+#define NEXT_INVALID_ATTRIBUTES 0xB0 /* OBJ_PERMANENT, OBJ_EXCLUSIVE and OBJ_OPENIF. */
+#define GENERIC_BITS (GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL)
+
+static NTSTATUS clear_out_handle(PHANDLE out, KPROCESSOR_MODE mode)
+{
+    HANDLE none = nullptr;
+    if (mode == UserMode)
+        return KiCopyToUser(out, &none, sizeof(none));
+    *out = nullptr;
+    return STATUS_SUCCESS;
+}
+
+/* opens the process or thread for the caller as NtOpenProcess and NtOpenThread do. the caller's reference stays. */
+static NTSTATUS open_next(PVOID object, ACCESS_MASK access, ULONG attributes, BOOLEAN thread, PHANDLE out)
+{
+    if (attributes & NEXT_INVALID_ATTRIBUTES)
+        return STATUS_INVALID_PARAMETER;
+    /* windows maps the generic rights of a thread with the mapping of processes. */
+    if (thread && (access & GENERIC_BITS) && !(access & MAXIMUM_ALLOWED))
+        access = ((access & ~GENERIC_BITS) | map_process_access(access & GENERIC_BITS)) & THREAD_ALL_ACCESS;
+    PEPROCESS owner = thread ? (PEPROCESS)((PETHREAD)object)->Tcb.Process : (PEPROCESS)object;
+    ACCESS_MASK granted = access;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (KeGetPreviousMode() == UserMode && !SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        status = ObCheckOpenAccess(object, access, UserMode, &granted);
+    else if (owner == PsSubsystemProcess &&
+             (access & ~(thread ? (0x800 | 0x400 | SYNCHRONIZE) : (PROCESS_QUERY_LIMITED_INFORMATION | 0x2000 | SYNCHRONIZE))))
+        status = STATUS_ACCESS_DENIED;
+    if (!NT_SUCCESS(status))
+        return status;
+    ObReferenceObject(object);
+    HANDLE h;
+    status = ObInsertObject(object, thread ? map_thread_access(granted) : map_process_access(granted), attributes, &h);
+    if (NT_SUCCESS(status))
+        status = ObStoreHandle(out, h);
+    return status;
+}
+
+/* the process after the one given, or before it, with a reference. the first or the last for none. */
+static PEPROCESS next_process(PEPROCESS previous, BOOLEAN reverse)
+{
+    PEPROCESS found = nullptr;
+    ULONG64 s = KiAcquireDispatcherLock();
+    PLIST_ENTRY e = previous ? (reverse ? previous->ActiveProcessLinks.Blink : previous->ActiveProcessLinks.Flink)
+                             : (reverse ? PsActiveProcessHead.Blink : PsActiveProcessHead.Flink);
+    for (; e != &PsActiveProcessHead && !found; e = reverse ? e->Blink : e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (ObReferenceObjectSafe(p))
+            found = p;
+    }
+    KiReleaseDispatcherLock(s);
+    return found;
+}
+
+NTSTATUS NTAPI NtGetNextProcess(HANDLE process_handle, ACCESS_MASK access, ULONG attributes, ULONG flags, PHANDLE out)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    attributes &= mode == UserMode ? NEXT_USER_ATTRIBUTES : NEXT_KERNEL_ATTRIBUTES;
+    NTSTATUS status = clear_out_handle(out, mode);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (flags & ~1u)
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS previous = nullptr;
+    if (process_handle) {
+        status = ObReferenceHandle(process_handle, PsProcessTypeObject, mode, (PVOID *)&previous, nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    for (;;) {
+        PEPROCESS next = next_process(previous, (flags & 1) != 0);
+        if (previous)
+            ObDereferenceObject(previous);
+        previous = next;
+        if (!next)
+            return STATUS_NO_MORE_ENTRIES;
+        status = open_next(next, access, attributes, FALSE, out);
+        if (status != STATUS_ACCESS_DENIED) {
+            ObDereferenceObject(next);
+            return status;
+        }
+    }
+}
+
+/* the thread of the process made after the one given, with a reference, or the first for none. */
+static PETHREAD next_thread(PEPROCESS process, PETHREAD previous)
+{
+    ULONG64 after = previous ? previous->ListSequence : 0;
+    PETHREAD found = nullptr;
+    ULONG64 s = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead && !found; e = e->Flink) {
+        PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t->ListSequence > after && ObReferenceObjectSafe(t))
+            found = t;
+    }
+    KiReleaseDispatcherLock(s);
+    return found;
+}
+
+NTSTATUS NTAPI NtGetNextThread(HANDLE process_handle, HANDLE thread_handle, ACCESS_MASK access, ULONG attributes,
+                               ULONG flags, PHANDLE out)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    attributes &= mode == UserMode ? NEXT_USER_ATTRIBUTES : NEXT_KERNEL_ATTRIBUTES;
+    NTSTATUS status = clear_out_handle(out, mode);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (flags)
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS process;
+    status = ObReferenceHandleAccess(process_handle, PROCESS_QUERY_INFORMATION, PsProcessTypeObject, mode,
+                                     (PVOID *)&process, "NtGetNextThread");
+    if (!NT_SUCCESS(status))
+        return status;
+    PETHREAD previous = nullptr;
+    if (thread_handle) {
+        status = ObReferenceHandle(thread_handle, PsThreadTypeObject, mode, (PVOID *)&previous, nullptr);
+        if (NT_SUCCESS(status) && (PEPROCESS)previous->Tcb.Process != process) {
+            ObDereferenceObject(previous);
+            status = STATUS_INVALID_PARAMETER;
+        }
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(process);
+            return status;
+        }
+    }
+    for (;;) {
+        PETHREAD next = next_thread(process, previous);
+        if (previous)
+            ObDereferenceObject(previous);
+        previous = next;
+        if (!next) {
+            status = STATUS_NO_MORE_ENTRIES;
+            break;
+        }
+        status = open_next(next, access, attributes, TRUE, out);
+        if (status != STATUS_ACCESS_DENIED) {
+            ObDereferenceObject(next);
+            break;
+        }
+    }
+    ObDereferenceObject(process);
     return status;
 }
 
