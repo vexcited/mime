@@ -320,7 +320,326 @@ unsigned long WINAPI svcctl_RQueryServiceConfigA_s(SC_RPC_HANDLE service, SC_QUE
     return error;
 }
 
-/* the levels that are one number, and the description, whose text follows a structure that holds its offset. */
+unsigned long WINAPI svcctl_RSetServiceObjectSecurity_s(SC_RPC_HANDLE service, unsigned long information, byte *sd,
+                                                        unsigned long size)
+{
+    SC_RPC_OBJECT *o = object_of(service);
+    if (!o || !o->Id)
+        return ERROR_INVALID_HANDLE;
+    SCM_WRITER w, reply;
+    SCM_READER r;
+    request_with(&w, o->Id);
+    ScmPutU32(&w, information);
+    ScmPutBytes(&w, sd, size);
+    DWORD error = call(SCM_OP_SET_SECURITY, &w, &r, &reply);
+    SvcFree(reply.Data);
+    return error;
+}
+
+/*
+ * the services of an enumeration as the manager writes them for sechost, which turns the offsets into pointers: an
+ * array of entries of 32 bit offsets of the two names and the status, 36 bytes with SERVICE_STATUS, 44 with
+ * SERVICE_STATUS_PROCESS, and the names. what does not fit is left for the next call: ERROR_MORE_DATA, the bytes
+ * the rest needs, and the resume index past what was returned.
+ */
+static DWORD pack_services(SCM_READER *r, DWORD status_words, byte *buffer, unsigned long size, unsigned long *needed,
+                           unsigned long *returned, unsigned long *resume, BOOL whole)
+{
+    DWORD count = ScmGetU32(r);
+    if (r->Failed)
+        return ERROR_INVALID_DATA;
+    struct ENTRY {
+        const WCHAR *Name, *Display;
+        UINT32 NameChars, DisplayChars;
+        DWORD Status[9];
+    } *items = count ? SvcAllocZero(count * sizeof(*items)) : nullptr;
+    if (count && !items)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    for (DWORD i = 0; i < count; i++) {
+        items[i].Name = ScmGetChars(r, &items[i].NameChars);
+        items[i].Display = ScmGetChars(r, &items[i].DisplayChars);
+        for (DWORD k = 0; k < 9; k++)
+            items[i].Status[k] = ScmGetU32(r);
+    }
+    if (r->Failed) {
+        SvcFree(items);
+        return ERROR_INVALID_DATA;
+    }
+    DWORD entry = 8 + 4 * status_words, fit = 0, used = 0;
+    for (; fit < count; fit++) {
+        DWORD more = entry + (items[fit].NameChars + 1 + items[fit].DisplayChars + 1) * sizeof(WCHAR);
+        if (used + more > (size & ~1u))
+            break;
+        used += more;
+    }
+    if (whole && fit < count)
+        fit = 0;
+    DWORD rest = 0;
+    for (DWORD i = fit; i < count; i++)
+        rest += entry + (items[i].NameChars + 1 + items[i].DisplayChars + 1) * sizeof(WCHAR);
+    /* the names go at the end of the buffer, downwards, which leaves sechost room to widen the entries. */
+    DWORD at = size & ~1u;
+    for (DWORD i = 0; i < fit; i++) {
+        byte *e = buffer + i * entry;
+        DWORD offsets[2];
+        at -= (items[i].NameChars + 1) * sizeof(WCHAR);
+        offsets[0] = at;
+        memcpy(buffer + at, items[i].Name, items[i].NameChars * sizeof(WCHAR));
+        memset(buffer + at + items[i].NameChars * sizeof(WCHAR), 0, sizeof(WCHAR));
+        at -= (items[i].DisplayChars + 1) * sizeof(WCHAR);
+        offsets[1] = at;
+        memcpy(buffer + at, items[i].Display, items[i].DisplayChars * sizeof(WCHAR));
+        memset(buffer + at + items[i].DisplayChars * sizeof(WCHAR), 0, sizeof(WCHAR));
+        memcpy(e, offsets, 8);
+        memcpy(e + 8, items[i].Status, 4 * status_words);
+    }
+    SvcFree(items);
+    *returned = fit;
+    *needed = rest;
+    if (fit < count) {
+        if (resume)
+            *resume += fit;
+        return ERROR_MORE_DATA;
+    }
+    if (resume)
+        *resume = 0;
+    return 0;
+}
+
+static DWORD enum_services(SC_RPC_HANDLE manager, DWORD type, DWORD state, const WCHAR *group, DWORD status_words,
+                           byte *buffer, unsigned long size, unsigned long *needed, unsigned long *returned,
+                           unsigned long *resume)
+{
+    *needed = 0;
+    *returned = 0;
+    SC_RPC_OBJECT *o = object_of(manager);
+    if (!o || !o->Id)
+        return ERROR_INVALID_HANDLE;
+    SCM_WRITER w, reply;
+    SCM_READER r;
+    request_with(&w, o->Id);
+    ScmPutU32(&w, type);
+    ScmPutU32(&w, state);
+    ScmPutU32(&w, resume ? *resume : 0);
+    ScmPutString(&w, group);
+    DWORD error = call(SCM_OP_ENUM_SERVICES, &w, &r, &reply);
+    if (!error)
+        error = pack_services(&r, status_words, buffer, size, needed, returned, resume, FALSE);
+    SvcFree(reply.Data);
+    return error;
+}
+
+unsigned long WINAPI svcctl_REnumServicesStatusW_s(SC_RPC_HANDLE manager, unsigned long type, unsigned long state,
+                                                   byte *buffer, unsigned long size, unsigned long *needed,
+                                                   unsigned long *returned, unsigned long *resume)
+{
+    return enum_services(manager, type, state, nullptr, 7, buffer, size, needed, returned, resume);
+}
+
+unsigned long WINAPI svcctl_REnumServicesStatusExW_s(SC_RPC_HANDLE manager, unsigned long level, unsigned long type,
+                                                     unsigned long state, byte *buffer, unsigned long size,
+                                                     unsigned long *needed, unsigned long *returned,
+                                                     unsigned long *resume, unsigned short *group)
+{
+    if (level != 0) {
+        *needed = 0;
+        *returned = 0;
+        return ERROR_INVALID_LEVEL;
+    }
+    return enum_services(manager, type, state, (const WCHAR *)group, 9, buffer, size, needed, returned, resume);
+}
+
+unsigned long WINAPI svcctl_REnumDependentServicesW_s(SC_RPC_HANDLE service, unsigned long state, byte *buffer,
+                                                      unsigned long size, unsigned long *needed,
+                                                      unsigned long *returned)
+{
+    *needed = 0;
+    *returned = 0;
+    SC_RPC_OBJECT *o = object_of(service);
+    if (!o || !o->Id)
+        return ERROR_INVALID_HANDLE;
+    SCM_WRITER w, reply;
+    SCM_READER r;
+    request_with(&w, o->Id);
+    ScmPutU32(&w, state);
+    DWORD error = call(SCM_OP_ENUM_DEPENDENTS, &w, &r, &reply);
+    if (!error) {
+        /* all or nothing: the dependents have no resume index. */
+        error = pack_services(&r, 7, buffer, size, needed, returned, nullptr, TRUE);
+    }
+    SvcFree(reply.Data);
+    return error;
+}
+
+/* the size counts characters without the terminator, also when the buffer is too small. */
+static DWORD service_name(SC_RPC_HANDLE manager, DWORD op, const WCHAR *given, WCHAR *out, unsigned long *chars)
+{
+    SC_RPC_OBJECT *o = object_of(manager);
+    DWORD room = *chars;
+    out[0] = 0;
+    if (!o || !o->Id)
+        return ERROR_INVALID_HANDLE;
+    SCM_WRITER w, reply;
+    SCM_READER r;
+    request_with(&w, o->Id);
+    ScmPutString(&w, given);
+    DWORD error = call(op, &w, &r, &reply);
+    if (!error) {
+        UINT32 n;
+        const WCHAR *name = ScmGetChars(&r, &n);
+        if (r.Failed || !name) {
+            error = ERROR_INVALID_DATA;
+        } else {
+            *chars = n;
+            if (room < n + 1) {
+                error = ERROR_INSUFFICIENT_BUFFER;
+            } else {
+                memcpy(out, name, n * sizeof(WCHAR));
+                out[n] = 0;
+            }
+        }
+    }
+    SvcFree(reply.Data);
+    return error;
+}
+
+unsigned long WINAPI svcctl_RGetServiceDisplayNameW_s(SC_RPC_HANDLE manager, unsigned short *name, unsigned short *display,
+                                                      unsigned long *chars)
+{
+    return service_name(manager, SCM_OP_GET_DISPLAY_NAME, (const WCHAR *)name, (WCHAR *)display, chars);
+}
+
+unsigned long WINAPI svcctl_RGetServiceKeyNameW_s(SC_RPC_HANDLE manager, unsigned short *display, unsigned short *name,
+                                                  unsigned long *chars)
+{
+    return service_name(manager, SCM_OP_GET_KEY_NAME, (const WCHAR *)display, (WCHAR *)name, chars);
+}
+
+/* the configuration of one level, as main.c reads what ChangeServiceConfig2W of advapi32 writes. */
+unsigned long WINAPI svcctl_RChangeServiceConfig2W_s(SC_RPC_HANDLE service, SC_RPC_CONFIG_INFOW *info)
+{
+    SC_RPC_OBJECT *o = object_of(service);
+    if (!o || !o->Id)
+        return ERROR_INVALID_HANDLE;
+    SCM_WRITER w, reply;
+    SCM_READER r;
+    request_with(&w, o->Id);
+    ScmPutU32(&w, info->dwInfoLevel);
+    DWORD error = 0;
+    switch (info->dwInfoLevel) {
+    case SERVICE_CONFIG_DESCRIPTION:
+        if (!info->u.psd)
+            error = ERROR_INVALID_PARAMETER;
+        else
+            ScmPutString(&w, (const WCHAR *)info->u.psd->lpDescription);
+        break;
+    case SERVICE_CONFIG_FAILURE_ACTIONS: {
+        SC_SERVICE_FAILURE_ACTIONSW *a = info->u.psfa;
+        if (!a || (a->cActions && !a->lpsaActions)) {
+            error = ERROR_INVALID_PARAMETER;
+            break;
+        }
+        ScmPutU32(&w, a->dwResetPeriod);
+        ScmPutU32(&w, 1);
+        ScmPutString(&w, (const WCHAR *)a->lpRebootMsg);
+        ScmPutString(&w, (const WCHAR *)a->lpCommand);
+        ScmPutU32(&w, a->cActions);
+        for (DWORD i = 0; i < a->cActions; i++) {
+            ScmPutU32(&w, a->lpsaActions[i].Type);
+            ScmPutU32(&w, a->lpsaActions[i].Delay);
+        }
+        break;
+    }
+    case SERVICE_CONFIG_DELAYED_AUTO_START_INFO:
+    case SERVICE_CONFIG_FAILURE_ACTIONS_FLAG:
+        if (!info->u.pdw)
+            error = ERROR_INVALID_PARAMETER;
+        else
+            ScmPutU32(&w, info->u.pdw->dwValue != 0);
+        break;
+    case SERVICE_CONFIG_SERVICE_SID_INFO:
+    case SERVICE_CONFIG_PRESHUTDOWN_INFO:
+    case SERVICE_CONFIG_LAUNCH_PROTECTED:
+        if (!info->u.pdw)
+            error = ERROR_INVALID_PARAMETER;
+        else
+            ScmPutU32(&w, info->u.pdw->dwValue);
+        break;
+    case SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO: {
+        SC_SERVICE_RPC_REQUIRED_PRIVILEGES_INFO *p = info->u.psrp;
+        if (!p || (p->cbRequiredPrivileges & 1))
+            error = ERROR_INVALID_PARAMETER;
+        else
+            ScmPutChars(&w, (const WCHAR *)p->pRequiredPrivileges, p->cbRequiredPrivileges / sizeof(WCHAR));
+        break;
+    }
+    default:
+        break;
+    }
+    if (error) {
+        SvcFree(w.Data);
+        return error;
+    }
+    error = call(SCM_OP_CHANGE_CONFIG2, &w, &r, &reply);
+    SvcFree(reply.Data);
+    return error;
+}
+
+/*
+ * a level that holds pointers comes back in its 32 bit layout, with 32 bit offsets of what follows it in the buffer,
+ * which ScConvertOffsets64 of sechost widens and turns into pointers: the description and the required privileges are
+ * one offset, the failure actions are the reset period, the offsets of the two strings, the count and the offset of the
+ * actions.
+ */
+static DWORD query_buffer(DWORD level, SCM_READER *r, byte *buffer, unsigned long size, unsigned long *needed)
+{
+    UINT32 chars[2] = {0, 0};
+    const WCHAR *text[2] = {nullptr, nullptr};
+    DWORD head = 4, reset = 0, count = 0;
+    const UCHAR *actions = nullptr;
+    if (level == SERVICE_CONFIG_FAILURE_ACTIONS) {
+        head = 20;
+        reset = ScmGetU32(r);
+        text[0] = ScmGetChars(r, &chars[0]);
+        text[1] = ScmGetChars(r, &chars[1]);
+        count = ScmGetU32(r);
+        if (count > SVC_MAX_FAILURE_ACTIONS)
+            return ERROR_INVALID_DATA;
+        actions = r->Data + r->Position;
+        for (DWORD i = 0; i < 2 * count; i++)
+            ScmGetU32(r);
+    } else {
+        text[0] = ScmGetChars(r, &chars[0]);
+    }
+    if (r->Failed)
+        return ERROR_INVALID_DATA;
+    /* a string without its end gets one; a list of privileges keeps the two it has. */
+    UINT32 room[2];
+    for (int i = 0; i < 2; i++)
+        room[i] = chars[i] + (text[i] && (!chars[i] || text[i][chars[i] - 1]) ? 1 : 0);
+    DWORD at[2], total = head + count * 8;
+    for (int i = 0; i < 2; i++) {
+        at[i] = text[i] ? total : 0;
+        total += text[i] ? room[i] * sizeof(WCHAR) : 0;
+    }
+    *needed = total;
+    if (size < total)
+        return ERROR_INSUFFICIENT_BUFFER;
+    memset(buffer, 0, total);
+    for (int i = 0; i < 2; i++)
+        if (text[i])
+            memcpy(buffer + at[i], text[i], chars[i] * sizeof(WCHAR));
+    if (level != SERVICE_CONFIG_FAILURE_ACTIONS) {
+        memcpy(buffer, &at[0], 4);
+        return 0;
+    }
+    DWORD fields[5] = {reset, at[0], at[1], count, count ? head : 0};
+    memcpy(buffer, fields, sizeof(fields));
+    memcpy(buffer + head, actions, count * 8);
+    return 0;
+}
+
+/* the levels that are one number, and those that query_buffer lays out. */
 unsigned long WINAPI svcctl_RQueryServiceConfig2W_s(SC_RPC_HANDLE service, unsigned long level, byte *buffer,
                                                     unsigned long size, unsigned long *needed)
 {
@@ -330,8 +649,9 @@ unsigned long WINAPI svcctl_RQueryServiceConfig2W_s(SC_RPC_HANDLE service, unsig
         return ERROR_INVALID_HANDLE;
     BOOL number = level == SERVICE_CONFIG_DELAYED_AUTO_START_INFO || level == SERVICE_CONFIG_FAILURE_ACTIONS_FLAG ||
                   level == SERVICE_CONFIG_SERVICE_SID_INFO || level == SERVICE_CONFIG_PRESHUTDOWN_INFO ||
-                  level == SERVICE_CONFIG_LAUNCH_PROTECTED;
-    if (!number && level != SERVICE_CONFIG_DESCRIPTION)
+                  level == SERVICE_CONFIG_LAUNCH_PROTECTED || level == SERVICE_CONFIG_PREFERRED_NODE;
+    if (!number && level != SERVICE_CONFIG_DESCRIPTION && level != SERVICE_CONFIG_FAILURE_ACTIONS &&
+        level != SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO)
         return ERROR_INVALID_LEVEL;
     SCM_WRITER w, reply;
     SCM_READER r;
@@ -348,21 +668,7 @@ unsigned long WINAPI svcctl_RQueryServiceConfig2W_s(SC_RPC_HANDLE service, unsig
         else
             memcpy(buffer, &value, sizeof(value));
     } else if (!error) {
-        UINT32 n;
-        const WCHAR *text = ScmGetChars(&r, &n);
-        DWORD bytes = sizeof(SERVICE_DESCRIPTIONW) + (text ? (n + 1) * sizeof(WCHAR) : 0);
-        *needed = bytes;
-        if (r.Failed) {
-            error = ERROR_INVALID_DATA;
-        } else if (size < bytes) {
-            error = ERROR_INSUFFICIENT_BUFFER;
-        } else {
-            ULONG_PTR offset = text ? sizeof(SERVICE_DESCRIPTIONW) : 0;
-            memset(buffer, 0, bytes);
-            memcpy(buffer, &offset, sizeof(offset));
-            if (text)
-                memcpy(buffer + sizeof(SERVICE_DESCRIPTIONW), text, n * sizeof(WCHAR));
-        }
+        error = query_buffer(level, &r, buffer, size, needed);
     }
     SvcFree(reply.Data);
     return error;
@@ -699,16 +1005,11 @@ unsigned long WINAPI svcctl_RStartServiceA_s(SC_RPC_HANDLE service, unsigned lon
     }
 
 NOT_SERVED(RLockServiceDatabase)
-NOT_SERVED(RSetServiceObjectSecurity)
 NOT_SERVED(RUnlockServiceDatabase)
 NOT_SERVED(RNotifyBootConfigStatus)
 NOT_SERVED(RI_ScSetServiceBitsW)
-NOT_SERVED(REnumDependentServicesW)
-NOT_SERVED(REnumServicesStatusW)
 NOT_SERVED(ROpenSCManagerW)
 NOT_SERVED(RQueryServiceLockStatusW)
-NOT_SERVED(RGetServiceDisplayNameW)
-NOT_SERVED(RGetServiceKeyNameW)
 NOT_SERVED(RI_ScSetServiceBitsA)
 NOT_SERVED(RChangeServiceConfigA)
 NOT_SERVED(RCreateServiceA)
@@ -721,10 +1022,8 @@ NOT_SERVED(RGetServiceKeyNameA)
 NOT_SERVED(RI_ScGetCurrentGroupStateW)
 NOT_SERVED(REnumServiceGroupW)
 NOT_SERVED(RChangeServiceConfig2A)
-NOT_SERVED(RChangeServiceConfig2W)
 NOT_SERVED(RQueryServiceConfig2A)
 NOT_SERVED(REnumServicesStatusExA)
-NOT_SERVED(REnumServicesStatusExW)
 NOT_SERVED(RI_ScQueryServiceTagInfo)
 NOT_SERVED(RCreateServiceWOW64A)
 NOT_SERVED(RI_ScQueryServiceTagInfoEx)

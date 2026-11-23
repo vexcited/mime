@@ -727,8 +727,8 @@ static DWORD op_query_config2(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
     DWORD error = ERROR_SUCCESS, value = 0;
     switch (level) {
     case SERVICE_CONFIG_DESCRIPTION: {
-        WCHAR *text = DbReadString(key, L"Description", nullptr);
-        /* an indirect string would be loaded from its file, one that cannot be is returned as is. */
+        /* an indirect string is loaded from its file, one that cannot be is returned as is. */
+        WCHAR *text = DbReadMuiString(key, L"Description");
         ScmPutString(w, text);
         SvcFree(text);
         break;
@@ -780,6 +780,18 @@ static DWORD op_query_config2(CLIENT *cl, SCM_READER *r, SCM_WRITER *w)
         DbReadDword(key, L"LaunchProtected", &value);
         ScmPutU32(w, value);
         break;
+    case SERVICE_CONFIG_PREFERRED_NODE: {
+        /* a service without a node of its own, or a driver, has none to tell. */
+        USHORT node = 0;
+        DWORD type = 0, size = sizeof(node);
+        if ((s->Type & SERVICE_DRIVER) ||
+            RegQueryValueExW(key, L"PreferredNode", nullptr, &type, (BYTE *)&node, &size) != ERROR_SUCCESS ||
+            type != REG_BINARY || size != sizeof(node))
+            error = ERROR_INVALID_PARAMETER;
+        else
+            ScmPutU32(w, node);
+        break;
+    }
     default:
         error = ERROR_INVALID_LEVEL;
         break;

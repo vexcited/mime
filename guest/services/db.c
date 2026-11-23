@@ -65,19 +65,27 @@ WCHAR *DbReadString(HKEY key, const WCHAR *value, DWORD *chars)
     return text;
 }
 
-/* the display name of a service. an indirect one, "@library,-id", is the string of that resource when it loads. */
-WCHAR *DbReadDisplayName(HKEY key)
+/* a string value; an indirect one, "@library,-id", is the string of that resource when it loads. */
+WCHAR *DbReadMuiString(HKEY key, const WCHAR *value)
 {
-    WCHAR *display = DbReadString(key, L"DisplayName", nullptr);
-    if (display && display[0] == L'@') {
-        WCHAR text[256];
+    WCHAR *text = DbReadString(key, value, nullptr);
+    if (text && text[0] == L'@') {
         DWORD needed = 0;
-        if (RegLoadMUIStringW(key, L"DisplayName", text, sizeof(text), &needed, 0, nullptr) == ERROR_SUCCESS) {
-            SvcFree(display);
-            display = SvcDup(text);
+        RegLoadMUIStringW(key, value, nullptr, 0, &needed, 0, nullptr);
+        WCHAR *loaded = needed ? SvcAllocZero(needed + sizeof(WCHAR)) : nullptr;
+        if (loaded && RegLoadMUIStringW(key, value, loaded, needed, &needed, 0, nullptr) == ERROR_SUCCESS) {
+            SvcFree(text);
+            text = loaded;
+        } else {
+            SvcFree(loaded);
         }
     }
-    return display;
+    return text;
+}
+
+WCHAR *DbReadDisplayName(HKEY key)
+{
+    return DbReadMuiString(key, L"DisplayName");
 }
 
 BOOL DbReadDword(HKEY key, const WCHAR *value, DWORD *out)
