@@ -7,6 +7,8 @@ EXPORTS
     DnsFlushResolverCacheEntry_W
     DnsExtractRecordsFromMessage_W
     DnsFree
+    DnsGetCacheDataTable
+    DnsGetCacheDataTableEx
     DnsQueryConfig
     DnsQueryEx
     DnsQueryExA

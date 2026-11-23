@@ -100,7 +100,7 @@
 "LocalServiceNoNetwork"=multi:"CoreMessagingRegistrar"
 "LocalServiceNetworkRestricted"=multi:"Dhcp"
 "LocalSystemNetworkRestricted"=multi:"NgcSvc"
-"NetworkService"=multi:"CryptSvc","LanmanWorkstation","DoSvc"
+"NetworkService"=multi:"CryptSvc","LanmanWorkstation","Dnscache","DoSvc"
 "RPCSS"=multi:"RpcEptMapper","RpcSs"
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost\LocalService]

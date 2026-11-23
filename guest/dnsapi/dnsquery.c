@@ -161,7 +161,7 @@ static DNS_STATUS query(const char *name, int charset, WORD type, DWORD options,
     if (message)
         flags |= DNS_QUERY_RETURN_MESSAGE;
     DNS_ANSWER answer;
-    DNS_STATUS status = DnsLookup(name, type, flags, servers, server_count, nullptr, &answer);
+    DNS_STATUS status = DnsResolve(name, type, flags, servers, server_count, nullptr, &answer);
     if (status == ERROR_SUCCESS && results) {
         *results = DnsRecordsBuild(answer.records, charset, 0);
         if (!*results && answer.records)
@@ -328,7 +328,7 @@ static DWORD WINAPI query_thread(PVOID argument)
 {
     PENDING *p = argument;
     DNS_ANSWER answer;
-    DNS_STATUS status = DnsLookup(p->name, p->type, p->options, p->servers, p->server_count, &p->cancelled, &answer);
+    DNS_STATUS status = DnsResolve(p->name, p->type, p->options, p->servers, p->server_count, &p->cancelled, &answer);
     PDNS_RECORD records = nullptr;
     if (status == ERROR_SUCCESS) {
         records = DnsRecordsBuild(answer.records, p->charset, 0);
@@ -373,8 +373,8 @@ static DNS_STATUS query_ex(const DNS_QUERY_REQUEST *request, DNS_QUERY_RESULT *r
 
     if (!request->pQueryCompletionCallback) {
         DNS_ANSWER answer;
-        DNS_STATUS status = DnsLookup(name, request->QueryType, request->QueryOptions, servers, server_count, nullptr,
-                                      &answer);
+        DNS_STATUS status = DnsResolve(name, request->QueryType, request->QueryOptions, servers, server_count, nullptr,
+                                       &answer);
         if (status == ERROR_SUCCESS) {
             result->pQueryRecords = DnsRecordsBuild(answer.records, charset, 0);
             if (!result->pQueryRecords && answer.records)
@@ -481,40 +481,6 @@ void WINAPI DnsFree(PVOID data, DNS_FREE_TYPE type)
         DnsRelease(data);
         break;
     }
-}
-
-BOOL WINAPI DnsFlushResolverCache(void)
-{
-    DnsCacheFlush(nullptr);
-    return TRUE;
-}
-
-BOOL WINAPI DnsFlushResolverCacheEntry_UTF8(PCSTR name)
-{
-    if (!name)
-        return FALSE;
-    DnsCacheFlush(name);
-    return TRUE;
-}
-
-BOOL WINAPI DnsFlushResolverCacheEntry_A(PCSTR name)
-{
-    char *utf8 = name ? from_ansi(name) : nullptr;
-    BOOL ok = utf8 != nullptr;
-    if (ok)
-        DnsCacheFlush(utf8);
-    DnsRelease(utf8);
-    return ok;
-}
-
-BOOL WINAPI DnsFlushResolverCacheEntry_W(PCWSTR name)
-{
-    char *utf8 = name ? narrow(name) : nullptr;
-    BOOL ok = utf8 != nullptr;
-    if (ok)
-        DnsCacheFlush(utf8);
-    DnsRelease(utf8);
-    return ok;
 }
 
 /* ------------------------------------------------------------------ DnsValidateName */

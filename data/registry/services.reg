@@ -62,15 +62,25 @@
 [HKLM\SYSTEM\CurrentControlSet\Services\CoreMessagingRegistrar\Parameters]
 "ServiceDll"=expand:"%SystemRoot%\\System32\\CoreMessaging.dll"
 
-; the dns client. the sechost test opens it as a service of the installation and finds it stopped, chrome reads its parameters
-; and those of the network stack, whose domain is empty on a machine outside a domain.
+; the dns client, dnsrslvr.dll: the lookups and the cache of the machine. chrome reads its parameters and those of the
+; network stack, whose domain is empty on a machine outside a domain.
 [HKLM\SYSTEM\CurrentControlSet\Services\Dnscache]
-"DisplayName"="DNS Client"
+"DependOnService"=multi:"nsi","Afd"
+"Description"="@%SystemRoot%\\System32\\dnsapi.dll,-102"
+"DisplayName"="@%SystemRoot%\\System32\\dnsapi.dll,-101"
 "ErrorControl"=dword:00000001
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,e8,03,00,00,01,00,00,00,e8,03,00,00,01,00,00,00,e8,03,00,00
+"Group"="TDI"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k NetworkService -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
-"Type"=dword:00000020
+"Type"=dword:00000010
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\dnsrslvr.dll"
+"ServiceDllUnloadOnStop"=dword:00000001
 
 [HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\{DnsConnections,DnsConnectionsProxies,DnsPolicyConfig}]
 
@@ -250,6 +260,8 @@
 "ErrorControl"=dword:00000001
 "ImagePath"=expand:"%systemroot%\\system32\\msiexec.exe /V"
 "ObjectName"="LocalSystem"
+"RequiredPrivileges"=multi:"SeTcbPrivilege","SeCreatePagefilePrivilege","SeLockMemoryPrivilege","SeIncreaseBasePriorityPrivilege","SeCreatePermanentPrivilege","SeAuditPrivilege","SeSecurityPrivilege","SeChangeNotifyPrivilege","SeProfileSingleProcessPrivilege","SeImpersonatePrivilege","SeCreateGlobalPrivilege","SeAssignPrimaryTokenPrivilege","SeRestorePrivilege","SeIncreaseQuotaPrivilege","SeShutdownPrivilege","SeTakeOwnershipPrivilege","SeLoadDriverPrivilege","SeBackupPrivilege","SeCreateSymbolicLinkPrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000003
 "Type"=dword:00000010
 
@@ -260,8 +272,6 @@
 
 [HKLM\SYSTEM\CurrentControlSet\Services\EventLog\System]
 
-"RequiredPrivileges"=multi:"SeTcbPrivilege","SeCreatePagefilePrivilege","SeLockMemoryPrivilege","SeIncreaseBasePriorityPrivilege","SeCreatePermanentPrivilege","SeAuditPrivilege","SeSecurityPrivilege","SeChangeNotifyPrivilege","SeProfileSingleProcessPrivilege","SeImpersonatePrivilege","SeCreateGlobalPrivilege","SeAssignPrimaryTokenPrivilege","SeRestorePrivilege","SeIncreaseQuotaPrivilege","SeShutdownPrivilege","SeTakeOwnershipPrivilege","SeLoadDriverPrivilege","SeBackupPrivilege","SeCreateSymbolicLinkPrivilege"
-"ServiceSidType"=dword:00000001
 ; the key isolation service of cng, microsoft's keyiso.dll in the process of the security authority, as windows 11
 ; 26300 registers it: started when a client asks the endpoint mapper for one of its two rpc interfaces.
 [HKLM\SYSTEM\CurrentControlSet\Services\KeyIso]

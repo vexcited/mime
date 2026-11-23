@@ -188,6 +188,9 @@ void DnsRrFree(DNS_RR *list);
 DNS_RR *DnsRrNew(const char *name, WORD type, DWORD ttl, BYTE section);
 DNS_RR *DnsRrClone(const DNS_RR *list);
 void DnsRecordsFree(PDNS_RECORD list);
+/* a list packed for the dns client service's answer; the size it takes whether it fits or not. */
+DWORD DnsRrPack(const DNS_RR *list, BYTE *buffer, DWORD capacity);
+DNS_RR *DnsRrUnpack(const BYTE *buffer, DWORD size, BOOL *ok);
 PDNS_RECORD DnsRecordsBuild(const DNS_RR *list, int charset, DWORD elapsed);
 
 /* ------------------------------------------------------------------ the wire */
@@ -216,6 +219,12 @@ void DnsFullName(char *buffer, DWORD size);
 DNS_STATUS DnsCheckName(const char *name, BOOL *numeric);
 void DnsAnswerFree(DNS_ANSWER *answer);
 void DnsCacheFlush(const char *name);
+/* the cache is the dns client service's: dnsapi keeps none, dnsrslvr turns it on. */
+extern BOOL DnsCacheEnabled;
+void DnsCacheList(void (*each)(const char *name, WORD type, void *context), void *context);
+/* dnsresolver.c: a lookup through the dns client service, or here when it does not run. */
+DNS_STATUS DnsResolve(const char *name, WORD type, ULONGLONG options, const DNS_SERVER *servers, int server_count,
+                      volatile LONG *cancelled, DNS_ANSWER *answer);
 
 /* dnsadapter.c: the ip4 servers of the machine or of an adapter named by its guid, from the host's configuration. */
 #define MIME_DNS_MAX_CONFIG_SERVERS 8

@@ -670,7 +670,7 @@ list(APPEND MIME_EXTRA_DLLS sensapi:0x7FEBF0000000 verifier:0x7FEBE0000000 wldp:
     windows.graphics:0x7FECA0000000 windows.media.devices:0x7FEB60000000 windows.devices.enumeration:0x7FEB50000000 windows.networking.connectivity:0x7FEB40000000 cryptowinrt:0x7FEB30000000 cryptnet:0x7FEC20000000 msdmo:0x7FEC30000000 dxva2:0x7FEC40000000 gpapi:0x7FEC60000000 cryptbase:0x7FEC50000000 evr:0x7FEBD0000000
     twinapi.appcore:0x7FEBC0000000 fwpuclnt:0x7FEBB0000000 cryptsvc:0x7FEBA0000000 nlansp_c:0x7FEB90000000 dosvc:0x7FEB80000000
     qmgr:0x7FEB70000000 netprofmsvc:0x7FEB20000000 bthserv:0x7FEB10000000 devmgr:0x7FEB00000000 newdev:0x7FEAF0000000
-    ngcsvc:0x7FEAE0000000 dhcpcore:0x7FEAD0000000)
+    ngcsvc:0x7FEAE0000000 dhcpcore:0x7FEAD0000000 dnsrslvr:0x7FEAC0000000)
 
 foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_msi ${arch}-lib-compound ${arch}-lib-cabinet ${arch}-lib-crypto:guest/lib/crypto/hash.c)
@@ -746,7 +746,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(includes_winhttp guest/lib)
     set(libs_winhttp ${MIME_LIB_${arch}}/ws2_32.lib)
     set(libs_wsock32 ${MIME_LIB_${arch}}/ws2_32.lib)
-    set(libs_dnsapi ${MIME_LIB_${arch}}/ws2_32.lib)
+    set(libs_dnsapi ${MIME_LIB_${arch}}/ws2_32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(objects_wininet ${arch}-lib-png:guest/lib/png/inflate.c)
     set(includes_wininet guest/lib)
     set(libs_wininet ${MIME_LIB_${arch}}/ws2_32.lib ${MIME_LIB_${arch}}/kernelbase.lib)
@@ -838,6 +838,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_bthserv ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ole32.lib
         ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_dhcpcore ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/iphlpapi.lib)
+    set(libs_dnsrslvr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ws2_32.lib)
     set(libs_ngcsvc ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/rpcrt4.lib ${MIME_LIB_${arch}}/ncrypt.lib)
     set(libs_devmgr ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/comctl32.lib ${MIME_LIB_${arch}}/setupapi.lib
         ${MIME_LIB_${arch}}/cfgmgr32.lib ${MIME_LIB_${arch}}/uxtheme.lib)
@@ -904,6 +905,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
             list(APPEND sources guest/combase/netinfo.c guest/combase/async.c guest/combase/collections.c)
         elseif(name STREQUAL "cryptowinrt")
             list(APPEND sources guest/combase/keycred.c guest/combase/async.c)
+        elseif(name STREQUAL "dnsrslvr")
+            # the service makes its lookups with dnsapi's code.
+            list(APPEND sources guest/dnsapi/dnsclient.c guest/dnsapi/dnswire.c guest/dnsapi/dnsrecord.c)
         endif()
         mime_dll(${name} ${arch} BASE ${base} FILE ${file} SOURCES ${sources} OBJECTS ${arch}-chkstk ${objects_${name}}
             INCLUDES ${includes_${name}} IMPORTS ntdll kernel32 user32 gdi32 win32u LIBS ${libs_${name}}
@@ -1244,7 +1248,7 @@ set(wbem_imports ntdll kernel32 advapi32 ole32 oleaut32)
 set(loadperf_imports ntdll kernel32 advapi32)
 set(xmllite_imports ntdll kernel32)
 set(wkscli_imports ntdll kernel32 advapi32 rpcrt4 msvcrt)
-set(dnsapi_imports ntdll kernel32 ws2_32)
+set(dnsapi_imports ntdll kernel32 ws2_32 rpcrt4 msvcrt)
 set(oledlg_imports ntdll kernel32 user32 ole32 advapi32)
 set(msvfw32_imports ntdll kernel32 user32 gdi32 win32u winmm comdlg32)
 set(authz_imports ntdll kernel32 advapi32)

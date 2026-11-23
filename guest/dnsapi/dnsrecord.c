@@ -94,6 +94,130 @@ fail:
     return nullptr;
 }
 
+/* ------------------------------------------------------------------ records between processes */
+
+/*
+ * a list as the dns client service hands it to dnsapi: the count, then each record's fixed part and its texts, a text a
+ * 16 bit length and its bytes, 0xFFFF for none. the strings of a TXT record or the raw bytes of another follow.
+ */
+typedef struct {
+    BYTE *at, *end;
+    DWORD size;
+} RR_PACKER;
+
+static void pack(RR_PACKER *p, const void *data, DWORD length)
+{
+    if (p->at && p->end - p->at >= (INT_PTR)length) {
+        memcpy(p->at, data, length);
+        p->at += length;
+    } else {
+        p->at = nullptr;
+    }
+    p->size += length;
+}
+
+static void pack_text(RR_PACKER *p, const char *text)
+{
+    WORD length = text ? (WORD)strlen(text) : 0xFFFF;
+    pack(p, &length, sizeof(length));
+    if (text)
+        pack(p, text, length);
+}
+
+DWORD DnsRrPack(const DNS_RR *list, BYTE *buffer, DWORD capacity)
+{
+    RR_PACKER p = {buffer, buffer ? buffer + capacity : nullptr, 0};
+    DWORD count = 0;
+    for (const DNS_RR *rr = list; rr; rr = rr->next)
+        count++;
+    pack(&p, &count, sizeof(count));
+    for (const DNS_RR *rr = list; rr; rr = rr->next) {
+        pack(&p, &rr->type, sizeof(rr->type));
+        pack(&p, &rr->section, sizeof(rr->section));
+        pack(&p, &rr->ttl, sizeof(rr->ttl));
+        pack(&p, &rr->count, sizeof(rr->count));
+        pack(&p, &rr->preference, sizeof(rr->preference));
+        pack(&p, &rr->weight, sizeof(rr->weight));
+        pack(&p, &rr->port, sizeof(rr->port));
+        pack(&p, rr->soa, sizeof(rr->soa));
+        pack(&p, rr->ip, sizeof(rr->ip));
+        pack_text(&p, rr->name);
+        pack_text(&p, rr->host);
+        pack_text(&p, rr->admin);
+        BYTE kind = rr->type == DNS_TYPE_TXT ? 1 : rr->raw ? 2 : 0;
+        pack(&p, &kind, sizeof(kind));
+        for (DWORD i = 0; kind == 1 && i < rr->count; i++)
+            pack_text(&p, rr->strings[i]);
+        if (kind == 2)
+            pack(&p, rr->raw, rr->count);
+    }
+    return p.size;
+}
+
+typedef struct {
+    const BYTE *at, *end;
+} RR_READER;
+
+static BOOL unpack(RR_READER *r, void *out, DWORD length)
+{
+    if (r->end - r->at < (INT_PTR)length)
+        return FALSE;
+    memcpy(out, r->at, length);
+    r->at += length;
+    return TRUE;
+}
+
+static BOOL unpack_text(RR_READER *r, char **out)
+{
+    WORD length;
+    *out = nullptr;
+    if (!unpack(r, &length, sizeof(length)))
+        return FALSE;
+    if (length == 0xFFFF)
+        return TRUE;
+    if (!(*out = DnsAllocate(length + 1u)))
+        return FALSE;
+    return unpack(r, *out, length);
+}
+
+DNS_RR *DnsRrUnpack(const BYTE *buffer, DWORD size, BOOL *ok)
+{
+    RR_READER r = {buffer, buffer + size};
+    DNS_RR *head = nullptr, **tail = &head;
+    DWORD count = 0;
+    *ok = unpack(&r, &count, sizeof(count));
+    for (DWORD n = 0; *ok && n < count; n++) {
+        DNS_RR *rr = DnsAllocate(sizeof(*rr));
+        if (!rr) {
+            *ok = FALSE;
+            break;
+        }
+        *tail = rr;
+        tail = &rr->next;
+        BYTE kind = 0;
+        *ok = unpack(&r, &rr->type, sizeof(rr->type)) && unpack(&r, &rr->section, sizeof(rr->section)) &&
+              unpack(&r, &rr->ttl, sizeof(rr->ttl)) && unpack(&r, &rr->count, sizeof(rr->count)) &&
+              unpack(&r, &rr->preference, sizeof(rr->preference)) && unpack(&r, &rr->weight, sizeof(rr->weight)) &&
+              unpack(&r, &rr->port, sizeof(rr->port)) && unpack(&r, rr->soa, sizeof(rr->soa)) &&
+              unpack(&r, rr->ip, sizeof(rr->ip)) && unpack_text(&r, &rr->name) && unpack_text(&r, &rr->host) &&
+              unpack_text(&r, &rr->admin) && unpack(&r, &kind, sizeof(kind)) && rr->name && kind <= 2;
+        if (*ok && kind == 1) {
+            DWORD strings = rr->count;
+            rr->count = 0;
+            *ok = strings <= 4096 && (rr->strings = DnsAllocate(sizeof(char *) * (strings ? strings : 1)));
+            for (; *ok && rr->count < strings; rr->count++)
+                *ok = unpack_text(&r, &rr->strings[rr->count]) && rr->strings[rr->count];
+        } else if (*ok && kind == 2) {
+            *ok = rr->count <= size && (rr->raw = DnsAllocate(rr->count)) && unpack(&r, rr->raw, rr->count);
+        }
+    }
+    if (!*ok) {
+        DnsRrFree(head);
+        return nullptr;
+    }
+    return head;
+}
+
 /* ------------------------------------------------------------------ the character sets */
 
 /* the bytes a text takes in a character set, with its terminator. */

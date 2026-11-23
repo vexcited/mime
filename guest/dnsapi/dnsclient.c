@@ -479,9 +479,13 @@ static BOOL entry_matches(const CACHE_ENTRY *e, const char *name, WORD type)
     return e->type == type || (e->type == DNS_TYPE_ALL && e->status == DNS_ERROR_RCODE_NAME_ERROR);
 }
 
+BOOL DnsCacheEnabled;
+
 /* a copy of what the cache holds for a name, every ttl the time that is left. */
 static BOOL cache_get(const char *name, WORD type, DNS_ANSWER *answer)
 {
+    if (!DnsCacheEnabled)
+        return FALSE;
     ULONGLONG now = seconds();
     BOOL found = FALSE;
     AcquireSRWLockExclusive(&cache_lock);
@@ -509,6 +513,8 @@ static BOOL cache_get(const char *name, WORD type, DNS_ANSWER *answer)
 /* keeps what a lookup found. the answers that say there is nothing are kept for MaxNegativeCacheTtl. */
 static void cache_put(const char *name, WORD type, const DNS_ANSWER *answer)
 {
+    if (!DnsCacheEnabled)
+        return;
     DNS_STATUS status = answer->status;
     DWORD ttl = 0;
     DNS_RR *copy = nullptr;
@@ -577,6 +583,17 @@ void DnsCacheFlush(const char *name)
     for (int i = 0; i < CACHE_ENTRIES; i++)
         if (cache[i].name && (!name || DnsNameEqual(cache[i].name, name)))
             entry_clear(&cache[i]);
+    ReleaseSRWLockExclusive(&cache_lock);
+}
+
+/* the names and types the cache holds and that have not expired. */
+void DnsCacheList(void (*each)(const char *name, WORD type, void *context), void *context)
+{
+    ULONGLONG now = seconds();
+    AcquireSRWLockExclusive(&cache_lock);
+    for (int i = 0; i < CACHE_ENTRIES; i++)
+        if (cache[i].name && cache[i].expires > now)
+            each(cache[i].name, cache[i].type, context);
     ReleaseSRWLockExclusive(&cache_lock);
 }
 
