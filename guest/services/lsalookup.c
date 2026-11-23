@@ -138,7 +138,7 @@ static RPC_SID *domain_sid(void)
 }
 
 /* the sid and the name of the machine's user, from the profile the kernel writes at boot. */
-static BOOL machine_user(BYTE sid[68], WCHAR name[64])
+BOOL LsaMachineUser(BYTE sid[68], WCHAR name[64])
 {
     HKEY list;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, PROFILE_LIST, 0, KEY_READ, &list))
@@ -253,7 +253,7 @@ static void lookup_begin(LOOKUP_STATE *state)
     DWORD n = RTL_NUMBER_OF(state->Computer);
     if (!GetComputerNameW(state->Computer, &n))
         state->Computer[0] = 0;
-    state->HasUser = machine_user(state->UserSid, state->User);
+    state->HasUser = LsaMachineUser(state->UserSid, state->User);
 }
 
 static void known_sid(const KNOWN_ACCOUNT *k, BYTE sid[68])

@@ -51,6 +51,7 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE_ {
 #define TOKEN_ADJUST_DEFAULT 0x0080
 #define TOKEN_ADJUST_SESSIONID 0x0100
 #define TOKEN_ALL_ACCESS 0xF01FF
+#define SE_PRIVILEGE_ENABLED_BY_DEFAULT 0x1
 #define SE_PRIVILEGE_ENABLED 0x2
 #define SE_PRIVILEGE_REMOVED 0x4
 #define GENERIC_ALL_RIGHT 0x10000000
@@ -61,6 +62,8 @@ typedef struct _SECURITY_QUALITY_OF_SERVICE_ {
 #define LABEL_SECURITY_INFORMATION 0x10
 #define SDDL_REVISION_1 1
 #define TokenUser 1
+#define TokenGroups 2
+#define TokenPrivileges 3
 #define TokenPrimary 1
 #define TokenImpersonation 2
 #define TokenSessionId 12
@@ -126,6 +129,8 @@ WINBASEAPI NTSTATUS NTAPI NtCreateToken(PHANDLE token, ACCESS_MASK access, POBJE
                                         PLUID authentication_id, PLARGE_INTEGER expiration, PVOID user, PVOID groups,
                                         PVOID privileges, PVOID owner, PVOID primary_group, PVOID default_dacl,
                                         PVOID source);
+WINBASEAPI NTSTATUS NTAPI NtFilterToken(HANDLE token, ULONG flags, PVOID sids_to_disable, PVOID privileges_to_delete,
+                                        PVOID restricted_sids, PHANDLE new_token);
 
 /* ------------------------------------------------------------------ records */
 
@@ -328,6 +333,7 @@ void DbRemove(SERVICE *s);
 HKEY DbOpenKey(const WCHAR *name, REGSAM access, BOOL create);
 WCHAR *DbReadString(HKEY key, const WCHAR *value, DWORD *chars);
 WCHAR *DbReadDisplayName(HKEY key);
+WCHAR *DbReadMuiString(HKEY key, const WCHAR *value);
 BOOL DbReadDword(HKEY key, const WCHAR *value, DWORD *out);
 DWORD DbWriteString(HKEY key, const WCHAR *value, const WCHAR *text, DWORD type);
 DWORD DbWriteDword(HKEY key, const WCHAR *value, DWORD data);
@@ -385,8 +391,13 @@ DWORD AccessReadSd(SERVICE *s);
 DWORD AccessWriteSd(SERVICE *s);
 DWORD AccessQuerySd(PSECURITY_DESCRIPTOR sd, DWORD information, void *out, DWORD size, DWORD *needed);
 DWORD AccessSetSd(PSECURITY_DESCRIPTOR *sd, DWORD information, PSECURITY_DESCRIPTOR modification);
-HANDLE AccessServiceToken(SERVICE *s, DWORD *error);
+HANDLE AccessServiceToken(SERVICE *s, const WCHAR *const *sid_names, DWORD sid_count, PSECURITY_DESCRIPTOR *process_sd,
+                          DWORD *error);
 void AccessEnablePrivilege(const WCHAR *name);
+DWORD AccessPrivilegeValue(const WCHAR *name);
+HANDLE AccessManagerToken(DWORD *error);
+BOOL AccessValidPrivileges(const WCHAR *list);
+DWORD AccessRemovePrivileges(HANDLE token, const WCHAR *const *lists, DWORD count, BOOL strip);
 
 /* elevate.c: the broker for processes that need administrator rights. */
 typedef struct ELEVATE_REQUEST {
@@ -425,6 +436,7 @@ DWORD MainRpcRequest(DWORD pid, DWORD op, SCM_WRITER *request, SCM_WRITER *reply
 void RpcStart(void);
 /* lsalookup.c: the lookup interface of the lsa over ncalrpc:[lsapolicylookup]. */
 void LsaLookupStart(void);
+BOOL LsaMachineUser(BYTE sid[68], WCHAR name[64]);
 /* lsarpc.c: the policy interface of the lsa over ncalrpc:[LSARPC_ENDPOINT]. */
 void LsaPolicyStart(void);
 void DpapiStart(void);

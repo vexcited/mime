@@ -757,6 +757,127 @@ static WCHAR *image_key(const WCHAR *command)
     return key;
 }
 
+static WCHAR *service_command(SERVICE *s, DWORD *error);
+
+static DWORD sid_type_of(SERVICE *s)
+{
+    DWORD type = SERVICE_SID_TYPE_NONE;
+    HKEY key = DbOpenKey(s->Name, KEY_READ, FALSE);
+    if (key) {
+        DbReadDword(key, L"ServiceSidType", &type);
+        RegCloseKey(key);
+    }
+    return type;
+}
+
+/*
+ * the services whose sids the token of a new process holds, as ScCreateServiceSids of services.exe picks them: a service
+ * with a process of its own has its own, else every share process service with a sid not split yet whose image path
+ * is the same, in the order of the database. called with the lock held.
+ */
+static WCHAR **sid_services(SERVICE *s, DWORD *count)
+{
+    *count = 0;
+    BOOL own = (RunStatusType(s) & SERVICE_WIN32_OWN_PROCESS) != 0;
+    DWORD error = 0;
+    WCHAR *path = own ? nullptr : service_command(s, &error);
+    DWORD capacity = 0;
+    for (SERVICE *t = g_services; t; t = t->Next)
+        capacity++;
+    WCHAR **names = SvcAllocZero((capacity + 1) * sizeof(WCHAR *));
+    if (!names) {
+        SvcFree(path);
+        return nullptr;
+    }
+    for (SERVICE *t = path ? g_services : s; t && *count < capacity + 1; t = path ? t->Next : nullptr) {
+        if (t != s) {
+            if (!(t->Type & SERVICE_WIN32_SHARE_PROCESS) || (RunStatusType(t) & SERVICE_WIN32_OWN_PROCESS))
+                continue;
+            WCHAR *other = service_command(t, &error);
+            BOOL same = other && !_wcsicmp(other, path);
+            SvcFree(other);
+            if (!same)
+                continue;
+        }
+        if (sid_type_of(t) != SERVICE_SID_TYPE_NONE)
+            names[(*count)++] = SvcDup(t->Name);
+    }
+    SvcFree(path);
+    return names;
+}
+
+/* the RequiredPrivileges of a service, nullptr when it has none. a list naming an unknown privilege is no list. */
+static WCHAR *required_privileges(SERVICE *t, BOOL *present)
+{
+    *present = FALSE;
+    HKEY key = DbOpenKey(t->Name, KEY_READ, FALSE);
+    WCHAR *list = key ? DbReadString(key, L"RequiredPrivileges", nullptr) : nullptr;
+    if (key)
+        RegCloseKey(key);
+    if (!list || !*list) {
+        SvcFree(list);
+        return nullptr;
+    }
+    *present = TRUE;
+    if (!AccessValidPrivileges(list)) {
+        SvcFree(list);
+        return nullptr;
+    }
+    return list;
+}
+
+/*
+ * what ScRemovePrivileges reads for a new process: the list of the starting service first, then those of the other
+ * services the process can host, which share its image path. privileges are only removed when each of them has a list.
+ * called with the lock held.
+ */
+static DWORD privilege_lists(SERVICE *s, WCHAR ***out, DWORD *count, BOOL *strip)
+{
+    *out = nullptr;
+    *count = 0;
+    *strip = TRUE;
+    BOOL present;
+    WCHAR *own = required_privileges(s, &present);
+    if (!own)
+        return present ? ERROR_INVALID_DATA : 0;
+    DWORD capacity = 1;
+    for (SERVICE *t = g_services; t; t = t->Next)
+        capacity++;
+    WCHAR **lists = SvcAllocZero(capacity * sizeof(WCHAR *));
+    if (!lists) {
+        SvcFree(own);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    lists[(*count)++] = own;
+    BOOL shared = !(RunStatusType(s) & SERVICE_WIN32_OWN_PROCESS);
+    DWORD error = 0;
+    WCHAR *path = shared ? service_command(s, &error) : nullptr;
+    for (SERVICE *t = path ? g_services : nullptr; t && *count < capacity; t = t->Next) {
+        if (t == s || !(t->Type & SERVICE_WIN32_SHARE_PROCESS) || (RunStatusType(t) & SERVICE_WIN32_OWN_PROCESS))
+            continue;
+        WCHAR *other = service_command(t, &error);
+        BOOL same = other && !_wcsicmp(other, path);
+        SvcFree(other);
+        if (!same)
+            continue;
+        WCHAR *list = required_privileges(t, &present);
+        if (list)
+            lists[(*count)++] = list;
+        else if (!present)
+            *strip = FALSE;
+    }
+    SvcFree(path);
+    *out = lists;
+    return 0;
+}
+
+static void free_lists(WCHAR **lists, DWORD count)
+{
+    for (DWORD i = 0; i < count; i++)
+        SvcFree(lists[i]);
+    SvcFree(lists);
+}
+
 /*
  * nothing is held while the process is created, the lock is taken again after.
  */
@@ -778,8 +899,25 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
 
     WCHAR *line = SvcDup(command);
     DWORD token_error = 0;
+    DWORD sid_count = 0;
+    WCHAR **sid_names = sid_services(s, &sid_count);
+    WCHAR **privileges = nullptr;
+    DWORD privilege_count = 0;
+    BOOL strip = FALSE;
+    token_error = privilege_lists(s, &privileges, &privilege_count, &strip);
     LeaveCriticalSection(&g_lock);
-    HANDLE token = AccessServiceToken(s, &token_error);
+    PSECURITY_DESCRIPTOR process_sd = nullptr;
+    HANDLE token = nullptr;
+    if (!token_error)
+        token = AccessServiceToken(s, (const WCHAR *const *)sid_names, sid_count, &process_sd, &token_error);
+    if (!token_error && !token)
+        token = AccessManagerToken(&token_error);
+    for (DWORD i = 0; i < sid_count; i++)
+        SvcFree(sid_names[i]);
+    SvcFree(sid_names);
+    if (token && privilege_count)
+        token_error = AccessRemovePrivileges(token, (const WCHAR *const *)privileges, privilege_count, strip);
+    SECURITY_ATTRIBUTES process_attributes = {sizeof(process_attributes), process_sd, FALSE};
     STARTUPINFOW si = {sizeof(si)};
     si.lpDesktop = L"";
     PROCESS_INFORMATION pi = {};
@@ -799,29 +937,20 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
             create_environment = (BOOL(WINAPI *)(LPVOID *, HANDLE, BOOL))GetProcAddress(userenv, "CreateEnvironmentBlock");
             destroy_environment = (BOOL(WINAPI *)(LPVOID))GetProcAddress(userenv, "DestroyEnvironmentBlock");
         }
-        if (create_environment && destroy_environment) {
-            /* the local system account has no token of its own here, the manager's is the system's. */
-            HANDLE own = nullptr;
-            HANDLE source = token;
-            if (!source && OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &own))
-                source = own;
-            made = source && create_environment(&environment, source, FALSE);
-            if (own)
-                CloseHandle(own);
-        }
+        if (create_environment && destroy_environment)
+            made = create_environment(&environment, token, FALSE);
     }
     if (token_error) {
         ok = FALSE;
         SetLastError(token_error);
-    } else if (token) {
+    } else {
         AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
         AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
-        ok = CreateProcessAsUserW(token, nullptr, line, nullptr, nullptr, FALSE, flags, made ? environment : nullptr,
+        ok = CreateProcessAsUserW(token, nullptr, line, process_sd ? &process_attributes : nullptr, nullptr, FALSE, flags,
+                                  made ? environment : nullptr,
                                   n ? directory : nullptr, &si, &pi);
-    } else {
-        ok = CreateProcessW(nullptr, line, nullptr, nullptr, FALSE, flags, made ? environment : nullptr,
-                            n ? directory : nullptr, &si, &pi);
     }
+    free_lists(privileges, privilege_count);
     if (made)
         destroy_environment(environment);
     if (userenv)
@@ -829,6 +958,8 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
     DWORD error = ok ? 0 : GetLastError();
     if (token)
         CloseHandle(token);
+    if (process_sd)
+        LocalFree(process_sd);
     SvcFree(line);
     EnterCriticalSection(&g_lock);
     if (!ok) {
@@ -1093,6 +1224,19 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
         if (!same) {
             SvcFree(command);
             return ERROR_DIFFERENT_SERVICE_ACCOUNT;
+        }
+        /* the privileges a joining service requires must be in the token of the process, ScCheckPrivilegesInToken. */
+        BOOL present;
+        WCHAR *list = required_privileges(s, &present);
+        HANDLE token = nullptr;
+        if (list && img->Process && OpenProcessToken(img->Process, TOKEN_QUERY, &token)) {
+            error = AccessRemovePrivileges(token, (const WCHAR *const *)&list, 1, FALSE);
+            CloseHandle(token);
+        }
+        SvcFree(list);
+        if (error) {
+            SvcFree(command);
+            return error;
         }
     }
 

@@ -14,6 +14,9 @@ WINBASEAPI BOOL WINAPI ConvertStringSecurityDescriptorToSecurityDescriptorW(LPCW
                                                                             PSECURITY_DESCRIPTOR *sd, PULONG size);
 WINBASEAPI BOOL WINAPI DuplicateTokenEx(HANDLE token, DWORD access, LPSECURITY_ATTRIBUTES sa, DWORD level, DWORD type,
                                         PHANDLE out);
+NTSYSAPI NTSTATUS NTAPI RtlAdjustPrivilege(ULONG privilege, BOOLEAN enable, BOOLEAN thread, PBOOLEAN was);
+#define SE_ASSIGNPRIMARYTOKEN_PRIVILEGE_ 3
+#define SE_INCREASE_QUOTA_PRIVILEGE_ 5
 
 /* ------------------------------------------------------------------ DcomLaunch */
 
@@ -83,6 +86,10 @@ static HRESULT start_program(DWORD client, const WCHAR *command, DWORD *pid)
     STARTUPINFOW si = {sizeof(si)};
     si.lpDesktop = (LPWSTR)L"winsta0\\default";
     PROCESS_INFORMATION pi = {};
+    /* the service token holds both disabled, as on windows. */
+    BOOLEAN was;
+    RtlAdjustPrivilege(SE_ASSIGNPRIMARYTOKEN_PRIVILEGE_, TRUE, FALSE, &was);
+    RtlAdjustPrivilege(SE_INCREASE_QUOTA_PRIVILEGE_, TRUE, FALSE, &was);
     BOOL ok = CreateProcessAsUserW(primary, nullptr, line, nullptr, nullptr, FALSE,
                                    CREATE_UNICODE_ENVIRONMENT | CREATE_DEFAULT_ERROR_MODE_, made ? environment : nullptr,
                                    nullptr, &si, &pi);
