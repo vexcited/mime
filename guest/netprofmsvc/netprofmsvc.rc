@@ -1,0 +1,5 @@
+STRINGTABLE
+BEGIN
+    202 "Network List Service"
+    203 "Identifies the networks to which the computer has connected, collects and stores properties for these networks, and notifies applications when these properties change."
+END
