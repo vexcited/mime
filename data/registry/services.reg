@@ -7,6 +7,8 @@
 "Group"="COM Infrastructure"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k DcomLaunch -p"
 "ObjectName"="LocalSystem"
+"RequiredPrivileges"=multi:"SeAssignPrimaryTokenPrivilege","SeAuditPrivilege","SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeDebugPrivilege","SeImpersonatePrivilege","SeIncreaseQuotaPrivilege","SeTcbPrivilege","SeBackupPrivilege","SeRestorePrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
 "SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
@@ -20,6 +22,8 @@
 "Group"="COM Infrastructure"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeImpersonatePrivilege","SeCreateGlobalPrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
 "SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
@@ -34,6 +38,8 @@
 "Group"="COM Infrastructure"
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k RPCSS -p"
 "ObjectName"="NT AUTHORITY\\NetworkService"
+"RequiredPrivileges"=multi:"SeChangeNotifyPrivilege","SeCreateGlobalPrivilege","SeImpersonatePrivilege"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
 "SvcHostSplitDisable"=dword:00000001
 "Type"=dword:00000020
@@ -42,10 +48,14 @@
 "ServiceDll"=expand:"%SystemRoot%\\System32\\rpcss.dll"
 
 [HKLM\SYSTEM\CurrentControlSet\Services\CoreMessagingRegistrar]
+"DependOnService"=multi:"rpcss"
 "DisplayName"="CoreMessaging"
 "ErrorControl"=dword:00000001
+"FailureActions"=hex:00,00,00,00,00,00,00,00,00,00,00,00,01,00,00,00,14,00,00,00,02,00,00,00,30,75,00,00
+"FailureActionsOnNonCrashFailures"=dword:00000001
 "ImagePath"=expand:"%SystemRoot%\\system32\\svchost.exe -k LocalServiceNoNetwork -p"
 "ObjectName"="NT AUTHORITY\\LocalService"
+"ServiceSidType"=dword:00000003
 "Start"=dword:00000002
 "Type"=dword:00000020
 
@@ -250,6 +260,8 @@
 
 [HKLM\SYSTEM\CurrentControlSet\Services\EventLog\System]
 
+"RequiredPrivileges"=multi:"SeTcbPrivilege","SeCreatePagefilePrivilege","SeLockMemoryPrivilege","SeIncreaseBasePriorityPrivilege","SeCreatePermanentPrivilege","SeAuditPrivilege","SeSecurityPrivilege","SeChangeNotifyPrivilege","SeProfileSingleProcessPrivilege","SeImpersonatePrivilege","SeCreateGlobalPrivilege","SeAssignPrimaryTokenPrivilege","SeRestorePrivilege","SeIncreaseQuotaPrivilege","SeShutdownPrivilege","SeTakeOwnershipPrivilege","SeLoadDriverPrivilege","SeBackupPrivilege","SeCreateSymbolicLinkPrivilege"
+"ServiceSidType"=dword:00000001
 ; the key isolation service of cng, microsoft's keyiso.dll in the process of the security authority, as windows 11
 ; 26300 registers it: started when a client asks the endpoint mapper for one of its two rpc interfaces.
 [HKLM\SYSTEM\CurrentControlSet\Services\KeyIso]

@@ -83,6 +83,7 @@
 "FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,60,ea,00,00,01,00,00,00,c0,d4,01,00,00,00,00,00,00,00,00,00
 "ImagePath"=expand:"%systemroot%\\system32\\svchost.exe -k netsvcs -p"
 "ObjectName"="LocalSystem"
+"ServiceSidType"=dword:00000001
 "Start"=dword:00000002
 "Type"=dword:00000020
 
