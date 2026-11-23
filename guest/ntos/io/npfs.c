@@ -98,6 +98,7 @@ typedef struct NP_INSTANCE {
     ULONG ReadMode[2];       /* by end: server, client. */
     ULONG CompletionMode[2];
     ULONG ProcessId[2];      /* the process that opened each end. */
+    ULONG SessionId[2];      /* and its session. */
     struct _TOKEN *ClientToken; /* the identity the client end acts with, referenced. */
     ULONG ClientLevel;          /* the impersonation level the client opened with. */
     BOOLEAN ClientEffectiveOnly;
@@ -590,7 +591,14 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
     }
     memset(in, 0, sizeof(*in));
     in->Pipe = p;
-    in->State = FILE_PIPE_LISTENING_STATE;
+    /*
+     * NpCreateCcb of windows' npfs: an instance opened to read or write data listens from the start, one opened
+     * without, as rpcrt4 reserves the name of an endpoint with a handle that only synchronizes, waits disconnected and
+     * takes no client.
+     */
+    PIO_SECURITY_CONTEXT context = stack ? stack->Parameters.Create.SecurityContext : nullptr;
+    in->State = !context || (context->DesiredAccess & 0xF2000003) ? FILE_PIPE_LISTENING_STATE
+                                                                   : FILE_PIPE_DISCONNECTED_STATE;
     in->ServerOpen = TRUE;
     init_queue(&in->ToServer);
     init_queue(&in->ToClient);
@@ -599,6 +607,7 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[0] = c->CompletionMode;
     in->ProcessId[0] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->SessionId[0] = PsCurrentProcess()->SessionId;
     InsertTailList(&p->InstanceList, &in->Links);
     p->Instances++;
     file->FsContext = in;
@@ -756,6 +765,7 @@ static NTSTATUS open_host(PFILE_OBJECT file, PCUNICODE_STRING name, ULONG index)
     init_queue(&in->ToClient);
     InitializeListHead(&in->Listeners);
     in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->SessionId[1] = PsCurrentProcess()->SessionId;
     in->Host = (ULONG)sock;
     InsertTailList(&p->InstanceList, &in->Links);
     file->FsContext = in;
@@ -818,6 +828,7 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     in->ReadMode[1] = FILE_PIPE_BYTE_STREAM_MODE;
     in->CompletionMode[1] = FILE_PIPE_QUEUE_OPERATION;
     in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->SessionId[1] = PsCurrentProcess()->SessionId;
     /* a server impersonates the identity the client opened with, at the level it allowed. */
     PETHREAD client = PsCurrentThread();
     in->ClientToken = SepReferenceEffectiveToken(client);
@@ -1477,19 +1488,26 @@ NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID
         }
     case FSCTL_PIPE_GET_PIPE_ATTRIBUTE:
     case FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE: {
-        /* the processes and sessions of the two ends, queried by name. */
+        /*
+         * the processes and sessions of the two ends, queried by name. a local client has no computer name, so that
+         * one is not found, as any name npfs does not keep.
+         */
         char name[32] = {};
         ULONG value = 0;
         status = in_len && in_len < sizeof(name) ? KiCopyFromUser(name, input, in_len) : STATUS_INVALID_PARAMETER;
+        if (NT_SUCCESS(status) && name[in_len - 1])
+            status = STATUS_INVALID_PARAMETER;
         if (NT_SUCCESS(status)) {
             if (!strcmp(name, "ClientProcessId"))
                 value = in->ProcessId[1];
             else if (!strcmp(name, "ServerProcessId"))
                 value = in->ProcessId[0];
-            else if (!strcmp(name, "ClientSessionId") || !strcmp(name, "ServerSessionId"))
-                value = 1;
+            else if (!strcmp(name, "ClientSessionId"))
+                value = in->SessionId[1];
+            else if (!strcmp(name, "ServerSessionId"))
+                value = in->SessionId[0];
             else
-                status = STATUS_INVALID_PARAMETER;
+                status = STATUS_NOT_FOUND;
         }
         if (NT_SUCCESS(status))
             status = out_len < sizeof(value) ? STATUS_BUFFER_TOO_SMALL : KiCopyToUser(output, &value, sizeof(value));
