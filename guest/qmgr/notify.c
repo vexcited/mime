@@ -1,7 +1,5 @@
 #include "qmgr.h"
 
-NTSYSAPI NTSTATUS NTAPI RtlAdjustPrivilege(ULONG privilege, BOOLEAN enable, BOOLEAN thread, PBOOLEAN was);
-
 MIME_DEFINE_GUID(CLSID_StdGlobalInterfaceTable_, 0x00000323, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                  0x46);
 MIME_DEFINE_GUID(IID_IGlobalInterfaceTable_, 0x00000146, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
@@ -376,10 +374,6 @@ static HRESULT cmdline_callback(BJOB *job, DELIVERY *d)
     PROCESS_INFORMATION process = {0};
     WCHAR *line = d->parameters ? QmDup(d->parameters) : nullptr;
     HRESULT hr = S_OK;
-    /* the service token holds both disabled, as on windows. */
-    BOOLEAN was;
-    RtlAdjustPrivilege(3 /* SeAssignPrimaryTokenPrivilege */, TRUE, FALSE, &was);
-    RtlAdjustPrivilege(5 /* SeIncreaseQuotaPrivilege */, TRUE, FALSE, &was);
     if (!CreateProcessAsUserW(token, d->program, line, nullptr, nullptr, FALSE,
                               CREATE_UNICODE_ENVIRONMENT | NORMAL_PRIORITY_CLASS_, environment, nullptr, &startup,
                               &process))
