@@ -356,7 +356,8 @@ static NTSTATUS access_check(PVOID descriptor, const UCHAR *self, HANDLE token_h
         return status;
 
     ACCESS_MASK wanted = desired & ~(ACCESS_MASK)MAXIMUM_ALLOWED;
-    ACCESS_MASK maximum = v.Granted;
+    /* measured: the most allowed is what the list gives, a privilege only adds the rights asked for by name. */
+    ACCESS_MASK maximum = v.ByList | (v.Granted & ~v.ByList & wanted);
     ACCESS_MASK granted = 0;
     NTSTATUS access_status = STATUS_SUCCESS;
     /* only the privilege grants the system list, and a caller that asked for it without one is told so. */
@@ -401,19 +402,17 @@ static NTSTATUS access_check(PVOID descriptor, const UCHAR *self, HANDLE token_h
             *privilege_length = need;
         return STATUS_BUFFER_TOO_SMALL;
     }
+    /* measured: a set that fits leaves the length the caller gave as it was. */
     if (mode == UserMode) {
         status = KiCopyToUser(privilege_set, set, PRIVILEGE_SET_HEADER + (used ? used : 1) * LUID_AND_ATTRIBUTES_SIZE);
         if (NT_SUCCESS(status))
             status = KiCopyToUser(granted_pointer, &granted, sizeof(granted));
         if (NT_SUCCESS(status))
             status = KiCopyToUser(access_status_pointer, &access_status, sizeof(access_status));
-        if (NT_SUCCESS(status))
-            status = KiCopyToUser(privilege_length, &need, sizeof(need));
     } else {
         memcpy(privilege_set, set, PRIVILEGE_SET_HEADER + (used ? used : 1) * LUID_AND_ATTRIBUTES_SIZE);
         *granted_pointer = granted;
         *access_status_pointer = access_status;
-        *privilege_length = need;
     }
     return status;
 }
