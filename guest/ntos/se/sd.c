@@ -726,6 +726,28 @@ NTSTATUS SeSdDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out)
  */
 NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out)
 {
+    if (kind == SE_BOOT_RPC_CONTROL) {
+        /*
+         * measured on windows 11 with rpcdir.c of scratch/procsd in the research repository. an endpoint made without a
+         * descriptor takes the inheritable entries, so that everyone may connect to it.
+         */
+        static const UCHAR restricted[12] = {1, 1, 0, 0, 0, 0, 0, 5, 12, 0, 0, 0};
+        const UCHAR inherit = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE;
+        SD_ACE aces[7] = {{0, 0x2000F, SeSidEveryone},
+                          {0, 0x2000F, restricted},
+                          {0, 0xF000F, SeSidAdministrators},
+                          {inherit, 0xE0000000, SeSidEveryone},
+                          {inherit, 0xE0000000, restricted},
+                          {inherit, 0x10000000, SeSidAdministrators},
+                          {inherit, 0x10000000, SeSidCreatorOwner}};
+        SD_BLOB *sd;
+        NTSTATUS status = SeSdBuild(SeSidAdministrators, SeSidSystem, 0, aces, RTL_NUMBER_OF(aces), &sd);
+        if (!NT_SUCCESS(status))
+            return status;
+        status = add_label_ace(sd, 0x1000, 0, 1, SE_SACL_AUTO_INHERITED, out);
+        SeSdDereference(sd);
+        return status;
+    }
     ACCESS_MASK everyone = mapping[0] | mapping[2];
     if (kind == SE_BOOT_CREATABLE && container)
         everyone |= 0xC; /* create object, create subdirectory. */

@@ -1278,6 +1278,7 @@ NTSTATUS SeSdAppendAllowAce(const SD_BLOB *sd, const UCHAR *sid, ACCESS_MASK mas
 #define SE_BOOT_CREATABLE 1
 #define SE_BOOT_INTERACTIVE 2
 #define SE_BOOT_PLAIN_SYSTEM 3 /* the system and the administrators only. */
+#define SE_BOOT_RPC_CONTROL 4  /* \RPC Control, whose entries pass to the endpoints made in it. */
 NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_BLOB **out);
 /* for an object nobody gave a descriptor: the system and the administrators own it. */
 NTSTATUS SeSdSystemDefault(SD_MAPPING mapping, BOOLEAN container, SD_BLOB **out);
@@ -1396,10 +1397,10 @@ PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
 PVOID ObReferenceHandleFast(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, POBJECT_TYPE other);
 /* lets go of a reference unless it is the last one, which takes the kernel lock to let go of. */
 BOOLEAN ObDereferenceObjectFast(PVOID object);
-NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
 BOOLEAN ObReferenceObjectSafe(PVOID object); /* FALSE once the last reference went. */
-void ObMakeTemporaryObject(PVOID object);
+NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
 void ObpDeleteNameCheck(PVOID object);
+void ObMakeTemporaryObject(PVOID object);
 
 /* ------------------------------------------------------------------ ps */
 
@@ -1416,9 +1417,9 @@ typedef struct _ETHREAD {
     BOOLEAN Initialized;
     BOOLEAN DeadThread;
     LIST_ENTRY ThreadListEntry; /* in EPROCESS. */
-    PVOID UserStackAllocation;
     ULONG64 ListSequence;       /* the order of the list. */
     LIST_ENTRY DeadLinks;       /* in the list of the reaper once it ended. */
+    PVOID UserStackAllocation;
     SIZE_T UserStackSize;
     ULONG_PTR UserStackGuard; /* the stack guard page, whose first touch is a stack overflow. */
     PVOID NativeStackAllocation; /* the translator's own stack in x86 and x64 processes. */
@@ -1474,8 +1475,8 @@ typedef struct _EPROCESS {
     LIST_ENTRY ActiveProcessLinks;
     LIST_ENTRY ThreadListHead;
     volatile LONG ThreadCount;
-    HANDLE_TABLE HandleTable;
     ULONG64 GoneKernelTime, GoneUserTime; /* of the threads whose objects went, in whole ticks. */
+    HANDLE_TABLE HandleTable;
     MMADDRESS_SPACE AddressSpace;
     /* the page ranges NtLockVirtualMemory locked, start and end pairs: MmLockedRanges of them. */
     ULONG_PTR *MmLockedRanges;

@@ -185,7 +185,7 @@ static BOOLEAN creatable_directory(PVOID object)
     UNICODE_STRING name;
     if (!NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))))
         return FALSE;
-    static const PCWSTR creatable[] = {L"\\BaseNamedObjects", L"\\RPC Control", L"\\Windows\\WindowStations"};
+    static const PCWSTR creatable[] = {L"\\BaseNamedObjects", L"\\Windows\\WindowStations"};
     static const WCHAR sessions[] = L"\\Sessions\\";
     for (ULONG i = 0; i < RTL_NUMBER_OF(creatable); i++)
         if (!_wcsicmp(buffer, creatable[i]))
@@ -198,6 +198,13 @@ static BOOLEAN creatable_directory(PVOID object)
         return !_wcsicmp(rest, L"\\BaseNamedObjects") || !_wcsicmp(rest, L"\\Windows\\WindowStations");
     }
     return FALSE;
+}
+
+static BOOLEAN rpc_directory(PVOID object)
+{
+    WCHAR buffer[128];
+    UNICODE_STRING name;
+    return NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))) && !_wcsicmp(buffer, L"\\RPC Control");
 }
 
 /* measured on windows 11 26300: \Driver opens for the system and the administrators, and a plain token gets c0000022. */
@@ -219,6 +226,7 @@ NTSTATUS ObAssignBootSecurity(PVOID object)
     SD_BLOB *sd;
     NTSTATUS status = SeSdBootDefault(mapping_of(type), type == ObDirectoryType,
                                       type != ObDirectoryType       ? SE_BOOT_PLAIN
+                                      : rpc_directory(object)       ? SE_BOOT_RPC_CONTROL
                                       : creatable_directory(object) ? SE_BOOT_CREATABLE
                                       : system_directory(object)    ? SE_BOOT_PLAIN_SYSTEM
                                                                     : SE_BOOT_PLAIN,
