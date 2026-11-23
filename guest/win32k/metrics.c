@@ -651,7 +651,7 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         return NT_SUCCESS(MimeCopyToUser(data, &a, sizeof(a)));
     }
     case SPI_GETDEFAULTINPUTLANG: {
-        HKL hkl = (HKL)(ULONG_PTR)0x04090409;
+        HKL hkl = KeyboardCurrentLayout();
         return NT_SUCCESS(MimeCopyToUser(data, &hkl, sizeof(hkl)));
     }
     case SPI_GETDESKWALLPAPER:

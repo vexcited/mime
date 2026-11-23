@@ -17,6 +17,7 @@ typedef struct FONT_FILE {
     HANDLE OwnerPid;  /* private to this process, NULL when visible to everyone. */
     ULONG FirstFace;
     ULONG FaceCount;
+    ULONG Loads;      /* AddFontResource calls a remove has not answered yet, 0 for a font of the start. */
 } FONT_FILE;
 
 /* the header of a FNT raster font, fontfnt.c. */

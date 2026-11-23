@@ -1365,6 +1365,18 @@ ULONG NTAPI NtGdiEnumFonts(HDC hdc, ULONG type, ULONG flags, ULONG face_chars, L
 #define FR_PRIVATE_FLAG 0x10
 #define FR_NOT_ENUM_FLAG 0x20
 
+/*
+ * the cookie of the public table of fonts, as win32kfull 26300 keeps it: it starts at 0 and goes up each time a file is
+ * added to the table or taken out of it after the fonts of the start, and gdi32full compares it around AddFontResource
+ * and RemoveFontResource to tell DirectWrite. private and memory fonts are in another table and do not move it.
+ */
+static ULONG g_public_cookie;
+
+ULONG NTAPI NtGdiGetPublicFontTableChangeCookie(void)
+{
+    return __atomic_load_n(&g_public_cookie, __ATOMIC_ACQUIRE);
+}
+
 /* AddFontResource takes a single nt path here, gdi32 converts the dos name. */
 static PWSTR capture_path(LPCWSTR user, ULONG chars)
 {
@@ -1388,16 +1400,23 @@ int NTAPI NtGdiAddFontResourceW(LPCWSTR files, ULONG chars, ULONG files_count, U
     UserEnterRead();
     HANDLE owner = (flags & FR_PRIVATE_FLAG) ? PsGetCurrentProcessId() : nullptr;
     int added = 0;
-    /* a file added twice by the same owner is counted again without a second registration. */
+    /* a file added twice by the same owner is counted again without a second registration; it takes as many removes. */
     for (ULONG i = 0; i < FontFaceCount(); i++) {
         FONT_FACE *f = FontFaceAt(i);
         if (!f->File->Removed && f->File->OwnerPid == owner && !_wcsicmp(f->File->Path, path)) {
             added = (int)f->File->FaceCount;
+            f->File->Loads = (f->File->Loads ? f->File->Loads : 1) + 1;
             break;
         }
     }
-    if (!added)
+    if (!added) {
+        ULONG first = FontFaceCount();
         added = (int)FontRegisterFile(path, owner, (flags & FR_NOT_ENUM_FLAG) != 0);
+        if (added && first < FontFaceCount())
+            FontFaceAt(first)->File->Loads = 1;
+        if (added && !owner)
+            __atomic_add_fetch(&g_public_cookie, 1, __ATOMIC_ACQ_REL);
+    }
     UserLeave();
     W32Free(path);
     (void)files_count;
@@ -1413,14 +1432,21 @@ BOOL NTAPI NtGdiRemoveFontResourceW(LPCWSTR files, ULONG chars, ULONG files_coun
         return FALSE;
     UserEnterRead();
     HANDLE owner = (flags & FR_PRIVATE_FLAG) ? PsGetCurrentProcessId() : nullptr;
-    BOOL found = FALSE;
-    for (ULONG i = 0; i < FontFaceCount(); i++) {
+    BOOL found = FALSE, unlinked = FALSE;
+    for (ULONG i = 0; i < FontFaceCount() && !found; i++) {
         FONT_FILE *file = FontFaceAt(i)->File;
         if (!file->Removed && !file->Memory && file->OwnerPid == owner && !_wcsicmp(file->Path, path)) {
-            file->Removed = TRUE;
             found = TRUE;
+            if (file->Loads > 1) {
+                file->Loads--;
+            } else {
+                file->Removed = TRUE;
+                unlinked = TRUE;
+            }
         }
     }
+    if (unlinked && !owner)
+        __atomic_add_fetch(&g_public_cookie, 1, __ATOMIC_ACQ_REL);
     UserLeave();
     W32Free(path);
     if (!found)

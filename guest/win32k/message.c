@@ -833,10 +833,11 @@ scan_posted:
         if (rescan)
             continue;
 
-        if ((kinds & QS_POSTMESSAGE) && t->QuitPosted && range_matches(WM_QUIT, min, max)) {
+        /* as win32kfull 26300 does it: the quit comes once no posted message is left, whatever the filters ask. */
+        if ((kinds & QS_POSTMESSAGE) && t->QuitPosted && IsListEmpty(&t->Posted)) {
             out->hwnd = nullptr;
             out->message = WM_QUIT;
-            out->wParam = (WPARAM)t->QuitCode;
+            out->wParam = (WPARAM)(ULONG)t->QuitCode; /* zero extended, as windows gives it. */
             out->lParam = 0;
             out->time = W32TickCount();
             out->pt = InputCursorPos;
@@ -942,12 +943,38 @@ static void get_message_hook(W32THREAD *t, MSG *m, UINT flags)
         HookCall(WH_GETMESSAGE, t, HC_ACTION, flags & (PM_REMOVE | PM_NOYIELD), (LPARAM)m, sizeof(*m), nullptr);
 }
 
+/*
+ * the window filter of GetMessage and PeekMessage, as win32kfull 26300 reads it: -1, 0xFFFF and 1 ask for the messages
+ * of the thread alone, 0 for all, anything else must be a window. FALSE with ERROR_INVALID_WINDOW_HANDLE otherwise.
+ */
+static BOOLEAN filter_window(HWND *hwnd)
+{
+    ULONG_PTR h = (ULONG_PTR)*hwnd;
+    if (h == (ULONG_PTR)-1 || h == 0xFFFF || h == 1) {
+        *hwnd = (HWND)(LONG_PTR)-1;
+        return TRUE;
+    }
+    if (!h || WndLookup(*hwnd))
+        return TRUE;
+    W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return FALSE;
+}
+
 BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
 {
+    if ((min | max) & 0xFFFE0000) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
     UserEnterRead();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
+    if (!filter_window(&hwnd)) {
+        UserLeave();
+        copy_msg_out(user_msg, &m);
+        return -1;
+    }
     /* existing queue contents no longer count as new input for MsgWaitForMultipleObjects. */
     if (t)
         t->ChangeBits = 0;
@@ -963,10 +990,19 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
 
 BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT flags)
 {
+    /* the flags win32kfull 26300 takes: PM_REMOVE, PM_NOYIELD and the PM_QS_ kinds. */
+    if (flags & 0xE300FFFC) {
+        W32SetLastError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
     UserEnterRead();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
+    if (!filter_window(&hwnd)) {
+        UserLeave();
+        return FALSE;
+    }
     if (t)
         t->ChangeBits = 0;
     BOOLEAN got = t && peek(t, &m, hwnd, min, max, flags, FALSE);

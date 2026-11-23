@@ -1872,6 +1872,57 @@ WND *WndFromPoint(WND *top, POINT pt)
     }
 }
 
+/*
+ * ChildWindowFromPoint and ChildWindowFromPointEx, as win32kfull 26300 does it. the point is in the client area of the
+ * parent, packed in one argument like the one of WindowFromPoint. outside that area or the shape of the parent there
+ * is no window. inside, the answer is the first direct child from the top whose window rectangle holds the point and
+ * the flags let through, else the parent itself.
+ */
+HWND NTAPI NtUserChildWindowFromPointEx(HWND hwnd, ULONG_PTR point, UINT flags)
+{
+    POINT pt = {(LONG)(ULONG)point, (LONG)(ULONG)(point >> 32)};
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    HWND found = nullptr;
+    if (w) {
+        size_from_caller(w, &pt);
+        if (w != g_desktop) {
+            pt.x = (w->ExStyle & WS_EX_LAYOUTRTL) ? w->ClientRect.right - pt.x : w->ClientRect.left + pt.x;
+            pt.y += w->ClientRect.top;
+        }
+        if (RectContains(&w->ClientRect, pt.x, pt.y) && LayerHitTest(w, pt)) {
+            found = WndHandle(w);
+            for (WND *c = w->FirstChild; c; c = c->Next) {
+                POINT at = pt;
+                if (w == g_desktop)
+                    DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
+                if (((flags & CWP_SKIPINVISIBLE) && !(c->Style & WS_VISIBLE)) ||
+                    ((flags & CWP_SKIPDISABLED) && (c->Style & WS_DISABLED)) ||
+                    ((flags & CWP_SKIPTRANSPARENT) && (c->ExStyle & WS_EX_TRANSPARENT)))
+                    continue;
+                if (RectContains(&c->WindowRect, at.x, at.y) && LayerHitTest(c, at)) {
+                    found = WndHandle(c);
+                    break;
+                }
+            }
+        }
+    }
+    UserLeave();
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return found;
+}
+
+/* the processes SetAdditionalForegroundBoostProcesses named for the window, which it lets go of. */
+static void release_boost(WND *w)
+{
+    for (ULONG i = 0; i < w->BoostCount; i++)
+        ObDereferenceObject(w->BoostProcesses[i]);
+    W32Free(w->BoostProcesses);
+    w->BoostProcesses = nullptr;
+    w->BoostCount = 0;
+}
+
 /* destruction. */
 
 static void free_window(WND *w)
@@ -1902,6 +1953,10 @@ static void free_window(WND *w)
     ImeWindowDestroyed(w);
     PropFreeWindow(w);
     W32Free(w->ShutdownReason);
+    W32Free(w->MessageFilter);
+    w->MessageFilter = nullptr;
+    w->MessageFilterCount = w->MessageFilterCapacity = 0;
+    release_boost(w);
     if (w->Flags & WNDF_HOST_WINDOW) {
         HostWindowDestroy(w);
         w->Flags &= ~WNDF_HOST_WINDOW;
@@ -3449,6 +3504,307 @@ BOOL NTAPI NtUserLockSetForegroundWindow(UINT code)
 }
 
 /*
+ * SetProcessLaunchForegroundPolicy, as win32kbase 26300 checks it. 0 keeps the rule of a program a click launched, 1
+ * refuses the process the foreground and 2 grants it, and 4 added keeps the entry past the first start. the caller
+ * needs PROCESS_SET_INFORMATION and the process must not have started its windows. windows keeps ten entries for the
+ * start of the windows of their processes; every process may take the foreground here, so an entry only waits for
+ * that start or the end of its process.
+ */
+#define LAUNCH_POLICY_SLOTS 10
+#define SE_DEBUG_PRIVILEGE 20
+
+static struct LAUNCH_POLICY {
+    PEPROCESS Process; /* referenced. */
+    ULONG Policy;
+    BOOLEAN Keep;
+} g_launch_policies[LAUNCH_POLICY_SLOTS];
+
+BOOL NTAPI NtUserSetProcessLaunchForegroundPolicy(DWORD pid, DWORD policy)
+{
+    DWORD base = policy & ~4u;
+    if ((policy & 3) == 3 || base > 2) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    PEPROCESS process = nullptr;
+    NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+    if (NT_SUCCESS(status) && !MimeCurrentHasPrivilege(SE_DEBUG_PRIVILEGE)) {
+        ACCESS_MASK granted;
+        status = ObCheckOpenAccess(process, PROCESS_SET_INFORMATION, UserMode, &granted);
+    }
+    if (!NT_SUCCESS(status)) {
+        if (process)
+            ObDereferenceObject(process);
+        W32SetLastError(status == STATUS_ACCESS_DENIED ? ERROR_ACCESS_DENIED : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UserEnter();
+    BOOL ok = PsGetProcessWin32Process(process) == nullptr;
+    if (ok) {
+        struct LAUNCH_POLICY *slot = nullptr;
+        for (ULONG i = 0; i < LAUNCH_POLICY_SLOTS && !slot; i++)
+            if (!g_launch_policies[i].Process || g_launch_policies[i].Process == process)
+                slot = &g_launch_policies[i];
+        /* with every entry taken windows keeps nothing and still says yes. */
+        if (slot) {
+            if (slot->Process)
+                ObDereferenceObject(slot->Process);
+            slot->Process = process;
+            slot->Policy = base;
+            slot->Keep = (policy & 4) != 0;
+            process = nullptr;
+        }
+    }
+    UserLeave();
+    if (process)
+        ObDereferenceObject(process);
+    if (!ok)
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    return ok;
+}
+
+/* a process started its windows, or ended: its entry is used up, or gone. the lock is held. */
+void WndLaunchPolicyDone(PEPROCESS process, BOOLEAN exited)
+{
+    for (ULONG i = 0; i < LAUNCH_POLICY_SLOTS; i++) {
+        struct LAUNCH_POLICY *slot = &g_launch_policies[i];
+        if (slot->Process == process && (exited || !slot->Keep)) {
+            ObDereferenceObject(slot->Process);
+            slot->Process = nullptr;
+        }
+    }
+}
+
+/*
+ * SetAdditionalForegroundBoostProcesses, as win32kbase 26300 checks it: a top level window of the caller names up to 32
+ * processes that share its foreground boost, each opened for PROCESS_SET_INFORMATION, and any failure is a wrong
+ * parameter. a new list replaces the old one and an empty list clears it, which fails when there was none. mime gives
+ * no process a foreground boost, so the list is only kept.
+ */
+#define BOOST_MAX 32
+
+BOOL NTAPI NtUserSetAdditionalForegroundBoostProcesses(HWND hwnd, DWORD count, HANDLE *user_handles)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE
+                  : !w->Thread || w->Thread->Process != W32GetProcess() || !WndIsTopLevel(w) || count > BOOST_MAX
+                      ? ERROR_INVALID_PARAMETER
+                      : 0;
+    if (!error && w)
+        UserReference(&w->Header);
+    UserLeave();
+    if (error) {
+        W32SetLastError(error);
+        return FALSE;
+    }
+    HANDLE handles[BOOST_MAX];
+    PEPROCESS *processes = nullptr;
+    ULONG taken = 0;
+    /* measured on windows 11: a list that cannot be read is a wrong parameter too. */
+    if (count && !NT_SUCCESS(MimeCopyFromUser(handles, user_handles, count * sizeof(HANDLE))))
+        error = ERROR_INVALID_PARAMETER;
+    if (!error && count && !(processes = W32Alloc(count * sizeof(PEPROCESS))))
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    for (; !error && taken < count; taken++) {
+        if (!NT_SUCCESS(ObReferenceObjectByHandle(handles[taken], PROCESS_SET_INFORMATION, PsProcessType, UserMode,
+                                                  (PVOID *)&processes[taken], nullptr)))
+            error = ERROR_INVALID_PARAMETER;
+    }
+    if (error && processes) {
+        /* the one that failed was not referenced. */
+        for (ULONG i = 0; i + 1 < taken; i++)
+            ObDereferenceObject(processes[i]);
+        W32Free(processes);
+        processes = nullptr;
+    }
+    UserEnter();
+    if (!error && !count && !w->BoostCount)
+        error = ERROR_INVALID_PARAMETER;
+    if (!error) {
+        release_boost(w);
+        /* a process named twice counts once. */
+        ULONG kept = 0;
+        for (ULONG i = 0; i < count; i++) {
+            BOOLEAN seen = FALSE;
+            for (ULONG k = 0; k < kept && !seen; k++)
+                seen = processes[k] == processes[i];
+            if (seen)
+                ObDereferenceObject(processes[i]);
+            else
+                processes[kept++] = processes[i];
+        }
+        w->BoostProcesses = kept ? processes : nullptr;
+        w->BoostCount = kept;
+        if (!kept)
+            W32Free(processes);
+        processes = nullptr;
+    }
+    UserDereference(&w->Header);
+    UserLeave();
+    if (processes) {
+        for (ULONG i = 0; i < count; i++)
+            ObDereferenceObject(processes[i]);
+        W32Free(processes);
+    }
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+/*
+ * SetWindowDisplayAffinity and GetWindowDisplayAffinity, as win32kfull 26300 checks them. a top level window of the
+ * caller's process takes 0 or a value with WDA_MONITOR or the bit of WDA_EXCLUDEFROMCAPTURE, and keeps it whole.
+ * windows also needs the window composed, which every top level window is here. any process may read the value of a
+ * top level window.
+ */
+#define WDA_BITS 0x11
+
+BOOL NTAPI NtUserSetWindowDisplayAffinity(HWND hwnd, DWORD affinity)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE
+                  : !w->Thread || w->Thread->Process != W32GetProcess() ? ERROR_ACCESS_DENIED
+                  : !WndIsTopLevel(w) || (affinity && !(affinity & WDA_BITS)) ? ERROR_INVALID_PARAMETER
+                                                                               : 0;
+    if (!error && (w->DisplayAffinity & WDA_BITS) != (affinity & WDA_BITS))
+        ScreenSerial++;
+    if (!error)
+        w->DisplayAffinity = affinity;
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+BOOL NTAPI NtUserGetWindowDisplayAffinity(HWND hwnd, DWORD *user_affinity)
+{
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE : !WndIsTopLevel(w) ? ERROR_INVALID_PARAMETER : 0;
+    DWORD affinity = error ? 0 : w->DisplayAffinity;
+    UserLeave();
+    if (!error && !NT_SUCCESS(MimeCopyToUser(user_affinity, &affinity, sizeof(affinity))))
+        error = ERROR_NOACCESS;
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+/*
+ * ChangeWindowMessageFilterEx, as win32kfull 26300 checks it. a window of the caller's process lets a message in from
+ * a process of lower integrity, stops letting it in, or forgets every message it let in. a caller of low integrity may
+ * not. the answer's status tells what the window already did, and when a message is refused but still comes in by a
+ * rule of the system. mime does not hold messages back between integrities, so the list is only kept.
+ */
+#define SECURITY_MANDATORY_LOW_RID 0x1000
+
+/* the messages every process may send across integrities, IsMessageAlwaysAllowedAcrossIL of win32kfull 26300. */
+static BOOLEAN always_allowed(UINT msg)
+{
+    static const USHORT list[] = {WM_NULL, WM_MOVE, WM_SIZE, WM_GETTEXT, WM_GETTEXTLENGTH, WM_GETHOTKEY, WM_GETICON,
+                                  0x305, 0x308, 0x30D, 0x313, 0x31A, 0x31B, 0x31F, 0x309, 0x30A, 0x30B, 0x30C, 0x30E};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(list); i++)
+        if (list[i] == msg)
+            return TRUE;
+    return FALSE;
+}
+
+/* where the message is in the list of the window, or where it goes. */
+static ULONG filter_find(const WND *w, USHORT msg, BOOLEAN *found)
+{
+    ULONG low = 0, high = w->MessageFilterCount;
+    while (low < high) {
+        ULONG mid = (low + high) / 2;
+        if (w->MessageFilter[mid] < msg)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    *found = low < w->MessageFilterCount && w->MessageFilter[low] == msg;
+    return low;
+}
+
+BOOL NTAPI NtUserChangeWindowMessageFilterEx(HWND hwnd, UINT msg, DWORD action, CHANGEFILTERSTRUCT *user_status)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    /* measured on windows 11: a handle that is no window fails with no error. */
+    if (!w) {
+        UserLeave();
+        return FALSE;
+    }
+    ULONG error = !w ? ERROR_INVALID_WINDOW_HANDLE
+                  : !w->Thread || w->Thread->Process != W32GetProcess() ? ERROR_ACCESS_DENIED
+                  : (w->Flags & WNDF_DESTROYING) ? ERROR_INVALID_WINDOW_HANDLE
+                  : action > MSGFLT_DISALLOW || (action == MSGFLT_RESET) != (msg == 0) ? ERROR_INVALID_PARAMETER
+                                                                                       : 0;
+    BOOLEAN silent = FALSE;
+    CHANGEFILTERSTRUCT status = {sizeof(status), MSGFLTINFO_NONE};
+    if (!error && user_status) {
+        if (!NT_SUCCESS(MimeCopyFromUser(&status, user_status, sizeof(status))))
+            silent = TRUE;
+        else if (status.cbSize != sizeof(status))
+            error = ERROR_INVALID_PARAMETER;
+        status.ExtStatus = MSGFLTINFO_NONE;
+    }
+    if (!error && !silent)
+        error = SeThreadIntegrityRid() <= SECURITY_MANDATORY_LOW_RID ? ERROR_ACCESS_DENIED
+                : HIWORD(msg)                                         ? ERROR_INVALID_PARAMETER
+                                                                      : 0;
+    if (!error && !silent && action == MSGFLT_RESET) {
+        W32Free(w->MessageFilter);
+        w->MessageFilter = nullptr;
+        w->MessageFilterCount = w->MessageFilterCapacity = 0;
+    } else if (!error && !silent) {
+        BOOLEAN found;
+        ULONG at = filter_find(w, (USHORT)msg, &found);
+        if (action == MSGFLT_ALLOW && found) {
+            status.ExtStatus = MSGFLTINFO_ALREADYALLOWED_FORWND;
+        } else if (action == MSGFLT_ALLOW) {
+            if (w->MessageFilterCount == w->MessageFilterCapacity) {
+                ULONG capacity = w->MessageFilterCapacity ? w->MessageFilterCapacity * 2 : 8;
+                USHORT *grown = W32Alloc(capacity * sizeof(USHORT));
+                if (!grown) {
+                    error = ERROR_OUTOFMEMORY;
+                } else {
+                    if (w->MessageFilterCount)
+                        memcpy(grown, w->MessageFilter, w->MessageFilterCount * sizeof(USHORT));
+                    W32Free(w->MessageFilter);
+                    w->MessageFilter = grown;
+                    w->MessageFilterCapacity = capacity;
+                }
+            }
+            if (!error) {
+                memmove(&w->MessageFilter[at + 1], &w->MessageFilter[at],
+                        (w->MessageFilterCount - at) * sizeof(USHORT));
+                w->MessageFilter[at] = (USHORT)msg;
+                w->MessageFilterCount++;
+            }
+        } else {
+            if (found) {
+                memmove(&w->MessageFilter[at], &w->MessageFilter[at + 1],
+                        (w->MessageFilterCount - at - 1) * sizeof(USHORT));
+                w->MessageFilterCount--;
+            }
+            status.ExtStatus = always_allowed(msg) ? MSGFLTINFO_ALLOWED_HIGHER
+                               : !found            ? MSGFLTINFO_ALREADYDISALLOWED_FORWND
+                                                   : MSGFLTINFO_NONE;
+        }
+    }
+    UserLeave();
+    if (error) {
+        W32SetLastError(error);
+        return FALSE;
+    }
+    /* windows sets no error for a status it could not read or write, and keeps what it changed. */
+    if (silent || (user_status && !NT_SUCCESS(MimeCopyToUser(user_status, &status, sizeof(status)))))
+        return FALSE;
+    return TRUE;
+}
+
+/*
  * WindowFromPoint, which user32 26300 passes straight through: the point comes by value, both halves in the first
  * argument of a 64-bit caller. the answer is the deepest visible window there, in the units of the caller.
  */
@@ -3496,6 +3852,31 @@ HWND NTAPI NtUserSetActiveWindow(HWND hwnd)
     }
     UserLeave();
     return old;
+}
+
+/*
+ * what EndDialog calls once an ownerless dialog is hidden, as win32kfull 26300 does it: the input of the caller, and so
+ * every thread attached to it, has no active window and no focus any more, and no window is told.
+ */
+BOOL NTAPI NtUserZapActiveAndFocus(void)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t) {
+        W32THREAD *owner = W32InputOwner(t);
+        for (W32THREAD *x = W32NextThread(nullptr); x; x = W32NextThread(x)) {
+            if (W32InputOwner(x) == owner) {
+                x->Active = nullptr;
+                x->Focus = nullptr;
+            }
+        }
+        if (InputFocusOwner && W32InputOwner(InputFocusOwner) == owner)
+            InputFocusOwner = nullptr;
+        InputKeysChanged();
+        ImeFocusChanged();
+    }
+    UserLeave();
+    return TRUE;
 }
 
 HWND NTAPI NtUserGetForegroundWindow(void)

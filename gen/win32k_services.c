@@ -443,6 +443,19 @@ void NtUserWaitForInputIdle(void);
 void NtUserWaitMessage(void);
 
 void Win32kInitializeServices(SERVICE *table)
+void NtGdiGetPublicFontTableChangeCookie(void);
+void NtUserChangeWindowMessageFilterEx(void);
+void NtUserChildWindowFromPointEx(void);
+void NtUserGetKeyboardLayoutName(void);
+void NtUserGetPointerDevices(void);
+void NtUserGetWindowDisplayAffinity(void);
+void NtUserPostQuitMessage(void);
+void NtUserRegisterPointerDeviceNotifications(void);
+void NtUserSetAdditionalForegroundBoostProcesses(void);
+void NtUserSetProcessLaunchForegroundPolicy(void);
+void NtUserSetWindowDisplayAffinity(void);
+void NtUserThreadMessageQueueAttached(void);
+void NtUserZapActiveAndFocus(void);
 {
 #ifdef MIME_SVC_NtGdiAbortPath
     table[MIME_SVC_NtGdiAbortPath & 0xFFF] = (SERVICE){(void *)NtGdiAbortPath, STACK_ARGS(1), 1, 0};
@@ -2611,3 +2624,68 @@ void Win32kInitializeServices(SERVICE *table)
 #warning "NtUserWaitMessage has no syscall number"
 #endif
 }
+#ifdef MIME_SVC_NtGdiGetPublicFontTableChangeCookie
+    table[MIME_SVC_NtGdiGetPublicFontTableChangeCookie & 0xFFF] = (SERVICE){(void *)NtGdiGetPublicFontTableChangeCookie, STACK_ARGS(0), 1, 0};
+#else
+#warning "NtGdiGetPublicFontTableChangeCookie has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserChangeWindowMessageFilterEx
+    table[MIME_SVC_NtUserChangeWindowMessageFilterEx & 0xFFF] = (SERVICE){(void *)NtUserChangeWindowMessageFilterEx, STACK_ARGS(4), 1, 0};
+#else
+#warning "NtUserChangeWindowMessageFilterEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserChildWindowFromPointEx
+    table[MIME_SVC_NtUserChildWindowFromPointEx & 0xFFF] = (SERVICE){(void *)NtUserChildWindowFromPointEx, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserChildWindowFromPointEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetKeyboardLayoutName
+    table[MIME_SVC_NtUserGetKeyboardLayoutName & 0xFFF] = (SERVICE){(void *)NtUserGetKeyboardLayoutName, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserGetKeyboardLayoutName has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetPointerDevices
+    table[MIME_SVC_NtUserGetPointerDevices & 0xFFF] = (SERVICE){(void *)NtUserGetPointerDevices, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserGetPointerDevices has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetWindowDisplayAffinity
+    table[MIME_SVC_NtUserGetWindowDisplayAffinity & 0xFFF] = (SERVICE){(void *)NtUserGetWindowDisplayAffinity, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserGetWindowDisplayAffinity has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserPostQuitMessage
+    table[MIME_SVC_NtUserPostQuitMessage & 0xFFF] = (SERVICE){(void *)NtUserPostQuitMessage, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserPostQuitMessage has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserRegisterPointerDeviceNotifications
+    table[MIME_SVC_NtUserRegisterPointerDeviceNotifications & 0xFFF] = (SERVICE){(void *)NtUserRegisterPointerDeviceNotifications, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserRegisterPointerDeviceNotifications has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetAdditionalForegroundBoostProcesses
+    table[MIME_SVC_NtUserSetAdditionalForegroundBoostProcesses & 0xFFF] = (SERVICE){(void *)NtUserSetAdditionalForegroundBoostProcesses, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserSetAdditionalForegroundBoostProcesses has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetProcessLaunchForegroundPolicy
+    table[MIME_SVC_NtUserSetProcessLaunchForegroundPolicy & 0xFFF] = (SERVICE){(void *)NtUserSetProcessLaunchForegroundPolicy, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserSetProcessLaunchForegroundPolicy has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetWindowDisplayAffinity
+    table[MIME_SVC_NtUserSetWindowDisplayAffinity & 0xFFF] = (SERVICE){(void *)NtUserSetWindowDisplayAffinity, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserSetWindowDisplayAffinity has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserThreadMessageQueueAttached
+    table[MIME_SVC_NtUserThreadMessageQueueAttached & 0xFFF] = (SERVICE){(void *)NtUserThreadMessageQueueAttached, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserThreadMessageQueueAttached has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserZapActiveAndFocus
+    table[MIME_SVC_NtUserZapActiveAndFocus & 0xFFF] = (SERVICE){(void *)NtUserZapActiveAndFocus, STACK_ARGS(0), 1, 0};
+#else
+#warning "NtUserZapActiveAndFocus has no syscall number"
+#endif

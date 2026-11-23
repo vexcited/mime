@@ -480,21 +480,55 @@ int NTAPI NtUserTranslateAccelerator(HWND hwnd, HACCEL h, const MSG *user_msg)
 
 /* ------------------------------------------------------------------ keyboard layouts */
 
-/* the layout of a thread of the reference machine, english of the united states: its client information had it. */
-#define LAYOUT_EN_US ((HKL)(ULONG_PTR)0x04090409)
-
+/* every thread has the one layout, the host's. */
 HKL NTAPI NtUserGetKeyboardLayout(DWORD thread)
 {
     (void)thread;
-    return LAYOUT_EN_US;
+    return KeyboardCurrentLayout();
 }
 
 UINT NTAPI NtUserGetKeyboardLayoutList(int count, HKL *user_list)
 {
     if (count <= 0 || !user_list)
         return 1;
-    HKL one = LAYOUT_EN_US;
+    HKL one = KeyboardCurrentLayout();
     return NT_SUCCESS(MimeCopyToUser(user_list, &one, sizeof(one))) ? 1 : 0;
+}
+
+/*
+ * GetKeyboardLayoutNameW, as win32kfull 26300 does it: the identifier of the active layout, eight hexadecimal digits
+ * and a null, written in the buffer of the string the caller gives. the length the caller has stays as it was. a
+ * string that cannot be read or written is ERROR_NOACCESS, one shorter than nine characters a wrong parameter. the
+ * layout of an input method writes its handle instead, and a buffer too small for it leaves it unwritten.
+ */
+BOOL NTAPI NtUserGetKeyboardLayoutName(PUNICODE_STRING user_name)
+{
+    UNICODE_STRING name;
+    if (!NT_SUCCESS(MimeCopyFromUser(&name, user_name, sizeof(name)))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    static const char HEX[] = "0123456789ABCDEF";
+    ULONG layout = (ULONG)(ULONG_PTR)KeyboardCurrentLayout();
+    BOOLEAN ime = (HIWORD(layout) & 0xF000) == 0xE000;
+    /* the identifier of a layout of the language, as the one layout here is loaded. */
+    ULONG id = ime ? layout : LOWORD(layout);
+    WCHAR text[9];
+    for (int i = 0; i < 8; i++)
+        text[i] = HEX[(id >> (28 - 4 * i)) & 0xF];
+    text[8] = 0;
+    if (!ime && name.MaximumLength < sizeof(text)) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (ime && name.MaximumLength < 8 * sizeof(WCHAR))
+        return TRUE;
+    ULONG bytes = name.MaximumLength >= sizeof(text) ? sizeof(text) : 8 * sizeof(WCHAR);
+    if (!NT_SUCCESS(MimeCopyToUser(name.Buffer, text, bytes))) {
+        W32SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ the startup information */

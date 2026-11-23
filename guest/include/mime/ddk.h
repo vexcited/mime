@@ -1098,5 +1098,7 @@ NTKERNELAPI BOOLEAN NTAPI MimeCurrentHasPrivilege(ULONG privilege);
 NTKERNELAPI ULONG NTAPI MimeProcessShutdownFlags(PEPROCESS process);
 NTKERNELAPI ULONG NTAPI MimeProcessUiLimits(PEPROCESS process);
 NTKERNELAPI BOOLEAN NTAPI MimeProcessMayUseUserHandles(PEPROCESS user, PEPROCESS owner);
+/* the integrity of the token the current thread acts with, SECURITY_MANDATORY_*_RID. */
+NTKERNELAPI ULONG SeThreadIntegrityRid(void);
 
 #endif

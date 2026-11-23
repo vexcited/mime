@@ -1433,3 +1433,54 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
     }
     return FALSE;
 }
+
+/*
+ * RegisterPointerDeviceNotifications and GetPointerDevices, as win32kfull 26300 does them. the pointer devices of
+ * windows are digitizers: pens, touch screens and touchpads, never a mouse. mime has none, so a window is registered
+ * for messages that do not come and the list of devices is empty, as on a machine with a mouse and a keyboard.
+ */
+#define ERROR_SYSTEM_DEVICE_NOT_FOUND 15299
+#define SECURITY_MANDATORY_MEDIUM_RID 0x2000
+
+BOOL NTAPI NtUserRegisterPointerDeviceNotifications(HWND hwnd, BOOL range)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = FALSE;
+    ULONG error = 0;
+    if (!w)
+        error = ERROR_INVALID_WINDOW_HANDLE;
+    else if (!w->Thread || w->Thread->Process != W32GetProcess())
+        r = ERROR_ACCESS_DENIED; /* windows answers the error itself, sets none and registers nothing. */
+    else if (range && SeThreadIntegrityRid() < SECURITY_MANDATORY_MEDIUM_RID)
+        error = ERROR_ACCESS_DENIED;
+    else if (!w->PointerNotify) {
+        /* a second registration fails with no error and changes nothing. */
+        w->PointerNotify = range ? 2 : 1;
+        r = TRUE;
+    }
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return r;
+}
+
+BOOL NTAPI NtUserGetPointerDevices(UINT *user_count, PVOID user_devices)
+{
+    const UINT found = 0;
+    UINT count = found;
+    ULONG error = !user_count ? ERROR_INVALID_PARAMETER : 0;
+    if (!error && !user_devices) {
+        if (!NT_SUCCESS(MimeCopyToUser(user_count, &count, sizeof(count))))
+            error = ERROR_NOACCESS;
+        else
+            return TRUE;
+    } else if (!error) {
+        if (!NT_SUCCESS(MimeCopyFromUser(&count, user_count, sizeof(count))))
+            error = ERROR_NOACCESS;
+        else
+            error = ERROR_SYSTEM_DEVICE_NOT_FOUND;
+    }
+    W32SetLastError(error);
+    return FALSE;
+}

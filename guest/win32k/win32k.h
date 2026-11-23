@@ -1000,6 +1000,11 @@ typedef struct WND {
     RECT LayerShown;   /* where the host was told the layer of a window that presents is, see hold_area. */
     ULONG TouchFlags;
     ULONG DisplayAffinity; /* WDA_*, how captures show the window. */
+    USHORT *MessageFilter;  /* ChangeWindowMessageFilterEx, the messages let in from below, sorted. */
+    ULONG MessageFilterCount, MessageFilterCapacity;
+    PEPROCESS *BoostProcesses; /* SetAdditionalForegroundBoostProcesses, referenced. */
+    ULONG BoostCount;
+    UCHAR PointerNotify;    /* RegisterPointerDeviceNotifications: 1 registered, 2 for range messages too. */
     int PixelFormat;
     WND_PROP *Props;
     ULONG PropCount;
@@ -1017,6 +1022,7 @@ static inline HWND WndHandle(WND *w)
     return w ? (HWND)w->Header.Handle : nullptr;
 }
 BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop. */
+void WndLaunchPolicyDone(PEPROCESS process, BOOLEAN exited); /* SetProcessLaunchForegroundPolicy. */
 /* false for a top level window on a host desktop that has no place for a minimized one: it has no minimize button
  * then and stays as it is when it is asked to minimize, which windows itself never does. */
 BOOLEAN WndCanMinimize(WND *w);
@@ -1396,6 +1402,9 @@ LONG MonitorFromRectIndex(const RECT *rect, BOOLEAN nearest);
 RECT MonitorWorkOfRect(const RECT *rect);
 UINT MonitorDpiOfRect(const RECT *rect);
 ULONG MonitorGeneration(void);
+
+/* the handle of the host's layout, the one layout every thread has. */
+HKL KeyboardCurrentLayout(void);
 RECT MonitorVirtualScreen(void);
 BOOLEAN MonitorCoveredBy(const RECT *rect);
 LONG MonitorFromDeviceName(PCWSTR name);

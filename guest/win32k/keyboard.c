@@ -391,6 +391,14 @@ DWORD NTAPI NtUserGetKeyNameText(LONG lparam, LPWSTR user_buffer, int size)
     return (DWORD)n;
 }
 
+HKL KeyboardCurrentLayout(void)
+{
+    UserEnterRead();
+    HKL r = current_layout();
+    UserLeave();
+    return r;
+}
+
 /* one layout is loaded, the host's: activating any names it as the one that was active. */
 HKL NTAPI NtUserActivateKeyboardLayout(HKL layout, ULONG flags)
 {

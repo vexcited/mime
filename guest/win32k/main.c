@@ -588,11 +588,13 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
     if (initialize) {
         UserEnter();
         W32GetProcess();
+        WndLaunchPolicyDone(process, FALSE);
         UserLeave();
         return STATUS_SUCCESS;
     }
     W32PROCESS *p = PsGetProcessWin32Process(process);
     UserEnter();
+    WndLaunchPolicyDone(process, TRUE);
     GdiReleaseProcessObjects(PsGetProcessId(process));
     FontReleaseProcess(PsGetProcessId(process));
     DisplayProcessExited(PsGetProcessId(process));

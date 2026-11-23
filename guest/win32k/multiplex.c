@@ -333,3 +333,49 @@ BOOL NTAPI NtUserAttachThreadInput(DWORD attach, DWORD to, BOOL do_attach)
         W32SetLastError(ERROR_INVALID_PARAMETER);
     return ok;
 }
+
+/*
+ * IsThreadMessageQueueAttached, as win32kfull 26300 answers it: whether the thread shares the caller's input, or with
+ * no thread whether any other thread shares it. a thread that is not a gui thread is a wrong parameter.
+ */
+BOOL NTAPI NtUserThreadMessageQueueAttached(DWORD tid)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    BOOL ok = FALSE;
+    ULONG error = 0;
+    if (t && tid) {
+        W32THREAD *other = W32LookupThread((HANDLE)(ULONG_PTR)tid);
+        if (other)
+            ok = W32InputOwner(other) == W32InputOwner(t);
+        else
+            error = ERROR_INVALID_PARAMETER;
+    } else if (t) {
+        ULONG count = 0;
+        for (W32THREAD *x = W32NextThread(nullptr); x && count < 2; x = W32NextThread(x))
+            if (!x->Destroying && W32InputOwner(x) == W32InputOwner(t))
+                count++;
+        ok = count > 1;
+    }
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return ok;
+}
+
+/*
+ * PostQuitMessage, as win32kfull 26300 does it: no message is queued, the thread keeps a quit and its code, a second
+ * call only changes the code. the answer is always TRUE.
+ */
+BOOL NTAPI NtUserPostQuitMessage(int code)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t) {
+        t->QuitPosted = TRUE;
+        t->QuitCode = code;
+        QueueWake(t, QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
+    }
+    UserLeave();
+    return TRUE;
+}

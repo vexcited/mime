@@ -485,7 +485,7 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
                            BOOLEAN host_pixels)
 {
     SURFACE *s = w->Present ? w->Present : w->Surface;
-    ULONG affinity = w->DisplayAffinity;
+    ULONG affinity = w->DisplayAffinity & 0x11;
     if (affinity == 0x11)
         return;
     if (affinity == 1) {
@@ -556,11 +556,11 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
 /* find the surface-backed rectangle that occludes lower windows. */
 static BOOLEAN window_covers(WND *w, RECT *out)
 {
-    if (w->DisplayAffinity == 0x11)
+    if ((w->DisplayAffinity & 0x11) == 0x11)
         return FALSE;
     RECT window;
     WndPhysicalRect(w, &window);
-    if (w->DisplayAffinity == 1) {
+    if ((w->DisplayAffinity & 0x11) == 1) {
         *out = window;
         return TRUE;
     }
