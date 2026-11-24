@@ -237,22 +237,40 @@ UINT WINAPI SetErrorMode(UINT mode)
     return old;
 }
 
+/* the teb keeps the rtl form, which NtRaiseHardError reads. */
+#define RTL_ERRORMODE_FAILCRITICALERRORS 0x10
+#define RTL_ERRORMODE_NOGPFAULTERRORBOX 0x20
+#define RTL_ERRORMODE_NOOPENFILEERRORBOX 0x40
+
+NTSYSAPI NTSTATUS NTAPI RtlSetThreadErrorMode(ULONG mode, PULONG old);
+NTSYSAPI ULONG NTAPI RtlGetThreadErrorMode(void);
+
+static DWORD sem_from_rtl(ULONG mode)
+{
+    return (mode & RTL_ERRORMODE_FAILCRITICALERRORS ? SEM_FAILCRITICALERRORS : 0) |
+           (mode & RTL_ERRORMODE_NOGPFAULTERRORBOX ? SEM_NOGPFAULTERRORBOX : 0) |
+           (mode & RTL_ERRORMODE_NOOPENFILEERRORBOX ? SEM_NOOPENFILEERRORBOX : 0);
+}
+
 BOOL WINAPI SetThreadErrorMode(DWORD mode, LPDWORD old)
 {
-    if (mode & ~(DWORD)(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX)) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    PTEB teb = NtCurrentTeb();
+    if (mode & ~(DWORD)(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX))
+        return KbSetStatus(STATUS_INVALID_PARAMETER);
+    ULONG rtl = (mode & SEM_FAILCRITICALERRORS ? RTL_ERRORMODE_FAILCRITICALERRORS : 0) |
+                (mode & SEM_NOGPFAULTERRORBOX ? RTL_ERRORMODE_NOGPFAULTERRORBOX : 0) |
+                (mode & SEM_NOOPENFILEERRORBOX ? RTL_ERRORMODE_NOOPENFILEERRORBOX : 0);
+    ULONG previous = 0;
+    NTSTATUS status = RtlSetThreadErrorMode(rtl, &previous);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
     if (old)
-        *old = teb->HardErrorMode;
-    teb->HardErrorMode = mode;
+        *old = sem_from_rtl(previous);
     return TRUE;
 }
 
 DWORD WINAPI GetThreadErrorMode(void)
 {
-    return NtCurrentTeb()->HardErrorMode;
+    return sem_from_rtl(RtlGetThreadErrorMode());
 }
 
 /* ------------------------------------------------------------------ handles */
