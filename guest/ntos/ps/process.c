@@ -1098,15 +1098,17 @@ static NTSTATUS set_tls_information(HANDLE handle, PVOID info, ULONG length)
                     continue;
                 entry->Data = old;
             } else {
+                /* a vector that is the teb's own field is none, as on windows 11 26300: no old vector comes back. */
+                BOOLEAN none = vector == (ULONG64)(ULONG_PTR)field;
                 BOOLEAN moved = TRUE;
-                for (ULONG k = 0; moved && k < head.Index; k++) {
+                for (ULONG k = 0; !none && moved && k < head.Index; k++) {
                     ULONG64 slot = 0;
                     moved = NT_SUCCESS(KiCopyFromUser(&slot, (PUCHAR)vector + (SIZE_T)k * pointer, pointer)) &&
                             NT_SUCCESS(KiCopyToUser((PUCHAR)next + (SIZE_T)k * pointer, &slot, pointer));
                 }
                 if (!moved || !NT_SUCCESS(KiCopyToUser(field, &next, pointer)))
                     continue;
-                entry->Data = vector;
+                entry->Data = none ? 0 : vector;
                 entry->ThreadId = (ULONG64)threads[i].Id;
             }
             entry->Flags = 2;
