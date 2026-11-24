@@ -1684,6 +1684,21 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     endif()
 endforeach()
 
+# ===================================== harderror =====================================
+
+# harderror.exe, which shows the box of a hard error as the csrss of the session does: a graphical program of System32
+# that the kernel starts, see NtRaiseHardError in guest/ntos/ex/sysinfo.c.
+foreach(arch IN LISTS MIME_USER_ARCHS)
+    if(arch STREQUAL MIME_GUEST_ARCH)
+        mime_objects(${arch}-harderror ${arch} SOURCES guest/harderror/main.c)
+        mime_link(${MIME_OUT_${arch}}/harderror.exe ${arch} OBJECTS ${arch}-harderror ${arch}-chkstk
+            LIBS ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
+            FLAGS /subsystem:windows,10.0 /entry:entry /base:0x7FF6C8000000 /highentropyva /dynamicbase
+                /stack:0x100000,0x4000
+            ROM ${MIME_ROM_${arch}}/harderror.exe GROUPS guest)
+    endif()
+endforeach()
+
 # ===================================== registry =====================================
 
 # the registry hives of a new machine, compiled from the sources of data/registry and carried in the ROM. the kernel loads

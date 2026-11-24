@@ -243,9 +243,6 @@ void PspProcessExit(PEPROCESS process)
     process->ExitStatusReady = TRUE;
     PspJobProcessExit(process);
     ExReleaseTimerResolution(process);
-    PETHREAD box = __atomic_exchange_n(&process->HardErrorThread, nullptr, __ATOMIC_ACQ_REL);
-    if (box)
-        ObDereferenceObject(box);
     PsWin32ProcessCallout(process, FALSE);
     PspNotifyProcess(process, FALSE);
     ObKillProcessHandles(process);
@@ -1322,8 +1319,6 @@ static ACCESS_MASK map_thread_access(ACCESS_MASK access)
 }
 
 /* of the attributes, only handle inheritance matters. */
-extern PEPROCESS PsSubsystemProcess;
-
 static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, CLIENT_ID *id, ULONG *handle_attributes)
 {
     /*

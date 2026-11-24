@@ -657,6 +657,20 @@ NTSTATUS PsStartConsoleHost(PEPROCESS parent, ULONG64 console, PULONG pid)
     return STATUS_SUCCESS;
 }
 
+/*
+ * harderror.exe shows a hard error box as the csrss of the session does: a child of the subsystem process, as the user of
+ * the session and out of the job and token of the program that raised it. the request is its runtime data.
+ */
+NTSTATUS PsStartHardErrorBox(PVOID request, USHORT size, PEPROCESS *process, PETHREAD *thread)
+{
+    UNICODE_STRING image = RTL_CONSTANT_STRING(L"C:\\Windows\\System32\\harderror.exe");
+    UNICODE_STRING cwd = RTL_CONSTANT_STRING(L"C:\\Windows\\System32");
+    PSP_PARAMS p = {.Image = image, .CommandLine = image, .CurrentDirectory = cwd, .Detached = TRUE,
+                    .ShowWindowFlags = 1 /* SW_SHOWNORMAL */, .RuntimeData = request, .RuntimeDataLength = size};
+    return create_process(&p, nullptr, 0, nullptr, FALSE, PsSubsystemProcess, process, thread, nullptr, nullptr,
+                          KernelMode);
+}
+
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
                              MIME_CONSOLE *console, BOOLEAN elevated, PEPROCESS *out)
 {

@@ -1521,8 +1521,6 @@ typedef struct _EPROCESS {
     BOOLEAN Foreground;
     BOOLEAN DisableBoost;
     ULONG DefaultHardErrorMode; /* SetErrorMode, with the bits a job forces. */
-    ULONG HardErrorBoxes;       /* set while a hard error box of this process is being put up, ex/sysinfo.c. */
-    struct _ETHREAD *HardErrorThread; /* the thread the last hard error box runs on, referenced. */
     ULONG64 CreateTime;
     ULONG64 ExitTime;
     KEVENT ExitEvent;
@@ -2090,6 +2088,9 @@ typedef struct CON_STARTUP {
 MIME_CONSOLE *ConsoleCreateWindow(const CON_STARTUP *startup);
 void ConsoleStartHost(MIME_CONSOLE *console, PEPROCESS parent);
 NTSTATUS PsStartConsoleHost(PEPROCESS parent, ULONG64 console, PULONG pid);
+/* the process that stands for the csrss of the session, ps/process.c. */
+extern PEPROCESS PsSubsystemProcess;
+NTSTATUS PsStartHardErrorBox(PVOID request, USHORT size, PEPROCESS *process, PETHREAD *thread);
 void ConsoleSetHint(PEPROCESS process, MIME_CONSOLE *console);
 void ConsoleInitialTitle(MIME_CONSOLE *console, PCUNICODE_STRING title);
 MIME_CONSOLE *ConsoleOfPtyHandle(HANDLE handle);

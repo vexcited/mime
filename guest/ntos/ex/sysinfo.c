@@ -1,7 +1,7 @@
 /* system information and time services. */
 #include "../ntos.h"
 #include "../se/se.h"
-#include <mime/ntuser.h>
+#include <mime/harderror.h>
 #ifdef __aarch64__
 #include "acpi_tables.h"
 #else
@@ -2995,331 +2995,173 @@ NTSTATUS NTAPI NtDisplayString(PUNICODE_STRING s)
 
 #define HARDERROR_OVERRIDE_ERRORMODE 0x10000000
 #define MAXIMUM_HARDERROR_PARAMETERS 5
-#define OPTION_CANCEL_TRY_CONTINUE 8
 #define OPTION_SHUTDOWN_SYSTEM 6
+#define OPTION_OK_NO_WAIT 7
+#define OPTION_CANCEL_TRY_CONTINUE 8
 #define RESPONSE_RETURN_TO_CALLER 0
+#define RESPONSE_NOT_HANDLED 1
 #define RESPONSE_OK 6
-#define RESPONSE_CANCEL 3
-/* windows blocks in the box until it is clicked; when no box can be had, the wait stands in for it. */
-#define HARDERROR_BOX_WAIT (10 * 1000 * 1000 * 10ll)
+#define RESPONSE_CONTINUE 10
+#define RTL_ERRORMODE_FAILCRITICALERRORS 0x10
+#define STATUS_SERVICE_NOTIFICATION ((NTSTATUS)0x40000018L)
+#define STATUS_VDM_HARD_ERROR ((NTSTATUS)0xC000021DL)
+#define STATUS_UNHANDLED_EXCEPTION ((NTSTATUS)0xC0000144L)
+#define STATUS_SYSTEM_IMAGE_BAD_SIGNATURE ((NTSTATUS)0xC00002D1L)
 
-#define MB_OKCANCEL 0x00000001
-#define MB_ICONERROR 0x00000010
-#define MB_SETFOREGROUND 0x00010000
+/* winsrvext's dwResponseDefault: the answer of a box nobody sees, by option. */
+static const UCHAR g_hard_error_default[] = {2, 6, 6, 3, 8, 8, 6, 6, 3};
 
-/* the address of an export of a loaded module, looked up in this process's loader list. */
-static PVOID user_module_export(PCSTR module, PCSTR export)
+/* the message the csrss of the session gets, as harderror.exe takes it. strings too long for it are cut. */
+static MIME_HARD_ERROR *hard_error_request(PEPROCESS process, NTSTATUS status, ULONG count, ULONG mask,
+                                           const ULONG_PTR *values, const UNICODE_STRING *strings, ULONG option,
+                                           USHORT *size)
 {
-    PEPROCESS process = PsCurrentProcess();
-    PPEB peb = process->Peb;
-    ULONG64 ldr = 0;
-    if (!peb || !NT_SUCCESS(KiCopyFromUser(&ldr, (PVOID)((PUCHAR)peb + 0x18), sizeof(ldr))) || !ldr)
+    WCHAR path[MAX_PATH];
+    ULONG chars = PsGetDeviceImagePath(process, path, sizeof(path)) / sizeof(WCHAR), name = chars;
+    while (name && path[name - 1] != L'\\')
+        name--;
+    ULONG name_bytes = (chars - name) * sizeof(WCHAR), total = sizeof(MIME_HARD_ERROR) + name_bytes;
+    ULONG lengths[MAXIMUM_HARDERROR_PARAMETERS] = {0};
+    for (ULONG i = 0; i < count; i++) {
+        if (!(mask >> i & 1))
+            continue;
+        lengths[i] = strings[i].Length < 0xFFFF - total ? strings[i].Length : (0xFFFF - total) & ~1u;
+        total += lengths[i];
+    }
+    MIME_HARD_ERROR *r = ExAllocatePool2(POOL_FLAG_PAGED, total, KI_TAG('H', 'e', 'r', 'r'));
+    if (!r)
         return nullptr;
-    ULONG64 link = 0;
-    if (!NT_SUCCESS(KiCopyFromUser(&link, (PVOID)(ldr + 0x10), sizeof(link))))
-        return nullptr;
-    for (ULONG n = 0; n < 512 && link && link != ldr + 0x10; n++) {
-        USHORT chars = 0;
-        ULONG64 buffer = 0, base = 0;
-        if (!NT_SUCCESS(KiCopyFromUser(&chars, (PVOID)(link + 0x58), sizeof(chars))) ||
-            !NT_SUCCESS(KiCopyFromUser(&buffer, (PVOID)(link + 0x60), sizeof(buffer))) ||
-            !NT_SUCCESS(KiCopyFromUser(&base, (PVOID)(link + 0x30), sizeof(base))))
-            return nullptr;
-        if (base && chars && chars < 128 && buffer) {
-            WCHAR name[64] = {0};
-            ULONG count = chars / sizeof(WCHAR);
-            if (count > 63)
-                count = 63;
-            if (NT_SUCCESS(KiCopyFromUser(name, (PVOID)buffer, count * sizeof(WCHAR)))) {
-                CHAR ascii[64] = {0};
-                for (ULONG i = 0; i < count; i++)
-                    ascii[i] = name[i] < 0x80 ? (CHAR)name[i] : '?';
-                if (!_stricmp(ascii, module)) {
-                    /* the export directory of that image. */
-                    USHORT dos = 0;
-                    ULONG nt = 0, signature = 0, directory = 0, names = 0, functions = 0, ordinals = 0, count2 = 0;
-                    if (!NT_SUCCESS(KiCopyFromUser(&dos, (PVOID)base, sizeof(dos))) || dos != 0x5A4D ||
-                        !NT_SUCCESS(KiCopyFromUser(&nt, (PVOID)(base + 0x3C), sizeof(nt))) ||
-                        !NT_SUCCESS(KiCopyFromUser(&signature, (PVOID)(base + nt), sizeof(signature))) ||
-                        signature != 0x00004550 ||
-                        !NT_SUCCESS(KiCopyFromUser(&directory, (PVOID)(base + nt + 0x18 + 0x70), sizeof(directory))) ||
-                        !directory)
-                        return nullptr;
-                    ULONG64 exp = base + directory;
-                    if (!NT_SUCCESS(KiCopyFromUser(&count2, (PVOID)(exp + 0x18), sizeof(count2))) ||
-                        !NT_SUCCESS(KiCopyFromUser(&functions, (PVOID)(exp + 0x1C), sizeof(functions))) ||
-                        !NT_SUCCESS(KiCopyFromUser(&names, (PVOID)(exp + 0x20), sizeof(names))) ||
-                        !NT_SUCCESS(KiCopyFromUser(&ordinals, (PVOID)(exp + 0x24), sizeof(ordinals))))
-                        return nullptr;
-                    for (ULONG i = 0; i < count2; i++) {
-                        ULONG name_rva = 0, ordinal = 0;
-                        CHAR text[64] = {0};
-                        if (!NT_SUCCESS(KiCopyFromUser(&name_rva, (PVOID)((ULONG64)base + names + i * 4), 4)) ||
-                            !NT_SUCCESS(KiCopyFromUser(text, (PVOID)((ULONG64)base + name_rva), sizeof(text) - 1)))
-                            return nullptr;
-                        if (_stricmp(text, export))
-                            continue;
-                        if (!NT_SUCCESS(KiCopyFromUser(&ordinal, (PVOID)((ULONG64)base + ordinals + i * 2), 2)))
-                            return nullptr;
-                        ULONG rva = 0;
-                        if (!NT_SUCCESS(KiCopyFromUser(&rva, (PVOID)((ULONG64)base + functions + ordinal * 4), 4)))
-                            return nullptr;
-                        return (PVOID)((ULONG64)base + rva);
-                    }
-                    return nullptr;
-                }
-            }
+    memset(r, 0, sizeof(*r));
+    r->Size = total;
+    r->Status = status;
+    r->Option = option;
+    r->Count = count;
+    r->StringMask = mask;
+    r->ProcessId = (ULONG)(ULONG_PTR)process->UniqueProcessId;
+    r->ThreadId = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
+    PUCHAR at = (PUCHAR)(r + 1);
+    r->ImageName = sizeof(*r);
+    r->ImageNameLength = name_bytes;
+    memcpy(at, path + name, name_bytes);
+    at += name_bytes;
+    for (ULONG i = 0; i < count; i++) {
+        if (!(mask >> i & 1)) {
+            r->Parameters[i] = values[i];
+            continue;
         }
-        if (!NT_SUCCESS(KiCopyFromUser(&link, (PVOID)link, sizeof(link))))
-            break;
+        r->Parameters[i] = (ULONG64)(at - (PUCHAR)r);
+        r->StringLength[i] = lengths[i];
+        if (lengths[i])
+            memcpy(at, strings[i].Buffer, lengths[i]);
+        at += lengths[i];
     }
-    return nullptr;
-}
-
-/* shows the hard error box in the calling thread through user32, and returns the button the user pressed. zero when
- * the process has no user32 or the call does not get there. */
-static ULONG hard_error_box(const WCHAR *body, const WCHAR *caption)
-{
-    PEPROCESS process = PsCurrentProcess();
-    PVOID table = nullptr;
-    if (!process->Peb || !NT_SUCCESS(KiCopyFromUser(&table, (PVOID)((PUCHAR)process->Peb + 0x58), sizeof(table))) ||
-        !table) {
-        KiLogPrintf("hard error box: no callback table (%p)", table);
-        return 0;
-    }
-    /* the callback below is the one of mime's user32. the table of microsoft's has other functions at its numbers. */
-    if (!user_module_export("user32.dll", "MimeErrorBoxThread")) {
-        KiLogPrintf("hard error box: the user32 of the process takes no callback of mime");
-        return 0;
-    }
-    PVOID box = user_module_export("user32.dll", "MessageBoxW");
-    if (!box) {
-        KiLogPrintf("hard error box: user32!MessageBoxW not found");
-        return 0;
-    }
-    SIZE_T body_size = (wcslen(body) + 1) * sizeof(WCHAR);
-    SIZE_T caption_size = (wcslen(caption) + 1) * sizeof(WCHAR);
-    SIZE_T size = body_size + caption_size;
-    /* the message and the title have to sit below 4 GiB: the callback passes the message as a 32-bit UINT. */
-    PVOID memory = nullptr;
-    NTSTATUS allocated = STATUS_CONFLICTING_ADDRESSES;
-    for (ULONG_PTR hint = 0x10000000; hint < 0x80000000 && !NT_SUCCESS(allocated); hint += 0x10000000) {
-        PVOID at = (PVOID)hint;
-        SIZE_T ask = size;
-        allocated = MiAllocateVirtual(process, &at, &ask, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (NT_SUCCESS(allocated))
-            memory = at;
-    }
-    if (!NT_SUCCESS(allocated) || !memory) {
-        KiLogPrintf("hard error box: no memory below 4 GiB (%08x)", allocated);
-        return 0;
-    }
-    KiCopyToUser(memory, body, body_size);
-    KiCopyToUser((PUCHAR)memory + body_size, caption, caption_size);
-    MIME_TIMERPROC_ARGS arguments;
-    memset(&arguments, 0, sizeof(arguments));
-    arguments.Proc = (TIMERPROC)box;
-    arguments.Hwnd = nullptr;
-    arguments.Msg = (UINT)(ULONG_PTR)memory; /* the block is below 4 GiB, so the 32-bit message carries it. */
-    arguments.Id = (UINT_PTR)((PUCHAR)memory + body_size);
-    arguments.Time = MB_OKCANCEL | MB_ICONERROR | MB_SETFOREGROUND;
-    PVOID out = nullptr;
-    ULONG out_length = 0;
-    NTSTATUS status = KeUserModeCallback(MIME_CB_TIMERPROC, &arguments, sizeof(arguments), &out, &out_length);
-    ULONG button = 0;
-    if (NT_SUCCESS(status) && out && out_length >= sizeof(MIME_CALLBACK_RESULT))
-        KiCopyFromUser(&button, out, sizeof(button));
-    SIZE_T freed = 0;
-    MiFreeVirtual(process, &memory, &freed, MEM_RELEASE);
-    return button;
-}
-
-/* what user32!MimeErrorBoxThread is handed, the strings follow it in the same allocation. user32/msgbox.c has it too. */
-typedef struct MIME_ERROR_BOX {
-    ULONG64 Text;
-    ULONG64 Caption;
-    ULONG Type;
-    ULONG Reserved;
-} MIME_ERROR_BOX;
-
-/* puts the hard error box on a thread of its own in the calling process, which frees the block once the box is
- * closed. TRUE when the box is up, or when an earlier one of the process still is. */
-static BOOLEAN hard_error_box_thread(const WCHAR *body, const WCHAR *caption)
-{
-    PEPROCESS process = PsCurrentProcess();
-    if (__atomic_exchange_n(&process->HardErrorBoxes, 1, __ATOMIC_ACQ_REL))
-        return TRUE;
-    BOOLEAN shown = FALSE;
-    PETHREAD last = process->HardErrorThread;
-    if (last && !last->HasTerminated) {
-        shown = TRUE;
-        goto done;
-    }
-    if (last) {
-        process->HardErrorThread = nullptr;
-        ObDereferenceObject(last);
-    }
-    PVOID start = user_module_export("user32.dll", "MimeErrorBoxThread");
-    if (!start) {
-        KiLogPrintf("hard error box: user32!MimeErrorBoxThread not found");
-        goto done;
-    }
-    SIZE_T body_size = (wcslen(body) + 1) * sizeof(WCHAR);
-    SIZE_T caption_size = (wcslen(caption) + 1) * sizeof(WCHAR);
-    /* below 4 GiB, so that a 32-bit user32 can be handed the block as well. */
-    PVOID memory = nullptr;
-    NTSTATUS allocated = STATUS_CONFLICTING_ADDRESSES;
-    for (ULONG_PTR hint = 0x10000000; hint < 0x80000000 && !NT_SUCCESS(allocated); hint += 0x10000000) {
-        PVOID at = (PVOID)hint;
-        SIZE_T ask = sizeof(MIME_ERROR_BOX) + body_size + caption_size;
-        allocated = MiAllocateVirtual(process, &at, &ask, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (NT_SUCCESS(allocated))
-            memory = at;
-    }
-    if (!NT_SUCCESS(allocated) || !memory) {
-        KiLogPrintf("hard error box: no memory below 4 GiB (%08x)", allocated);
-        goto done;
-    }
-    MIME_ERROR_BOX block = {0};
-    block.Text = (ULONG64)(ULONG_PTR)memory + sizeof(block);
-    block.Caption = block.Text + body_size;
-    block.Type = MB_OKCANCEL | MB_ICONERROR | MB_SETFOREGROUND;
-    PETHREAD thread = nullptr;
-    NTSTATUS status = KiCopyToUser(memory, &block, sizeof(block));
-    if (NT_SUCCESS(status))
-        status = KiCopyToUser((PVOID)(ULONG_PTR)block.Text, body, body_size);
-    if (NT_SUCCESS(status))
-        status = KiCopyToUser((PVOID)(ULONG_PTR)block.Caption, caption, caption_size);
-    if (NT_SUCCESS(status))
-        /* the reporting thread holds the loader lock; skip the loader init or the box thread never starts. */
-        status = PspCreateUserThread(process, start, memory, 0, 0, 0, &thread);
-    if (!NT_SUCCESS(status) || !thread) {
-        KiLogPrintf("hard error box: no thread (%08x)", status);
-        SIZE_T freed = 0;
-        MiFreeVirtual(process, &memory, &freed, MEM_RELEASE);
-        goto done;
-    }
-    process->HardErrorThread = thread;
-    shown = TRUE;
-done:
-    __atomic_store_n(&process->HardErrorBoxes, 0, __ATOMIC_RELEASE);
-    return shown;
+    *size = (USHORT)total;
+    return r;
 }
 
 /*
- * no process listens on a hard error port here, so the box is ours to show. windows holds the caller until the box
- * is answered: the box goes on a thread of its own through user32!MimeErrorBoxThread, which stands for the one of
- * csrss, and the caller waits for it. when that thread cannot be had the box is shown in the caller through
- * user32!MessageBoxW and its answer is turned into the response of that button, and when no box can be shown at all
- * the wait of HARDERROR_BOX_WAIT stands in for it, then the message's own instruction to click ok is followed.
+ * ExpRaiseHardError, then what winsrvext!UserHardErrorEx makes of the message in the csrss of the session. no process
+ * listens on a hard error port here: harderror.exe stands for the worker thread of csrss, makes the text and shows the
+ * box. the caller is held while the text is made from it, which reads its windows, and with OptionOkNoWait no longer:
+ * csrss answers ok then and the box stays up after the caller is gone.
  */
+static ULONG hard_error(PEPROCESS process, NTSTATUS status, ULONG count, ULONG mask, const ULONG_PTR *values,
+                        const UNICODE_STRING *strings, ULONG option)
+{
+    PKTHREAD thread = KiCurrentThread();
+    BOOLEAN sent = (process->DefaultHardErrorMode & 1) || (status & HARDERROR_OVERRIDE_ERRORMODE);
+    ULONG mode = 0;
+    if (sent && thread->Teb && NT_SUCCESS(KiCopyFromUser(&mode, &thread->Teb->HardErrorMode, sizeof(mode))) &&
+        (mode & RTL_ERRORMODE_FAILCRITICALERRORS))
+        sent = FALSE;
+    if (!sent)
+        return RESPONSE_RETURN_TO_CALLER;
+    status &= ~HARDERROR_OVERRIDE_ERRORMODE;
+    if (status == STATUS_SERVICE_NOTIFICATION   ? count < 3 || count > 4 || mask != 3
+        : status == STATUS_VDM_HARD_ERROR       ? count != 5 || mask != 12
+        : status == STATUS_UNHANDLED_EXCEPTION  ? mask != 0
+        : status == STATUS_SYSTEM_IMAGE_BAD_SIGNATURE && mask != 1)
+        return RESPONSE_NOT_HANDLED;
+    /* the session of the services has no one to show it to. */
+    if (!process->SessionId || (process->DefaultHardErrorMode & 0x4000))
+        return g_hard_error_default[option];
+    USHORT size = 0;
+    MIME_HARD_ERROR *request = hard_error_request(process, status, count, mask, values, strings, option, &size);
+    if (!request)
+        return RESPONSE_RETURN_TO_CALLER;
+    PEPROCESS box;
+    PETHREAD first;
+    NTSTATUS started = PsStartHardErrorBox(request, size, &box, &first);
+    ExFreePool(request);
+    if (!NT_SUCCESS(started)) {
+        KiLogPrintf("hard error box: harderror.exe does not start (%08x)", started);
+        return RESPONSE_RETURN_TO_CALLER;
+    }
+    /* harderror.exe's first thread ends once the text is made. */
+    BOOLEAN no_wait = option == OPTION_OK_NO_WAIT;
+    NTSTATUS waited = KeWaitForSingleObject(no_wait ? (PVOID)first : (PVOID)box, WrLpcReply, UserMode, FALSE, nullptr);
+    ULONG answer = RESPONSE_OK;
+    if (!no_wait)
+        answer = waited == STATUS_WAIT_0 && (ULONG)box->ExitStatus <= RESPONSE_CONTINUE ? (ULONG)box->ExitStatus
+                                                                                         : RESPONSE_RETURN_TO_CALLER;
+    ObDereferenceObject(first);
+    ObDereferenceObject(box);
+    return answer;
+}
+
 NTSTATUS NTAPI NtRaiseHardError(NTSTATUS status, ULONG count, ULONG string_mask, PULONG_PTR parameters, ULONG option,
                                 PULONG response)
 {
-    if (count > MAXIMUM_HARDERROR_PARAMETERS)
+    if (count > MAXIMUM_HARDERROR_PARAMETERS || !parameters != !count)
         return STATUS_INVALID_PARAMETER_2;
     if (option > OPTION_CANCEL_TRY_CONTINUE)
         return STATUS_INVALID_PARAMETER_4;
+    if (!response || !NT_SUCCESS(KiProbeReturnLength(response)))
+        return STATUS_ACCESS_VIOLATION;
     ULONG_PTR values[MAXIMUM_HARDERROR_PARAMETERS] = {0};
     if (count && !NT_SUCCESS(KiCopyFromUser(values, parameters, count * sizeof(ULONG_PTR))))
         return STATUS_ACCESS_VIOLATION;
-    if (option == OPTION_SHUTDOWN_SYSTEM && !SepSinglePrivilegeCheck(19 /* shutdown */, KeGetPreviousMode()))
-        return STATUS_PRIVILEGE_NOT_HELD;
-
-    PEPROCESS process = PsCurrentProcess();
-    char text[512];
-    WCHAR body[1024] = {0}, caption[128] = L"Error";
-    ULONG used = 0, wide = 0;
-    used += (ULONG)_snprintf(text, sizeof(text), "hard error %08x", (ULONG)status);
-    for (ULONG i = 0; i < count && used < sizeof(text) - 8; i++) {
-        UNICODE_STRING copy;
-        if ((string_mask >> i & 1) && NT_SUCCESS(KiCaptureUnicodeString(&copy, (PCUNICODE_STRING)values[i]))) {
-            ULONG n = 0;
-            text[used++] = ' ';
-            text[used++] = '"';
-            RtlUnicodeToUTF8N(text + used, sizeof(text) - used - 2, &n, copy.Buffer, copy.Length);
-            used += n;
-            text[used++] = '"';
-            ULONG chars = copy.Length / sizeof(WCHAR);
-            if (i == 1) {
-                /* the second parameter is the caption, the others make up the message. */
-                ULONG cap = chars < RTL_NUMBER_OF(caption) - 1 ? chars : RTL_NUMBER_OF(caption) - 1;
-                memcpy(caption, copy.Buffer, cap * sizeof(WCHAR));
-                caption[cap] = 0;
+    /* the strings themselves are read as csrss reads them: one it cannot is empty. */
+    UNICODE_STRING strings[MAXIMUM_HARDERROR_PARAMETERS] = {0};
+    NTSTATUS result = STATUS_SUCCESS;
+    for (ULONG i = 0; i < count && NT_SUCCESS(result); i++) {
+        UNICODE_STRING s;
+        if (!(string_mask >> i & 1))
+            continue;
+        result = KiCopyFromUser(&s, (PVOID)values[i], sizeof(s));
+        s.Length &= ~1u;
+        if (NT_SUCCESS(result) && !NT_SUCCESS(KiCaptureUnicodeStringValue(&strings[i], s)))
+            strings[i] = (UNICODE_STRING){0};
+    }
+    if (NT_SUCCESS(result) && option == OPTION_SHUTDOWN_SYSTEM &&
+        !SepSinglePrivilegeCheck(19 /* shutdown */, KeGetPreviousMode()))
+        result = STATUS_PRIVILEGE_NOT_HELD;
+    if (NT_SUCCESS(result)) {
+        PEPROCESS process = PsCurrentProcess();
+        char text[512];
+        ULONG used = (ULONG)_snprintf(text, sizeof(text), "hard error %08x", (ULONG)status);
+        for (ULONG i = 0; i < count && used < sizeof(text) - 8; i++) {
+            if (string_mask >> i & 1) {
+                ULONG n = 0;
+                text[used++] = ' ';
+                text[used++] = '"';
+                RtlUnicodeToUTF8N(text + used, sizeof(text) - used - 2, &n, strings[i].Buffer, strings[i].Length);
+                used += n;
+                text[used++] = '"';
             } else {
-                for (ULONG c = 0; c < chars && wide + 2 < RTL_NUMBER_OF(body); c++)
-                    body[wide++] = copy.Buffer[c];
+                used += (ULONG)_snprintf(text + used, sizeof(text) - used, " %llx", (ULONG64)values[i]);
             }
-            KiFreeCapturedString(&copy);
-        } else {
-            used += (ULONG)_snprintf(text + used, sizeof(text) - used, " %llx", (ULONG64)values[i]);
         }
+        if (used > sizeof(text) - 1)
+            used = sizeof(text) - 1;
+        text[used] = 0;
+        KiLogPrintf("%s from %s, option %u", text, process->ImageFileName, option);
+        ULONG answer = hard_error(process, status, count, string_mask, values, strings, option);
+        result = KiCopyToUser(response, &answer, sizeof(answer));
     }
-    if (used > sizeof(text) - 1)
-        used = sizeof(text) - 1;
-    text[used] = 0;
-    KiLogPrintf("%s from %s, option %u", text, process->ImageFileName, option);
-    /* windows returns from the call while the box is still up, with a response of zero, and the program carries on
-     * behind it: the box goes on a thread of its own. the reporting thread holds the loader lock, so the box thread
-     * skips loader init (hard_error_box_thread). only when that thread cannot be had is the box shown in the caller. */
-    ULONG button = 0;
-    if (body[0] && hard_error_box_thread(body, caption)) {
-        /*
-         * the caller is held until the box is answered, as on windows 11 26300, where the call of
-         * scratch/dlls/probe/herr.c had not returned after 72 seconds with the box up.
-         */
-        PETHREAD box = process->HardErrorThread;
-        if (box) {
-            ObReferenceObject(box);
-            KeWaitForSingleObject(box, UserRequest, UserMode, FALSE, nullptr);
-            button = (ULONG)box->ExitStatus;
-            ObDereferenceObject(box);
-        }
-        if (button < 1 || button > 7)
-            button = 1;
-    }
-    /* the box could not go on a thread of its own: it is shown in the caller, one at a time. */
-    if (!button && body[0] && !__atomic_exchange_n(&process->HardErrorBoxes, 1, __ATOMIC_ACQ_REL)) {
-        button = hard_error_box(body, caption);
-        __atomic_store_n(&process->HardErrorBoxes, 0, __ATOMIC_RELEASE);
-    }
-    /* a box that could not be shown, or that expired, follows the message's own instruction: click ok. */
-    if (!button)
-        button = 1;
-    ULONG answer;
-    switch (button) {
-    case 1: /* IDOK */
-        answer = RESPONSE_OK;
-        break;
-    case 2: /* IDCANCEL, which the close box counts as */
-        answer = RESPONSE_CANCEL;
-        break;
-    case 3: /* IDABORT */
-        answer = 2;
-        break;
-    case 4: /* IDRETRY */
-        answer = 7;
-        break;
-    case 5: /* IDIGNORE */
-        answer = 4;
-        break;
-    case 6: /* IDYES */
-        answer = 9;
-        break;
-    case 7: /* IDNO */
-        answer = 5;
-        break;
-    default:
-        /* no box could be shown: wait as long as windows waits on its box, then take the ok the text asks for. */
-        {
-            LARGE_INTEGER wait;
-            wait.QuadPart = -HARDERROR_BOX_WAIT;
-            KeDelayExecutionThread(KernelMode, FALSE, &wait);
-        }
-        answer = RESPONSE_OK;
-        break;
-    }
-    return KiCopyToUser(response, &answer, sizeof(answer));
+    for (ULONG i = 0; i < count; i++)
+        KiFreeCapturedString(&strings[i]);
+    return result;
 }
 
 NTSTATUS NTAPI NtTraceEvent(HANDLE handle, ULONG flags, ULONG length, PVOID data)
