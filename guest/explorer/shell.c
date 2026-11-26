@@ -4,6 +4,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
 #include <mime/win32/shellapi.h>
+#include <mime/win32/commctrl.h>
 #include <rtl.h>
 
 #define MAX_ICONS 256
@@ -292,8 +293,25 @@ static void make_desktop(HINSTANCE instance)
     }
     RECT r;
     GetClientRect(shell, &r);
-    CreateWindowExW(WS_EX_LAYERED, view.lpszClassName, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS |
-                    WS_TABSTOP, 0, 0, r.right, r.bottom, shell, nullptr, instance, nullptr);
+    HWND folder = CreateWindowExW(WS_EX_LAYERED, view.lpszClassName, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN |
+                                  WS_CLIPSIBLINGS | WS_TABSTOP, 0, 0, r.right, r.bottom, shell, nullptr, instance, nullptr);
+    /* the list view of the desktop, which programs look for under the view, with the header it makes. */
+    typedef BOOL(WINAPI * INIT)(const INITCOMMONCONTROLSEX *);
+    HMODULE controls = LoadLibraryW(L"comctl32.dll");
+    INIT init = controls ? (INIT)GetProcAddress(controls, "InitCommonControlsEx") : nullptr;
+    INITCOMMONCONTROLSEX classes = {sizeof(classes), ICC_LISTVIEW_CLASSES};
+    if (folder && init && init(&classes)) {
+        HWND list = CreateWindowExW(0, L"SysListView32", L"FolderView", 0x56003A40, 0, 0, r.right, r.bottom, folder,
+                                    (HMENU)1, instance, nullptr);
+        /* the view gives it its columns, the name first, which make its header. */
+        LVCOLUMNW name = {.mask = LVCF_TEXT | LVCF_WIDTH, .cx = 200, .pszText = (LPWSTR)L"Name"};
+        HWND header = nullptr;
+        if (list && SendMessageW(list, LVM_INSERTCOLUMNW, 0, (LPARAM)&name) >= 0)
+            header = (HWND)SendMessageW(list, LVM_GETHEADER, 0, 0);
+        /* the columns of the desktop keep their width and the header takes the tab, as explorer has them. */
+        if (header)
+            SetWindowLongW(header, GWL_STYLE, GetWindowLongW(header, GWL_STYLE) | WS_TABSTOP | HDS_NOSIZING);
+    }
     ShowWindow(shell, SW_SHOWNA);
 }
 

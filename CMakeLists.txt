@@ -1182,7 +1182,8 @@ foreach(arch ${MIME_GUEST_ARCH} x86)
         set(explorer_flags /subsystem:windows,6.0 /entry:entry /base:0x00400000 /dynamicbase /stack:0x100000,0x4000)
     endif()
     mime_link(${MIME_OUT_${arch}}/explorer.exe ${arch} OBJECTS ${arch}-explorer ${arch}-chkstk LIBS ${explorer_libs}
-        FLAGS ${explorer_flags} RESOURCE explorer.exe ROM ${explorer_rom}/explorer.exe GROUPS guest)
+        FLAGS ${explorer_flags} RESOURCE explorer.exe RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/explorer/explorer.rc
+        ROM ${explorer_rom}/explorer.exe GROUPS guest)
 endforeach()
 
 # ===================================== notepad =====================================
