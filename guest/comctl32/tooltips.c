@@ -479,7 +479,8 @@ LRESULT CALLBACK TooltipsProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         t->Font = (HFONT)wparam;
         return 0;
     case WM_GETFONT:
-        return (LRESULT)t->Font;
+        /* the status font it draws with when none was set, measured on windows 11. */
+        return (LRESULT)tip_font(t);
     case WM_GETTEXT:
         return t->Current >= 0 ? CcCopyText((LPWSTR)lparam, (int)wparam, t->Shown) : 0;
     case WM_GETTEXTLENGTH:
