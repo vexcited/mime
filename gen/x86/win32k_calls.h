@@ -182,8 +182,16 @@
         return MxCallService(number, v);
     case MIME_SVC_NtUserLogicalToPhysicalDpiPointForWindow:
     case MIME_SVC_NtUserPhysicalToLogicalDpiPointForWindow:
+    case MIME_SVC_NtUserLogicalToPerMonitorDPIPhysicalPoint:
+    case MIME_SVC_NtUserPerMonitorDPIPhysicalToLogicalPoint:
+    case MIME_SVC_NtUserShowOwnedPopups:
         v[0] = (LONG64)(LONG)a[0];
         v[1] = a[1];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserModifyWindowTouchCapability:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        v[2] = a[2];
         return MxCallService(number, v);
     case MIME_SVC_NtUserTraceLoggingSendMixedModeTelemetry:
         return MxCallService(number, v);

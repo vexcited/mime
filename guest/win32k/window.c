@@ -4756,11 +4756,46 @@ BOOL NTAPI NtUserIsTouchWindow(HWND hwnd, PULONG user_flags)
     WND *w = WndLookup(hwnd);
     ULONG flags = w ? w->TouchFlags : 0;
     UserLeave();
-    if (user_flags) {
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    /* the flags are only given for a window that takes touches. */
+    if (user_flags && (flags & MIME_TOUCH_REGISTERED)) {
         ULONG out = flags & ~MIME_TOUCH_REGISTERED;
         MimeCopyToUser(user_flags, &out, sizeof(out));
     }
     return (flags & MIME_TOUCH_REGISTERED) != 0;
+}
+
+/* RegisterTouchWindow and UnregisterTouchWindow of user32, on a window of the calling thread. */
+BOOL NTAPI NtUserModifyWindowTouchCapability(HWND hwnd, ULONG flags, BOOL enable)
+{
+    BOOL ok = FALSE;
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    else if (flags & ~(TWF_FINETOUCH | TWF_WANTPALM))
+        W32SetLastError(ERROR_INVALID_FLAGS);
+    else if (w->Thread != W32GetThread())
+        W32SetLastError(ERROR_ACCESS_DENIED);
+    else {
+        w->TouchFlags = enable ? flags | MIME_TOUCH_REGISTERED : 0;
+        ok = TRUE;
+    }
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtUserShowOwnedPopups(HWND hwnd, BOOL show)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w)
+        WndShowOwned(w, show ? SW_PARENTOPENING : SW_PARENTCLOSING);
+    else
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    UserLeave();
+    return w != nullptr;
 }
 
 BOOL NTAPI NtUserForceWindowToDpiForTest(HWND hwnd, UINT dpi)

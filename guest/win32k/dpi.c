@@ -585,6 +585,53 @@ BOOL NTAPI NtUserPhysicalToLogicalDpiPointForWindow(HWND hwnd, POINT *user_point
     return dpi_point(hwnd, user_point, FALSE);
 }
 
+/*
+ * LogicalToPhysicalPointForPerMonitorDPI and the other way: a point between the coordinates of a window and the
+ * pixels of the screen, and of the calling thread with no window. a point outside the window is left as it is.
+ */
+static BOOL monitor_point(HWND hwnd, POINT *user_point, BOOLEAN to_physical)
+{
+    POINT p;
+    UserEnter();
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
+    ULONG thread = DpiCurrentAwareness();
+    ULONG awareness = w ? w->Awareness : thread;
+    RECT rect = w ? w->WindowRect : (RECT){};
+    UserLeave();
+    if (hwnd && !w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (!NT_SUCCESS(MimeCopyFromUser(&p, user_point, sizeof(p)))) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    POINT in = p;
+    UserEnter();
+    if (to_physical) {
+        DpiPointConvert(&in, thread, awareness);
+        DpiPointConvert(&p, awareness, DPI_PHYSICAL);
+    } else {
+        DpiPointConvert(&p, DPI_PHYSICAL, awareness);
+        in = p;
+    }
+    UserLeave();
+    /* DCEPtInRect: the right and bottom edges count as inside. */
+    if (w && (in.x < rect.left || in.x > rect.right || in.y < rect.top || in.y > rect.bottom))
+        return FALSE;
+    return NT_SUCCESS(MimeCopyToUser(user_point, &p, sizeof(p)));
+}
+
+BOOL NTAPI NtUserLogicalToPerMonitorDPIPhysicalPoint(HWND hwnd, POINT *user_point)
+{
+    return monitor_point(hwnd, user_point, TRUE);
+}
+
+BOOL NTAPI NtUserPerMonitorDPIPhysicalToLogicalPoint(HWND hwnd, POINT *user_point)
+{
+    return monitor_point(hwnd, user_point, FALSE);
+}
+
 /* the event of windows of several awarenesses in one process goes to the telemetry of windows only. */
 BOOL NTAPI NtUserTraceLoggingSendMixedModeTelemetry(void)
 {

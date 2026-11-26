@@ -455,6 +455,10 @@ void NtUserLogicalToPhysicalDpiPointForWindow(void);
 void NtUserPhysicalToLogicalDpiPointForWindow(void);
 void NtUserTraceLoggingSendMixedModeTelemetry(void);
 void NtUserCompositionInputSinkLuidFromPoint(void);
+void NtUserLogicalToPerMonitorDPIPhysicalPoint(void);
+void NtUserPerMonitorDPIPhysicalToLogicalPoint(void);
+void NtUserShowOwnedPopups(void);
+void NtUserModifyWindowTouchCapability(void);
 void NtUserWaitForInputIdle(void);
 void NtUserWaitMessage(void);
 void NtGdiGetPublicFontTableChangeCookie(void);
@@ -2694,6 +2698,26 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserCompositionInputSinkLuidFromPoint & 0xFFF] = (SERVICE){(void *)NtUserCompositionInputSinkLuidFromPoint, STACK_ARGS(5), 1, 0};
 #else
 #warning "NtUserCompositionInputSinkLuidFromPoint has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserLogicalToPerMonitorDPIPhysicalPoint
+    table[MIME_SVC_NtUserLogicalToPerMonitorDPIPhysicalPoint & 0xFFF] = (SERVICE){(void *)NtUserLogicalToPerMonitorDPIPhysicalPoint, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserLogicalToPerMonitorDPIPhysicalPoint has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserPerMonitorDPIPhysicalToLogicalPoint
+    table[MIME_SVC_NtUserPerMonitorDPIPhysicalToLogicalPoint & 0xFFF] = (SERVICE){(void *)NtUserPerMonitorDPIPhysicalToLogicalPoint, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserPerMonitorDPIPhysicalToLogicalPoint has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserShowOwnedPopups
+    table[MIME_SVC_NtUserShowOwnedPopups & 0xFFF] = (SERVICE){(void *)NtUserShowOwnedPopups, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserShowOwnedPopups has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserModifyWindowTouchCapability
+    table[MIME_SVC_NtUserModifyWindowTouchCapability & 0xFFF] = (SERVICE){(void *)NtUserModifyWindowTouchCapability, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserModifyWindowTouchCapability has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserWaitForInputIdle
     table[MIME_SVC_NtUserWaitForInputIdle & 0xFFF] = (SERVICE){(void *)NtUserWaitForInputIdle, STACK_ARGS(3), 1, 0};
