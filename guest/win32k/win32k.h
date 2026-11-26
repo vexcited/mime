@@ -1131,7 +1131,9 @@ typedef struct FRAME_METRICS {
     LONG Caption;     /* caption height. */
     LONG VisibleInset;/* invisible resize border on left, right and bottom. */
     LONG ButtonWidth;
+    LONG ButtonHeight; /* child windows: the caption buttons uxtheme draws. */
     LONG CornerRadius;
+    LONG Edge; /* child windows: WS_EX_CLIENTEDGE and WS_EX_STATICEDGE inside the frame. */
 } FRAME_METRICS;
 
 BOOLEAN FrameHasCaption(DWORD style, DWORD ex_style);
@@ -1505,6 +1507,7 @@ void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);
 HCURSOR CursorSystem(ULONG idc);
+HICON CursorSystemIcon(ULONG idi);
 SURFACE *CursorIconImage(HICON icon);
 BOOLEAN CursorValid(HICON icon);
 SURFACE *CursorImage(HICON cursor);

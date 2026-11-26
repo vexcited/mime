@@ -2064,7 +2064,9 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         /* the host draws the border, whose color follows the activation. */
         if (WndIsTopLevel(w))
             WndUpdateHostConfig(w, FALSE);
-        if (FrameHasCaption(w->Style, w->ExStyle) && WndIsVisible(w) && lparam != -1)
+        /* a child window's thick frame takes the active or inactive border color too. */
+        if ((FrameHasCaption(w->Style, w->ExStyle) || ((w->Style & WS_CHILD) && (w->Style & WS_THICKFRAME))) &&
+            WndIsVisible(w) && lparam != -1)
             FramePaint(w);
         return TRUE;
 

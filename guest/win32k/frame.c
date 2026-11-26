@@ -11,13 +11,18 @@
 
 #define FRAME_TAG W32_TAG('W', 'f', 'r', 'm')
 
-/* the parts of the Window class the frame draws. */
+/* the parts of the Window and DWMWindow classes the frame draws, the right and bottom frames following the left. */
 enum {
     WP_CAPTION = 1,
+    WP_SMALLCAPTION = 2,
+    WP_MINCAPTION = 3,
+    WP_MAXCAPTION = 5,
     WP_FRAMELEFT = 7,
+    WP_SMALLFRAMELEFT = 10,
     WP_MINBUTTON = 15,
     WP_MAXBUTTON = 17,
     WP_CLOSEBUTTON = 18,
+    WP_SMALLCLOSEBUTTON = 19,
     WP_RESTOREBUTTON = 21,
     WP_HELPBUTTON = 23,
 };
@@ -72,42 +77,46 @@ void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m)
         m->CornerRadius = scale((ex_style & WS_EX_TOOLWINDOW) && caption ? 4 : 8, dpi);
         return;
     }
-    /* child windows keep the classic edges. */
-    LONG b = 0;
-    if (ex_style & WS_EX_CLIENTEDGE)
-        b += 2;
-    if (ex_style & WS_EX_STATICEDGE)
-        b += 1;
-    if (thick)
-        b += MetricsGet(SM_CXFRAME, dpi);
+    /*
+     * a child window has the frame of a top level one, measured on windows 11 26100, and the edges of
+     * WS_EX_CLIENTEDGE and WS_EX_STATICEDGE inside it. a top level window without a frame keeps the edges too.
+     */
+    if (caption)
+        m->Border = MetricsGet(SM_CXFRAME, dpi) + MetricsGet(SM_CXPADDEDBORDER, dpi);
+    else if (thick)
+        m->Border = MetricsGet(SM_CXFRAME, dpi) + MetricsGet(SM_CXPADDEDBORDER, dpi) - ((style & WS_BORDER) ? 0 : 1);
     else if (dlg)
-        b += MetricsGet(SM_CXDLGFRAME, dpi);
+        m->Border = MetricsGet(SM_CXDLGFRAME, dpi);
     else if (style & WS_BORDER)
-        b += 1;
-    m->Border = b;
-    m->Caption = caption ? MetricsGet(SM_CYCAPTION, dpi) : 0;
-    m->Top = b + m->Caption;
-    m->ButtonWidth = scale(46, dpi);
+        m->Border = 1;
+    m->Edge = ((ex_style & WS_EX_CLIENTEDGE) ? 2 : 0) + ((ex_style & WS_EX_STATICEDGE) ? 1 : 0);
+    BOOLEAN tool = (ex_style & WS_EX_TOOLWINDOW) != 0;
+    m->Caption = caption ? MetricsGet(tool ? SM_CYSMCAPTION : SM_CYCAPTION, dpi) : 0;
+    m->Top = m->Border + m->Caption;
+    /* _GetNcBtnMetrics of uxtheme: the size of the caption buttons less an edge on each side. */
+    LONG edge = MetricsGet(SM_CXEDGE, dpi);
+    m->ButtonWidth = MetricsGet(tool ? SM_CXSMSIZE : SM_CXSIZE, dpi) - 2 * edge;
+    m->ButtonHeight = MetricsGet(tool ? SM_CYSMSIZE : SM_CYSIZE, dpi) - 2 * edge;
 }
 
 void FrameAdjustRect(RECT *r, DWORD style, DWORD ex_style, UINT dpi)
 {
     FRAME_METRICS m;
     FrameGetMetrics(style, ex_style, dpi, &m);
-    r->left -= m.Border;
-    r->right += m.Border;
-    r->top -= m.Top;
-    r->bottom += m.Border;
+    r->left -= m.Border + m.Edge;
+    r->right += m.Border + m.Edge;
+    r->top -= m.Top + m.Edge;
+    r->bottom += m.Border + m.Edge;
 }
 
 void FrameClientFromWindow(RECT *r, DWORD style, DWORD ex_style, UINT dpi)
 {
     FRAME_METRICS m;
     FrameGetMetrics(style, ex_style, dpi, &m);
-    r->left += m.Border;
-    r->right -= m.Border;
-    r->top += m.Top;
-    r->bottom -= m.Border;
+    r->left += m.Border + m.Edge;
+    r->right -= m.Border + m.Edge;
+    r->top += m.Top + m.Edge;
+    r->bottom -= m.Border + m.Edge;
     if (style & WS_VSCROLL)
         r->right -= MetricsGet(SM_CXVSCROLL, dpi);
     if (style & WS_HSCROLL)
@@ -211,6 +220,14 @@ void FrameGetButtonRect(WND *w, int button, RECT *r)
         return;
     }
     LONG bw = m.ButtonWidth;
+    if (!is_top_frame(w->Style)) {
+        /* _GetNcBtnMetrics of uxtheme: an edge apart and from the frame, centered on the caption. */
+        LONG edge = MetricsGet(SM_CXEDGE, WndFrameDpi(w));
+        right -= m.Border + edge;
+        top = m.Border + (m.Caption - 1 - m.ButtonHeight) / 2;
+        *r = (RECT){right - bw - slot * (bw + edge), top, right - slot * (bw + edge), top + m.ButtonHeight};
+        return;
+    }
     *r = (RECT){right - bw * (slot + 1), top, right - bw * slot, bottom};
 }
 
@@ -241,6 +258,35 @@ static LONG caption_buttons_left(WND *w)
     return left;
 }
 
+/*
+ * the icon uxtheme shows in the caption of a child window, AcquireFrameIcon and _GetWindowIcon of uxtheme 26300: its
+ * own, then its class's, then the logo of windows unless it has a modal dialog frame.
+ */
+static HICON child_icon(WND *w)
+{
+    if (!(w->Style & WS_SYSMENU) || (w->ExStyle & WS_EX_TOOLWINDOW))
+        return nullptr;
+    HICON icon = w->IconSmall ? w->IconSmall
+                 : w->Icon    ? w->Icon
+                 : w->Class && w->Class->IconSmall ? w->Class->IconSmall
+                 : w->Class ? w->Class->Icon : nullptr;
+    if (!icon && !(w->ExStyle & WS_EX_DLGMODALFRAME))
+        icon = CursorSystemIcon(32517 /* IDI_WINLOGO */);
+    return icon;
+}
+
+/* window relative: an edge in from the frame, centered on the caption less its last line. */
+static BOOLEAN child_icon_rect(WND *w, const FRAME_METRICS *m, RECT *r)
+{
+    if (!child_icon(w))
+        return FALSE;
+    UINT dpi = WndFrameDpi(w);
+    LONG cx = MetricsGet(SM_CXSMICON, dpi), cy = MetricsGet(SM_CYSMICON, dpi);
+    LONG x = m->Border + MetricsGet(SM_CXEDGE, dpi), y = m->Border + (m->Caption - 1 - cy) / 2;
+    *r = (RECT){x, y, x + cx, y + cy};
+    return TRUE;
+}
+
 ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max)
 {
     if (!max || !FrameHasCaption(w->Style, w->ExStyle) || !is_top_frame(w->Style))
@@ -258,6 +304,39 @@ ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max)
     return RectEmpty(&rects[0]) ? 0 : 1;
 }
 
+/*
+ * CThemeWnd::GetTitleBarInfoEx of uxtheme 26300 answers for a child window with a caption. it clears the first four
+ * states after it set the one of the title bar, and calls a button that is neither empty nor disabled pressed.
+ */
+static void child_title_bar_info(WND *w, const FRAME_METRICS *m, TITLEBARINFOEX *info)
+{
+    LONG x = w->WindowRect.left, y = w->WindowRect.top;
+    LONG width = w->WindowRect.right - w->WindowRect.left;
+    info->rcTitleBar = (RECT){m->Border, m->Border, width - m->Border, m->Top - 1};
+    RECT icon;
+    if (child_icon_rect(w, m, &icon))
+        info->rcTitleBar.left += icon.right - icon.left;
+    RectOffset(&info->rcTitleBar, x, y);
+    info->rgstate[1] = STATE_SYSTEM_INVISIBLE;
+    static const int buttons[4] = {CAPTION_MIN, CAPTION_MAX, CAPTION_HELP, CAPTION_CLOSE};
+    for (int i = 0; i < 4; i++) {
+        RECT r;
+        FrameGetButtonRect(w, buttons[i], &r);
+        if (RectEmpty(&r)) {
+            info->rgstate[2 + i] = STATE_SYSTEM_INVISIBLE;
+            continue;
+        }
+        BOOLEAN enabled = !(w->Style & WS_DISABLED) &&
+                          (buttons[i] == CAPTION_MAX   ? (w->Style & WS_MAXIMIZEBOX) != 0
+                           : buttons[i] == CAPTION_MIN ? (w->Style & WS_MINIMIZEBOX) != 0
+                           : buttons[i] == CAPTION_CLOSE ? !(w->Flags & WNDF_NOCLOSE)
+                                                         : TRUE);
+        info->rgstate[2 + i] = enabled ? STATE_SYSTEM_PRESSED : STATE_SYSTEM_UNAVAILABLE;
+        RectOffset(&r, x, y);
+        info->rgrect[2 + i] = r;
+    }
+}
+
 void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info)
 {
     memset(&info->rcTitleBar, 0, sizeof(*info) - sizeof(info->cbSize));
@@ -269,6 +348,10 @@ void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info)
     }
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
+    if (!is_top_frame(w->Style)) {
+        child_title_bar_info(w, &m, info);
+        return;
+    }
     RECT vis;
     FrameGetVisibleRect(w, &vis);
     info->rcTitleBar = (RECT){vis.left + 1, vis.top + 1, vis.right - 1, m.Top};
@@ -302,6 +385,38 @@ void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info)
 
 /* ------------------------------------------------------------------ hit testing */
 
+/*
+ * the caption of a child window, _GetNcBtnHitTestRect of uxtheme 26300: the buttons from the frame to the last line
+ * of the caption, the close button out to the frame, the minimize and help buttons a pixel to the left, the maximize
+ * and help buttons one to the right, and the system menu from the frame through the icon.
+ */
+static LRESULT child_caption_hit(WND *w, POINT wp, const FRAME_METRICS *m)
+{
+    if (wp.y < m->Border || wp.y >= m->Top - 1)
+        return HTCAPTION;
+    LONG width = w->WindowRect.right - w->WindowRect.left;
+    static const struct {
+        int Button;
+        LONG Left, Right;
+        LRESULT Hit;
+    } order[] = {{CAPTION_CLOSE, 1, 0, HTCLOSE}, {CAPTION_MIN, 1, 0, HTMINBUTTON}, {CAPTION_MAX, 0, 1, HTMAXBUTTON}};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(order); i++) {
+        RECT r;
+        FrameGetButtonRect(w, order[i].Button, &r);
+        LONG right = order[i].Button == CAPTION_CLOSE ? width - m->Border : r.right + order[i].Right;
+        if (!RectEmpty(&r) && wp.x >= r.left - order[i].Left && wp.x < right)
+            return order[i].Hit;
+    }
+    RECT icon;
+    if (child_icon_rect(w, m, &icon) && wp.x >= m->Border && wp.x <= icon.right)
+        return HTSYSMENU;
+    RECT help;
+    FrameGetButtonRect(w, CAPTION_HELP, &help);
+    if (!RectEmpty(&help) && wp.x >= help.left - 1 && wp.x <= help.right)
+        return HTHELP;
+    return HTCAPTION;
+}
+
 LRESULT FrameHitTest(WND *w, POINT pt)
 {
     if (!RectContains(&w->WindowRect, pt.x, pt.y))
@@ -333,7 +448,8 @@ LRESULT FrameHitTest(WND *w, POINT pt)
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MAXIMIZE)) {
         LONG edge = m.Border;
         LONG corner = scale(16, dpi);
-        LONG top_edge = scale(4, dpi);
+        /* the top resize strip of the dwm, or the top row of the nine grid of the caption of uxtheme. */
+        LONG top_edge = is_top_frame(w->Style) ? scale(4, dpi) : m.Border + scale(1, dpi);
         BOOLEAN left = wp.x < edge, right = wp.x >= width - edge;
         BOOLEAN top = wp.y < top_edge, bottom = wp.y >= height - edge;
         if (top || bottom || left || right) {
@@ -356,6 +472,8 @@ LRESULT FrameHitTest(WND *w, POINT pt)
     }
 
     if (FrameHasCaption(w->Style, w->ExStyle) && wp.y < m.Top) {
+        if (!is_top_frame(w->Style))
+            return child_caption_hit(w, wp, &m);
         RECT vis;
         FrameGetVisibleRect(w, &vis);
         switch (button_at(w, wp)) {
@@ -878,7 +996,216 @@ static void draw_button(WND *w, SURFACE *s, const REGION *clip, POINT origin, in
         draw_fallback_glyph(s, clip, button, maximized, &br, ColorToPixel(glyph_color), dpi);
 }
 
-static void paint_classic_edges(WND *w, SURFACE *s, const REGION *clip, RECT r)
+static void draw_ring(SURFACE *s, const REGION *clip, RECT r, LONG width, ULONG pixel)
+{
+    if (width <= 0)
+        return;
+    RECT edges[4] = {{r.left, r.top, r.right, r.top + width},
+                     {r.left, r.bottom - width, r.right, r.bottom},
+                     {r.left, r.top + width, r.left + width, r.bottom - width},
+                     {r.right - width, r.top + width, r.right, r.bottom - width}};
+    for (int i = 0; i < 4; i++)
+        DrawFillRect(s, clip, &edges[i], pixel);
+}
+
+/* the images of the style decoded once, as surfaces to blend from. */
+typedef struct PART_SURFACE {
+    struct PART_SURFACE *Next;
+    int32_t ResId;
+    SURFACE *Surface;
+} PART_SURFACE;
+
+static PART_SURFACE *g_part_surfaces;
+
+static SURFACE *image_surface(const MimeMsstylesImage *img)
+{
+    for (PART_SURFACE *p = g_part_surfaces; p; p = p->Next)
+        if (p->ResId == img->res_id)
+            return p->Surface;
+    MimePngInfo info;
+    PUCHAR argb = decode_image(img, &info);
+    PART_SURFACE *p = argb ? frame_alloc(nullptr, sizeof(*p)) : nullptr;
+    SURFACE *surface = p ? SurfaceWrap((LONG)info.width, (LONG)info.height, 32, argb, (LONG)info.width * 4, nullptr) : nullptr;
+    if (!surface) {
+        frame_free(nullptr, p);
+        frame_free(nullptr, argb);
+        return nullptr;
+    }
+    p->ResId = img->res_id;
+    p->Surface = surface;
+    p->Next = g_part_surfaces;
+    g_part_surfaces = p;
+    return surface;
+}
+
+static void blend_cell(SURFACE *dst, const REGION *clip, LONG x, LONG y, LONG w, LONG h, SURFACE *src, LONG sx, LONG sy,
+                       LONG sw, LONG sh)
+{
+    if (w <= 0 || h <= 0 || sw <= 0 || sh <= 0)
+        return;
+    RECT to = {x, y, x + w, y + h}, from = {sx, sy, sx + sw, sy + sh};
+    AlphaBlendSurface(dst, clip, &to, src, &from, (BLENDFUNCTION){AC_SRC_OVER, 0, 255, AC_SRC_ALPHA});
+}
+
+/*
+ * an image of the style in a rectangle as DrawThemeBackground draws it: at its size and aligned, or stretched between
+ * its sizing margins. glyphs are always at their size.
+ */
+static void draw_image(SURFACE *s, const REGION *clip, const MimeMsstylesImage *img, const RECT *rect, BOOLEAN glyph)
+{
+    SURFACE *src = image_surface(img);
+    LONG x = rect->left, y = rect->top, w = rect->right - rect->left, h = rect->bottom - rect->top;
+    if (!src || w <= 0 || h <= 0)
+        return;
+    LONG sx = img->src.left, sy = img->src.top, sw = img->src.right - sx, sh = img->src.bottom - sy;
+    if (glyph || img->sizing_type == MIME_ST_TRUESIZE) {
+        LONG dw = glyph || !img->draw_width ? sw : img->draw_width, dh = glyph || !img->draw_height ? sh : img->draw_height;
+        LONG dx = img->halign == MIME_HA_CENTER ? x + (w - dw) / 2 : img->halign == MIME_HA_RIGHT ? x + w - dw : x;
+        LONG dy = img->valign == MIME_VA_CENTER ? y + (h - dh) / 2 : img->valign == MIME_VA_BOTTOM ? y + h - dh : y;
+        blend_cell(s, clip, dx, dy, dw, dh, src, sx, sy, sw, sh);
+        return;
+    }
+    LONG scale_by = img->margin_scale > 0 ? img->margin_scale : 1;
+    LONG sl = img->sizing_margins.left, sr = img->sizing_margins.right;
+    LONG st = img->sizing_margins.top, sb = img->sizing_margins.bottom;
+    if (sl < 0 || sr < 0 || st < 0 || sb < 0 || sl + sr > sw || st + sb > sh)
+        sl = sr = st = sb = 0;
+    LONG l = sl * scale_by, r = sr * scale_by, t = st * scale_by, b = sb * scale_by;
+    if (l + r > w) {
+        l = w * l / (l + r);
+        r = w - l;
+    }
+    if (t + b > h) {
+        t = h * t / (t + b);
+        b = h - t;
+    }
+    LONG cw = w - l - r, ch = h - t - b, scw = sw - sl - sr, sch = sh - st - sb;
+    blend_cell(s, clip, x, y, l, t, src, sx, sy, sl, st);
+    blend_cell(s, clip, x + l, y, cw, t, src, sx + sl, sy, scw, st);
+    blend_cell(s, clip, x + w - r, y, r, t, src, sx + sw - sr, sy, sr, st);
+    blend_cell(s, clip, x, y + t, l, ch, src, sx, sy + st, sl, sch);
+    blend_cell(s, clip, x + w - r, y + t, r, ch, src, sx + sw - sr, sy + st, sr, sch);
+    blend_cell(s, clip, x, y + h - b, l, b, src, sx, sy + sh - sb, sl, sb);
+    blend_cell(s, clip, x + l, y + h - b, cw, b, src, sx + sl, sy + sh - sb, scw, sb);
+    blend_cell(s, clip, x + w - r, y + h - b, r, b, src, sx + sw - sr, sy + sh - sb, sr, sb);
+    if (!img->border_only)
+        blend_cell(s, clip, x + l, y + t, cw, ch, src, sx + sl, sy + st, scw, sch);
+}
+
+static BOOLEAN window_part_image(int part, int state, UINT dpi, const RECT *r, MimeMsstylesImage *img)
+{
+    return load_theme() && !MetricsHighContrast() && g_theme.Class[CLASS_WINDOW] >= 0 &&
+           mime_msstyles_get_image(&g_theme.Theme, g_theme.Class[CLASS_WINDOW], part, state, dpi,
+                                   r ? r->right - r->left : 0, r ? r->bottom - r->top : 0, 0, img);
+}
+
+/* a part of the Window class as DrawThemeBackground draws it: the background, then the glyph image over it. */
+static BOOLEAN draw_window_part(SURFACE *s, const REGION *clip, int part, int state, UINT dpi, const RECT *r)
+{
+    MimeMsstylesImage img;
+    if (!window_part_image(part, state, dpi, r, &img))
+        return FALSE;
+    draw_image(s, clip, &img, r, FALSE);
+    if (img.glyph_type != MIME_GT_IMAGEGLYPH)
+        return TRUE;
+    RECT content = {r->left + img.content_margins.left, r->top + img.content_margins.top,
+                    r->right - img.content_margins.right, r->bottom - img.content_margins.bottom};
+    if (mime_msstyles_get_image(&g_theme.Theme, g_theme.Class[CLASS_WINDOW], part, state, dpi, r->right - r->left,
+                                r->bottom - r->top, MIME_MSSTYLES_GLYPH, &img))
+        draw_image(s, clip, &img, &content, TRUE);
+    return TRUE;
+}
+
+/*
+ * the frame uxtheme draws around a child window with a caption, CThemeWnd::NcPaint and NcPaintCaption of uxtheme
+ * 26300: the frame parts, the caption over them, the caption buttons, the title and the icon. FALSE without the style.
+ */
+static BOOLEAN paint_child_caption(WND *w, SURFACE *s, const REGION *clip, POINT origin, const FRAME_METRICS *m,
+                                   UINT dpi, BOOLEAN active)
+{
+    BOOLEAN tool = (w->ExStyle & WS_EX_TOOLWINDOW) != 0;
+    BOOLEAN minimized = (w->Style & WS_MINIMIZE) != 0, maximized = (w->Style & WS_MAXIMIZE) != 0;
+    LONG width = w->WindowRect.right - w->WindowRect.left, height = w->WindowRect.bottom - w->WindowRect.top;
+    int caption_part = tool ? WP_SMALLCAPTION : minimized ? WP_MINCAPTION : maximized ? WP_MAXCAPTION : WP_CAPTION;
+    RECT caption = {origin.x, origin.y, origin.x + width, origin.y + (minimized ? height : m->Top)};
+    MimeMsstylesImage img;
+    if (!FrameHasCaption(w->Style, w->ExStyle) || !window_part_image(caption_part, 1, dpi, &caption, &img))
+        return FALSE;
+    int frame_state = active ? 1 : 2;
+    if (!minimized && !maximized) {
+        RECT parts[3] = {{0, m->Top, m->Border, height - m->Border},
+                         {width - m->Border, m->Top, width, height - m->Border},
+                         {0, height - m->Border, width, height}};
+        for (int i = 0; i < 3; i++) {
+            RectOffset(&parts[i], origin.x, origin.y);
+            draw_window_part(s, clip, (tool ? WP_SMALLFRAMELEFT : WP_FRAMELEFT) + i, frame_state, dpi, &parts[i]);
+        }
+    }
+    draw_window_part(s, clip, caption_part, frame_state, dpi, &caption);
+
+    /* the buttons: normal, hot, pushed and disabled, then the same four for an inactive window. */
+    static const int buttons[] = {CAPTION_CLOSE, CAPTION_MAX, CAPTION_MIN, CAPTION_HELP};
+    LONG text_right = width - m->Border;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
+        RECT br;
+        FrameGetButtonRect(w, buttons[i], &br);
+        if (RectEmpty(&br))
+            continue;
+        text_right = W32Min(text_right, br.left);
+        RectOffset(&br, origin.x, origin.y);
+        int part = buttons[i] == CAPTION_CLOSE ? (tool ? WP_SMALLCLOSEBUTTON : WP_CLOSEBUTTON)
+                   : buttons[i] == CAPTION_MAX ? (maximized ? WP_RESTOREBUTTON : WP_MAXBUTTON)
+                   : buttons[i] == CAPTION_MIN ? (minimized ? WP_RESTOREBUTTON : WP_MINBUTTON)
+                                               : WP_HELPBUTTON;
+        BOOLEAN disabled = (buttons[i] == CAPTION_MAX && !(w->Style & WS_MAXIMIZEBOX)) ||
+                           (buttons[i] == CAPTION_MIN && !(w->Style & WS_MINIMIZEBOX)) ||
+                           (buttons[i] == CAPTION_CLOSE && (w->Flags & WNDF_NOCLOSE)) || (w->Style & WS_DISABLED);
+        BOOLEAN hot = !disabled && w->CaptionHot == buttons[i] && (!w->CaptionTracking || w->CaptionTracking == buttons[i]);
+        int state = disabled ? 4 : hot && w->CaptionPressed == buttons[i] ? 3 : hot ? 2 : 1;
+        draw_window_part(s, clip, part, state + 4 * (frame_state - 1), dpi, &br);
+    }
+
+    /* the title between the icon or the frame and the buttons, inside the caption margins of the part. */
+    RECT icon;
+    BOOLEAN has_icon = child_icon_rect(w, m, &icon);
+    MimeMsstylesMargins margins = {};
+    mime_msstyles_get_margins(&g_theme.Theme, g_theme.Class[CLASS_WINDOW], caption_part, 0, MIME_TMT_CAPTIONMARGINS,
+                              &margins);
+    FONT_INSTANCE *fi = caption_font(dpi);
+    if (fi && w->Text && w->TextLength) {
+        LONG left = origin.x + (has_icon ? icon.right : m->Border) + margins.left;
+        LONG right = origin.x + text_right - margins.right;
+        LONG text_h = fi->Metrics.tmAscent + fi->Metrics.tmDescent;
+        LONG top = origin.y + m->Border + (m->Top - m->Border - text_h) / 2;
+        /* GetCaptionColor of uxtheme: the inactive title is 40% of its color over the white of the caption. */
+        COLORREF color = MetricsSysColor(active ? COLOR_CAPTIONTEXT : COLOR_INACTIVECAPTIONTEXT);
+        if (!active)
+            color = RGB((GetRValue(color) * 2 + 0xFF * 3 + 2) / 5, (GetGValue(color) * 2 + 0xFF * 3 + 2) / 5,
+                        (GetBValue(color) * 2 + 0xFF * 3 + 2) / 5);
+        WCHAR title[260];
+        ULONG n = fit_title(fi, w->Text, w->TextLength, right - left, title, RTL_NUMBER_OF(title));
+        REGION inside;
+        RgnInit(&inside);
+        RECT box = {left, origin.y + m->Border, right, origin.y + m->Top};
+        RgnCombineRect(&inside, clip, &box, RGN_AND);
+        FrameDrawText(s, &inside, fi, left, top + fi->Metrics.tmAscent, title, n, right, ColorToPixel(color));
+        RgnFree(&inside);
+    }
+    if (has_icon) {
+        HDC hdc = PaintGetDC(w, nullptr, DCX_WINDOW);
+        DC *dc = DcLookup(hdc);
+        if (dc) {
+            RgnCopy(&dc->VisRgn, clip);
+            CursorDrawIcon(dc, icon.left, icon.top, child_icon(w), icon.right - icon.left, icon.bottom - icon.top,
+                           DI_NORMAL);
+            PaintReleaseDC(dc);
+        }
+    }
+    return TRUE;
+}
+
+/* the sunken edge of WS_EX_CLIENTEDGE and the line of WS_EX_STATICEDGE, inside the frame. */
+static void paint_client_edge(WND *w, SURFACE *s, const REGION *clip, RECT r)
 {
     if (w->ExStyle & WS_EX_CLIENTEDGE) {
         ULONG shadow = ColorToPixel(MetricsSysColor(COLOR_3DSHADOW));
@@ -895,15 +1222,74 @@ static void paint_classic_edges(WND *w, SURFACE *s, const REGION *clip, RECT r)
             DrawFillRect(s, clip, &right, br);
             r.left++, r.top++, r.right--, r.bottom--;
         }
-    } else if ((w->Style & WS_BORDER) || (w->ExStyle & WS_EX_STATICEDGE)) {
-        ULONG c = ColorToPixel(MetricsSysColor((w->ExStyle & WS_EX_STATICEDGE) ? COLOR_3DSHADOW : COLOR_WINDOWFRAME));
-        RECT edges[4] = {{r.left, r.top, r.right, r.top + 1},
-                         {r.left, r.bottom - 1, r.right, r.bottom},
-                         {r.left, r.top, r.left + 1, r.bottom},
-                         {r.right - 1, r.top, r.right, r.bottom}};
-        for (int i = 0; i < 4; i++)
-            DrawFillRect(s, clip, &edges[i], c);
     }
+    if (w->ExStyle & WS_EX_STATICEDGE)
+        draw_ring(s, clip, r, 1, ColorToPixel(MetricsSysColor(COLOR_3DSHADOW)));
+}
+
+/*
+ * the frame win32k draws around a child window that uxtheme does not theme, measured on windows 11 26100: the raised
+ * edge of a window edge, then the active or inactive border of a thick frame or the face of a dialog frame. a border
+ * alone is a line of the window frame color.
+ */
+static void paint_classic_frame(WND *w, SURFACE *s, const REGION *clip, RECT r, LONG width, BOOLEAN active)
+{
+    if (width <= 0)
+        return;
+    BOOLEAN thick = (w->Style & WS_THICKFRAME) != 0;
+    if ((thick || (w->Style & WS_DLGFRAME) || (w->ExStyle & WS_EX_DLGMODALFRAME)) && width >= 2) {
+        ULONG light = ColorToPixel(MetricsSysColor(COLOR_3DLIGHT)), hilight = ColorToPixel(MetricsSysColor(COLOR_3DHILIGHT));
+        ULONG dark = ColorToPixel(MetricsSysColor(COLOR_3DDKSHADOW)), shadow = ColorToPixel(MetricsSysColor(COLOR_3DSHADOW));
+        for (int i = 0; i < 2; i++) {
+            ULONG tl = i == 0 ? light : hilight, br = i == 0 ? dark : shadow;
+            RECT top = {r.left, r.top, r.right - 1, r.top + 1}, left = {r.left, r.top, r.left + 1, r.bottom - 1};
+            RECT bottom = {r.left, r.bottom - 1, r.right, r.bottom}, right = {r.right - 1, r.top, r.right, r.bottom};
+            DrawFillRect(s, clip, &top, tl);
+            DrawFillRect(s, clip, &left, tl);
+            DrawFillRect(s, clip, &bottom, br);
+            DrawFillRect(s, clip, &right, br);
+            r.left++, r.top++, r.right--, r.bottom--;
+        }
+        width -= 2;
+        int fill = thick ? (active ? COLOR_ACTIVEBORDER : COLOR_INACTIVEBORDER) : COLOR_3DFACE;
+        draw_ring(s, clip, r, width, ColorToPixel(MetricsSysColor(fill)));
+        return;
+    }
+    if (w->Style & WS_BORDER)
+        draw_ring(s, clip, r, 1, ColorToPixel(MetricsSysColor(COLOR_WINDOWFRAME)));
+}
+
+/* the caption of a child window when there is no style or the contrast is high: the classic caption colors. */
+static void paint_classic_caption(WND *w, SURFACE *s, const REGION *clip, POINT origin, const FRAME_METRICS *m, UINT dpi,
+                                  BOOLEAN active)
+{
+    if (!FrameHasCaption(w->Style, w->ExStyle))
+        return;
+    LONG width = w->WindowRect.right - w->WindowRect.left;
+    RECT bar = {origin.x + m->Border, origin.y + m->Border, origin.x + width - m->Border, origin.y + m->Top - 1};
+    DrawFillRect(s, clip, &bar, ColorToPixel(MetricsSysColor(active ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION)));
+    RECT line = {bar.left, bar.bottom, bar.right, bar.bottom + 1};
+    DrawFillRect(s, clip, &line, ColorToPixel(MetricsSysColor(COLOR_3DFACE)));
+    FRAME_COLORS colors;
+    frame_colors(w, &colors);
+    static const int buttons[] = {CAPTION_CLOSE, CAPTION_MAX, CAPTION_MIN, CAPTION_HELP};
+    LONG right = bar.right;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
+        RECT br;
+        FrameGetButtonRect(w, buttons[i], &br);
+        if (!RectEmpty(&br))
+            right = W32Min(right, origin.x + br.left);
+        draw_button(w, s, clip, origin, buttons[i], dpi, active, &colors);
+    }
+    FONT_INSTANCE *fi = caption_font(dpi);
+    if (!fi || !w->Text || !w->TextLength)
+        return;
+    LONG left = bar.left + MetricsGet(SM_CXEDGE, dpi);
+    WCHAR title[260];
+    ULONG n = fit_title(fi, w->Text, w->TextLength, right - left, title, RTL_NUMBER_OF(title));
+    LONG top = bar.top + (bar.bottom - bar.top - (fi->Metrics.tmAscent + fi->Metrics.tmDescent)) / 2;
+    FrameDrawText(s, clip, fi, left, top + fi->Metrics.tmAscent, title, n, right,
+                  ColorToPixel(MetricsSysColor(active ? COLOR_CAPTIONTEXT : COLOR_INACTIVECAPTIONTEXT)));
 }
 
 void FramePaint(WND *w)
@@ -929,10 +1315,20 @@ void FramePaint(WND *w)
     RECT window = {origin.x, origin.y, origin.x + (w->WindowRect.right - w->WindowRect.left),
                    origin.y + (w->WindowRect.bottom - w->WindowRect.top)};
     if (!is_top_frame(w->Style)) {
-        paint_classic_edges(w, s, &clip, window);
+        FRAME_METRICS m;
+        FrameGetMetrics(w->Style, w->ExStyle, dpi, &m);
+        BOOLEAN active = (w->Flags & WNDF_ACTIVE_FRAME) != 0;
+        if (!paint_child_caption(w, s, &clip, origin, &m, dpi, active)) {
+            paint_classic_frame(w, s, &clip, window, m.Border, active);
+            paint_classic_caption(w, s, &clip, origin, &m, dpi, active);
+        }
+        RECT inner = {window.left + m.Border, window.top + m.Top, window.right - m.Border, window.bottom - m.Border};
+        paint_client_edge(w, s, &clip, inner);
         ScrollPaint(w, s, &clip);
         SurfaceMarkDrawn(s, &window, &clip);
         RgnFree(&clip);
+        if (top->Thread == W32GetThread() && (top->Flags & WNDF_PRESENTED))
+            PaintPresent(top);
         return;
     }
 

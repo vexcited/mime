@@ -1481,6 +1481,16 @@ HCURSOR CursorSystem(ULONG idc)
     return g_system[0] ? (HCURSOR)g_system[0]->Header.Handle : nullptr;
 }
 
+/* an icon of the system by its IDI_ number, the one LoadIcon gives with no module. */
+HICON CursorSystemIcon(ULONG idi)
+{
+    system_objects();
+    for (ULONG i = 0; i < SYSTEM_ICONS; i++)
+        if (g_system_icon[i] == idi && g_system[SYSTEM_CURSORS + i])
+            return (HICON)g_system[SYSTEM_CURSORS + i]->Header.Handle;
+    return nullptr;
+}
+
 /* ------------------------------------------------------------------ reading them */
 
 /* the bitmaps GetIconInfo hands out, owned by the caller: see _InternalGetIconInfo. */
