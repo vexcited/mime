@@ -232,6 +232,71 @@ static LRESULT CALLBACK taskbar_proc(HWND window, UINT message, WPARAM wparam, L
     return DefWindowProcW(window, message, wparam, lparam);
 }
 
+__declspec(dllimport) BOOL WINAPI SetShellWindow(HWND window);
+
+static void cover_virtual_screen(HWND window)
+{
+    SetWindowPos(window, nullptr, GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+                 GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+/* the desktop draws itself: the shell window and its view paint nothing. */
+static LRESULT CALLBACK desktop_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    switch (message) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(window, &ps);
+        EndPaint(window, &ps);
+        return 0;
+    }
+    case WM_DISPLAYCHANGE:
+        if (!GetParent(window)) {
+            cover_virtual_screen(window);
+            RECT r;
+            GetClientRect(window, &r);
+            HWND view = FindWindowExW(window, nullptr, L"SHELLDLL_DefView", nullptr);
+            if (view)
+                SetWindowPos(view, nullptr, 0, 0, r.right, r.bottom, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        return 0;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+/*
+ * the shell window of the desktop, which GetShellWindow answers and programs take the token of the user from: Progman,
+ * "Program Manager", over the whole virtual screen at the bottom of the windows, with the view of the desktop in it, in
+ * the styles of windows 11. measured on windows.
+ */
+static void make_desktop(HINSTANCE instance)
+{
+    WNDCLASSEXW progman = {.cbSize = sizeof(progman), .lpfnWndProc = desktop_proc, .hInstance = instance,
+                           .lpszClassName = L"Progman"};
+    WNDCLASSEXW view = {.cbSize = sizeof(view), .lpfnWndProc = desktop_proc, .hInstance = instance,
+                        .lpszClassName = L"SHELLDLL_DefView"};
+    if (!RegisterClassExW(&progman) || !RegisterClassExW(&view))
+        return;
+    HWND shell = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP, progman.lpszClassName, L"Program Manager",
+                                 WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0, nullptr, nullptr, instance,
+                                 nullptr);
+    if (!shell)
+        return;
+    cover_virtual_screen(shell);
+    if (!SetShellWindow(shell)) {
+        DestroyWindow(shell);
+        return;
+    }
+    RECT r;
+    GetClientRect(shell, &r);
+    CreateWindowExW(WS_EX_LAYERED, view.lpszClassName, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS |
+                    WS_TABSTOP, 0, 0, r.right, r.bottom, shell, nullptr, instance, nullptr);
+    ShowWindow(shell, SW_SHOWNA);
+}
+
 /* the explorer.exe that starts with the session is its shell and owns the taskbar, which the machine does not show. */
 void ShellRun(void)
 {
@@ -242,6 +307,7 @@ void ShellRun(void)
     SetProcessShutdownParameters(2, 0);
     if (!RegisterClassExW(&class))
         ExitProcess(1);
+    make_desktop(instance);
     HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, class.lpszClassName, nullptr,
                                   WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0, nullptr, nullptr, instance,
                                   nullptr);

@@ -614,6 +614,7 @@ EXPORTS
     SetScrollInfo
     SetScrollPos
     SetScrollRange
+    SetShellWindow
     SetSysColors
     SetThreadDesktop
     SetThreadDpiAwarenessContext
