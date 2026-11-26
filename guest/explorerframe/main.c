@@ -1,6 +1,6 @@
 /*
- * explorerframe.dll: CLSID_TaskbarList, a window's taskbar button state, and the class factory of the list of the
- * shell's windows.
+ * explorerframe.dll: CLSID_TaskbarList, a window's taskbar button state, the class factory of the list of the
+ * shell's windows, and the namespace tree control.
  */
 #include "explorerframe_private.h"
 
@@ -50,6 +50,8 @@ DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, vo
         factory = TaskbarListFactory();
     else if (IsEqualCLSID(clsid, &shell_windows_factory))
         factory = ShellWindowsFactory();
+    else if (IsEqualCLSID(clsid, &CLSID_NamespaceTreeControl))
+        factory = NamespaceTreeControlFactory();
     else
         return CLASS_E_CLASSNOTAVAILABLE;
     return factory->lpVtbl->QueryInterface(factory, riid, object);

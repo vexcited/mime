@@ -126,6 +126,13 @@
 @=expand:"%SystemRoot%\\system32\\explorerframe.dll"
 "ThreadingModel"="Apartment"
 
+; the namespace tree control, which shell32's folder browser creates.
+[HKCR\CLSID\{AE054212-3535-4430-83ED-D501AA6680E6}]
+@="Shell Name Space ListView"
+[HKCR\CLSID\{AE054212-3535-4430-83ED-D501AA6680E6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\explorerframe.dll"
+"ThreadingModel"="Apartment"
+
 ; ieframe.dll
 ; Internet Shortcut, the object ShellExecute makes for a web address.
 [HKCR\CLSID\{FBF23B40-E3F0-101B-8488-00AA003E56F8}]

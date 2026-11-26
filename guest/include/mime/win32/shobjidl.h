@@ -759,6 +759,140 @@ struct IFileDialogControlEvents {
     const IFileDialogControlEventsVtbl *lpVtbl;
 };
 
+/* ------------------------------------------------------------------ the namespace tree control of ExplorerFrame */
+
+MIME_DEFINE_GUID(CLSID_NamespaceTreeControl, 0xAE054212, 0x3535, 0x4430, 0x83, 0xED, 0xD5, 0x01, 0xAA, 0x66, 0x80,
+                 0xE6);
+MIME_DEFINE_GUID(IID_INameSpaceTreeControl, 0x028212A3, 0xB627, 0x47E9, 0x88, 0x56, 0xC1, 0x42, 0x65, 0x55, 0x4E, 0x4F);
+MIME_DEFINE_GUID(IID_INameSpaceTreeControl2, 0x7CC7AED8, 0x290E, 0x49BC, 0x89, 0x45, 0xC1, 0x40, 0x1C, 0xC9, 0x30,
+                 0x6C);
+MIME_DEFINE_GUID(IID_INameSpaceTreeControlEvents, 0x93D77985, 0xB3D8, 0x4484, 0x83, 0x18, 0x67, 0x2C, 0xDD, 0xA0, 0x02,
+                 0xCE);
+MIME_DEFINE_GUID(BHID_SFObject, 0x3981E224, 0xF559, 0x11D3, 0x8E, 0x3A, 0x00, 0xC0, 0x4F, 0x68, 0x37, 0xD5);
+
+typedef DWORD NSTCSTYLE;
+#define NSTCS_HASEXPANDOS 0x00000001
+#define NSTCS_HASLINES 0x00000002
+#define NSTCS_SINGLECLICKEXPAND 0x00000004
+#define NSTCS_FULLROWSELECT 0x00000008
+#define NSTCS_SPRINGEXPAND 0x00000010
+#define NSTCS_HORIZONTALSCROLL 0x00000020
+#define NSTCS_ROOTHASEXPANDO 0x00000040
+#define NSTCS_SHOWSELECTIONALWAYS 0x00000080
+#define NSTCS_NOINFOTIP 0x00000200
+#define NSTCS_EVENHEIGHT 0x00000400
+#define NSTCS_NOREPLACEOPEN 0x00000800
+#define NSTCS_DISABLEDRAGDROP 0x00001000
+#define NSTCS_NOORDERSTREAM 0x00002000
+#define NSTCS_RICHTOOLTIP 0x00004000
+#define NSTCS_BORDER 0x00008000
+#define NSTCS_NOEDITLABELS 0x00010000
+#define NSTCS_TABSTOP 0x00020000
+#define NSTCS_FAVORITESMODE 0x00080000
+#define NSTCS_AUTOHSCROLL 0x00100000
+#define NSTCS_FADEINOUTEXPANDOS 0x00200000
+#define NSTCS_EMPTYTEXT 0x00400000
+#define NSTCS_CHECKBOXES 0x00800000
+#define NSTCS_PARTIALCHECKBOXES 0x01000000
+#define NSTCS_EXCLUSIONCHECKBOXES 0x02000000
+#define NSTCS_DIMMEDCHECKBOXES 0x04000000
+#define NSTCS_NOINDENTCHECKS 0x08000000
+#define NSTCS_ALLOWJUNCTIONS 0x10000000
+
+typedef DWORD NSTCSTYLE2;
+
+typedef DWORD NSTCROOTSTYLE;
+#define NSTCRS_VISIBLE 0x0000
+#define NSTCRS_HIDDEN 0x0001
+#define NSTCRS_EXPANDED 0x0002
+
+typedef DWORD NSTCITEMSTATE;
+#define NSTCIS_NONE 0x0000
+#define NSTCIS_SELECTED 0x0001
+#define NSTCIS_EXPANDED 0x0002
+#define NSTCIS_BOLD 0x0004
+#define NSTCIS_DISABLED 0x0008
+#define NSTCIS_SELECTEDNOEXPAND 0x0010
+
+typedef enum NSTCGNI {
+    NSTCGNI_NEXT = 0,
+    NSTCGNI_NEXTVISIBLE = 1,
+    NSTCGNI_PREV = 2,
+    NSTCGNI_PREVVISIBLE = 3,
+    NSTCGNI_PARENT = 4,
+    NSTCGNI_CHILD = 5,
+    NSTCGNI_FIRSTVISIBLE = 6,
+    NSTCGNI_LASTVISIBLE = 7,
+} NSTCGNI;
+
+typedef DWORD NSTCEHITTEST;
+typedef DWORD NSTCECLICKTYPE;
+#define NSTCECT_LBUTTON 0x0001
+#define NSTCECT_MBUTTON 0x0002
+#define NSTCECT_RBUTTON 0x0003
+#define NSTCECT_DBLCLICK 0x0004
+
+typedef struct INameSpaceTreeControl INameSpaceTreeControl;
+#define INameSpaceTreeControl_METHODS(T)                                                                               \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Initialize)(T * This, HWND parent, RECT * rect, NSTCSTYLE flags);                       \
+    HRESULT(STDMETHODCALLTYPE *TreeAdvise)(T * This, IUnknown * sink, DWORD * cookie);                                 \
+    HRESULT(STDMETHODCALLTYPE *TreeUnadvise)(T * This, DWORD cookie);                                                  \
+    HRESULT(STDMETHODCALLTYPE *AppendRoot)(T * This, IShellItem * root, SHCONTF flags, NSTCROOTSTYLE style,            \
+                                           IShellItemFilter * filter);                                                 \
+    HRESULT(STDMETHODCALLTYPE *InsertRoot)(T * This, int index, IShellItem * root, SHCONTF flags, NSTCROOTSTYLE style,  \
+                                           IShellItemFilter * filter);                                                 \
+    HRESULT(STDMETHODCALLTYPE *RemoveRoot)(T * This, IShellItem * root);                                               \
+    HRESULT(STDMETHODCALLTYPE *RemoveAllRoots)(T * This);                                                              \
+    HRESULT(STDMETHODCALLTYPE *GetRootItems)(T * This, IShellItemArray * *roots);                                      \
+    HRESULT(STDMETHODCALLTYPE *SetItemState)(T * This, IShellItem * item, NSTCITEMSTATE mask, NSTCITEMSTATE flags);    \
+    HRESULT(STDMETHODCALLTYPE *GetItemState)(T * This, IShellItem * item, NSTCITEMSTATE mask, NSTCITEMSTATE * flags);  \
+    HRESULT(STDMETHODCALLTYPE *GetSelectedItems)(T * This, IShellItemArray * *items);                                  \
+    HRESULT(STDMETHODCALLTYPE *GetItemCustomState)(T * This, IShellItem * item, int *state);                           \
+    HRESULT(STDMETHODCALLTYPE *SetItemCustomState)(T * This, IShellItem * item, int state);                            \
+    HRESULT(STDMETHODCALLTYPE *EnsureItemVisible)(T * This, IShellItem * item);                                        \
+    HRESULT(STDMETHODCALLTYPE *SetTheme)(T * This, LPCWSTR theme);                                                     \
+    HRESULT(STDMETHODCALLTYPE *GetNextItem)(T * This, IShellItem * item, NSTCGNI which, IShellItem * *next);           \
+    HRESULT(STDMETHODCALLTYPE *HitTest)(T * This, POINT * point, IShellItem * *item);                                  \
+    HRESULT(STDMETHODCALLTYPE *GetItemRect)(T * This, IShellItem * item, RECT * rect);                                 \
+    HRESULT(STDMETHODCALLTYPE *CollapseAll)(T * This);
+MIME_COM_INTERFACE(INameSpaceTreeControl)
+
+typedef struct INameSpaceTreeControl2 INameSpaceTreeControl2;
+#define INameSpaceTreeControl2_METHODS(T)                                                                              \
+    INameSpaceTreeControl_METHODS(T)                                                                                   \
+    HRESULT(STDMETHODCALLTYPE *SetControlStyle)(T * This, NSTCSTYLE mask, NSTCSTYLE style);                            \
+    HRESULT(STDMETHODCALLTYPE *GetControlStyle)(T * This, NSTCSTYLE mask, NSTCSTYLE * style);                          \
+    HRESULT(STDMETHODCALLTYPE *SetControlStyle2)(T * This, NSTCSTYLE2 mask, NSTCSTYLE2 style);                         \
+    HRESULT(STDMETHODCALLTYPE *GetControlStyle2)(T * This, NSTCSTYLE2 mask, NSTCSTYLE2 * style);
+MIME_COM_INTERFACE(INameSpaceTreeControl2)
+
+typedef struct INameSpaceTreeControlEvents INameSpaceTreeControlEvents;
+#define INameSpaceTreeControlEvents_METHODS(T)                                                                         \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *OnItemClick)(T * This, IShellItem * item, NSTCEHITTEST hit, NSTCECLICKTYPE click);      \
+    HRESULT(STDMETHODCALLTYPE *OnPropertyItemCommit)(T * This, IShellItem * item);                                     \
+    HRESULT(STDMETHODCALLTYPE *OnItemStateChanging)(T * This, IShellItem * item, NSTCITEMSTATE mask,                   \
+                                                    NSTCITEMSTATE state);                                              \
+    HRESULT(STDMETHODCALLTYPE *OnItemStateChanged)(T * This, IShellItem * item, NSTCITEMSTATE mask,                    \
+                                                   NSTCITEMSTATE state);                                               \
+    HRESULT(STDMETHODCALLTYPE *OnSelectionChanged)(T * This, IShellItemArray * selection);                             \
+    HRESULT(STDMETHODCALLTYPE *OnKeyboardInput)(T * This, UINT message, WPARAM wparam, LPARAM lparam);                 \
+    HRESULT(STDMETHODCALLTYPE *OnBeforeExpand)(T * This, IShellItem * item);                                           \
+    HRESULT(STDMETHODCALLTYPE *OnAfterExpand)(T * This, IShellItem * item);                                            \
+    HRESULT(STDMETHODCALLTYPE *OnBeginLabelEdit)(T * This, IShellItem * item);                                         \
+    HRESULT(STDMETHODCALLTYPE *OnEndLabelEdit)(T * This, IShellItem * item);                                           \
+    HRESULT(STDMETHODCALLTYPE *OnGetToolTip)(T * This, IShellItem * item, LPWSTR tip, int chars);                      \
+    HRESULT(STDMETHODCALLTYPE *OnBeforeItemDelete)(T * This, IShellItem * item);                                       \
+    HRESULT(STDMETHODCALLTYPE *OnItemAdded)(T * This, IShellItem * item, BOOL root);                                   \
+    HRESULT(STDMETHODCALLTYPE *OnItemDeleted)(T * This, IShellItem * item, BOOL root);                                 \
+    HRESULT(STDMETHODCALLTYPE *OnBeforeContextMenu)(T * This, IShellItem * item, REFIID riid, void **object);          \
+    HRESULT(STDMETHODCALLTYPE *OnAfterContextMenu)(T * This, IShellItem * item, IUnknown * menu, REFIID riid,          \
+                                                   void **object);                                                     \
+    HRESULT(STDMETHODCALLTYPE *OnBeforeStateImageChange)(T * This, IShellItem * item);                                 \
+    HRESULT(STDMETHODCALLTYPE *OnGetDefaultIconIndex)(T * This, IShellItem * item, int *icon, int *open_icon);
+MIME_COM_INTERFACE(INameSpaceTreeControlEvents)
+
 /* ------------------------------------------------------------------ shell32 functions */
 
 SHSTDAPI HRESULT WINAPI SHCreateShellItemArray(PCIDLIST_ABSOLUTE parent, void *folder, UINT count,
