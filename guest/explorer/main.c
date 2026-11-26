@@ -7,6 +7,7 @@
 #include <mime/abi.h>
 #include <mime/ntuser.h>
 #include <mime/win32/winbase.h>
+#include <mime/win32/winuser.h>
 #include <mime/win32/shellapi.h>
 #include <mime/win32/winver.h>
 #include <rtl.h>
@@ -240,11 +241,19 @@ static void open_web_address(const WCHAR *address)
     NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)&url, sizeof(url));
 }
 
+void ShellRun(void);
+
 void entry(void)
 {
     WCHAR object[PATH_CHARS], full[PATH_CHARS];
     static WCHAR address[URL_CHARS];
     BOOL select;
+    /* with nothing to show and no shell in the session, this one is the shell, as on Windows. */
+    const WCHAR *arguments = skip_program(GetCommandLineW());
+    while (*arguments == L' ' || *arguments == L'\t')
+        arguments++;
+    if (!*arguments && !FindWindowW(L"Shell_TrayWnd", nullptr))
+        ShellRun();
     if (web_address(skip_program(GetCommandLineW()), address)) {
         open_web_address(address);
         ExitProcess(1);

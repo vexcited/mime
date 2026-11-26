@@ -4,6 +4,7 @@
 #define KEY_SESSION_MANAGER L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager"
 #define KEY_VERSION L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion"
 #define KEY_VERSION_32 L"\\REGISTRY\\MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion"
+#define KEY_WINLOGON L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
 #define KEY_USER_RUN_ONCE_FORMAT L"\\REGISTRY\\USER\\S-1-5-21-%u-%u-%u-1001\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
 
 static NTSTATUS open_for_move(PCWSTR name, ULONG options, PHANDLE handle)
@@ -142,4 +143,35 @@ void ExStartupRunOnce(void)
         which |= 2;
     if (which)
         PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, run_once_thread, (PVOID)which);
+}
+
+/*
+ * the shell of the user, which userinit starts at a logon from the Shell value of winlogon. it is not a program the
+ * user ran: the machine restarts under it.
+ */
+void ExStartupShell(void)
+{
+    WCHAR line[260] = L"explorer.exe", value[260] = {}, path[280];
+    ULONG type = 0, length = sizeof(value) - sizeof(WCHAR);
+    if (NT_SUCCESS(CmQueryValue(KEY_WINLOGON, L"Shell", &type, value, &length)) && type == REG_SZ && value[0])
+        wcscpy(line, value);
+    PCWSTR start = line[0] == L'"' ? line + 1 : line;
+    SIZE_T chars = 0;
+    while (start[chars] && start[chars] != (start == line ? L' ' : L'"'))
+        chars++;
+    if (!chars)
+        return;
+    _snwprintf(path, RTL_NUMBER_OF(path) - 1, chars > 1 && start[1] == L':' ? L"%.*ls" : L"C:\\Windows\\%.*ls", (int)chars,
+               start);
+    path[RTL_NUMBER_OF(path) - 1] = 0;
+    UNICODE_STRING image, command, directory = RTL_CONSTANT_STRING(L"C:\\Windows\\System32");
+    RtlInitUnicodeString(&image, path);
+    RtlInitUnicodeString(&command, line);
+    PEPROCESS process;
+    NTSTATUS status = PsCreateUserProcess(&image, &command, &directory, 0, nullptr, FALSE, &process);
+    if (!NT_SUCCESS(status)) {
+        KiLogPrintf("startup: cannot start the shell %ls: %08x", line, status);
+        return;
+    }
+    ObDereferenceObject(process);
 }

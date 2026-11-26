@@ -1164,15 +1164,17 @@ endforeach()
 
 # ===================================== explorer =====================================
 
-# explorer.exe, which shows a folder in the file manager of the host and a web address in its browser. it is at
+# explorer.exe, the shell of the session, which also shows a folder in the file manager of the host and a web address
+# in its browser. it is at
 # C:\Windows\explorer.exe and, for the 32 bit one, C:\Windows\SysWOW64\explorer.exe.
 foreach(arch ${MIME_GUEST_ARCH} x86)
     set(explorer_rom ${MIME_ROM_${arch}})
     if(arch STREQUAL MIME_GUEST_ARCH)
         set(explorer_rom ${MIME_ROM_WINDOWS})
     endif()
-    mime_objects(${arch}-explorer ${arch} SOURCES guest/explorer/main.c)
+    mime_objects(${arch}-explorer ${arch} SOURCES guest/explorer/main.c guest/explorer/shell.c)
     set(explorer_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/win32u.lib
+        ${MIME_LIB_${arch}}/user32.lib
         ${MIME_LIB_${arch}}/shell32.lib ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/version.lib)
     set(explorer_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6C7000000 /highentropyva /dynamicbase
         /stack:0x100000,0x4000)

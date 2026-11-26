@@ -20,6 +20,10 @@
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion]
 "BuildLabEx"="26100.1.x86fre.ge_release.240331-1435"
 
+; the shell that starts with the session, which userinit reads on windows.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon]
+"Shell"="explorer.exe"
+
 ; what user32 reads of the window manager: the library it loads to turn the png image of an icon into a bitmap. the
 ; other values are those of windows 11, where both views of the key hold them. a program that finds the key looks
 ; for LoadAppInit_DLLs in it, which windows always has, zero.

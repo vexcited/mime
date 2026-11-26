@@ -330,6 +330,7 @@ void MiSessionInitialize(void)
     /* the host gets its answer first; the services start alongside the first requests. */
     PsStartServiceController();
     ExStartupRunOnce();
+    ExStartupShell();
 
     for (;;) {
         for (;;) {
