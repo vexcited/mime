@@ -1449,6 +1449,7 @@ void FontAskFor(PCWSTR face);
 HICON CursorProcessIcon(W32PROCESS *p);
 void HostPart(WND *w, RECT *part);
 ULONG HostBorderColor(WND *w);
+ULONG HostCornerRadius(WND *w);
 
 /* tray.c: the notification area. */
 void TrayHostEvent(const MimeInputEvent *ev);

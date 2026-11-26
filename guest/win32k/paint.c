@@ -74,6 +74,16 @@ static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
     return (uint32_t)m->CornerRadius;
 }
 
+/* the round of the corners of a top level window as the screen shows it, physical pixels, 0 for none. */
+ULONG HostCornerRadius(WND *w)
+{
+    FRAME_METRICS m;
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
+    if (w->Flags & WNDF_FULLSCREEN)
+        return 0;
+    return (ULONG)WndToPhysical(w, (LONG)corner_radius(w, &m));
+}
+
 static void host_icon(WND *w)
 {
     /* a window with no icon of its own shows the one of its program's file, as the taskbar of windows does. */

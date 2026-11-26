@@ -65,7 +65,11 @@ void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m)
         m->Top = m->Border + m->Caption;
         /* the dwm makes the buttons of a tool window square, 21/22 of its caption. */
         m->ButtonWidth = (ex_style & WS_EX_TOOLWINDOW) ? (m->Caption * 21 + 11) / 22 : scale(46, dpi);
-        m->CornerRadius = 0; /* windows 10 frames are square. */
+        /*
+         * GetEffectiveCornerStyle and GetRadiusFromCornerStyle of udwm 26100: a window with a frame is round by 8 pixels
+         * at 96 dpi, a tool window with a caption by 4. windows draws them square without a gpu.
+         */
+        m->CornerRadius = scale((ex_style & WS_EX_TOOLWINDOW) && caption ? 4 : 8, dpi);
         return;
     }
     /* child windows keep the classic edges. */

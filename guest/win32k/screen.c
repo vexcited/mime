@@ -676,8 +676,24 @@ static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
         }
         plan->Window = w;
         planned++;
-        if (window_covers(w, &cover) && RectIntersect(&cover, &cover, area))
-            RgnCombineRect(covered, covered, &cover, RGN_OR);
+        if (window_covers(w, &cover) && RectIntersect(&cover, &cover, area)) {
+            /* the round corners show what is behind them, which is composed. */
+            LONG radius = (LONG)HostCornerRadius(w);
+            REGION own;
+            RgnInit(&own);
+            RgnSetRect(&own, &cover);
+            if (radius > 0) {
+                RECT frame;
+                shown_rect(w, &frame);
+                for (ULONG k = 0; k < 4; k++) {
+                    LONG left = (k & 1) ? frame.right - radius : frame.left, top = (k & 2) ? frame.bottom - radius : frame.top;
+                    RECT corner = {left, top, left + radius, top + radius};
+                    RgnCombineRect(&own, &own, &corner, RGN_DIFF);
+                }
+            }
+            RgnCombine(covered, covered, &own, RGN_OR);
+            RgnFree(&own);
+        }
     }
     return planned;
 }
@@ -849,6 +865,8 @@ void ScreenComposeFor(const SURFACE *s, const RECT *area)
 typedef struct RING {
     RECT Frame; /* surface pixels. */
     ULONG *Under;
+    LONG Radius;    /* of the round corners. */
+    ULONG *Corners; /* what is under each, a square of Radius from the top left, the top right, then the bottom. */
 } RING;
 
 static ULONG *ring_pixel(RING *ring, LONG x, LONG y)
@@ -868,15 +886,49 @@ static ULONG *ring_pixel(RING *ring, LONG x, LONG y)
  * windows 11 draws the line over what is behind the window and its shadow, not over the window: what is there before
  * the window is composed is kept for draw_border.
  */
+/* the corner box k of a ring: the top left, the top right, the bottom left, the bottom right. */
+static RECT corner_box(const RING *ring, ULONG k)
+{
+    const RECT *f = &ring->Frame;
+    LONG r = ring->Radius;
+    LONG left = (k & 1) ? f->right - r : f->left, top = (k & 2) ? f->bottom - r : f->top;
+    return (RECT){left, top, left + r, top + r};
+}
+
+/* the share of pixel x, y inside the circle of radius r, in eighths, around cx, cy, out of 16, by 4 by 4 samples. */
+static ULONG disk_cover(LONG x, LONG y, LONG cx, LONG cy, LONG r)
+{
+    ULONG n = 0;
+    for (LONG i = 0; i < 4; i++)
+        for (LONG j = 0; j < 4; j++) {
+            LONG64 dx = 8 * x + 2 * i + 1 - cx, dy = 8 * y + 2 * j + 1 - cy;
+            n += dx * dx + dy * dy <= (LONG64)r * r;
+        }
+    return n;
+}
+
 static void keep_ring(SURFACE *screen, WND *w, RING *ring)
 {
-    ring->Under = nullptr;
+    ring->Under = ring->Corners = nullptr;
+    ring->Radius = 0;
     if (!(HostBorderColor(w) >> 24) || (w->Flags & WNDF_FULLSCREEN))
         return;
     shown_rect(w, &ring->Frame);
     RectOffset(&ring->Frame, -g_screen_origin.x, -g_screen_origin.y);
     const RECT *f = &ring->Frame;
     LONG width = f->right - f->left, height = f->bottom - f->top;
+    ring->Radius = W32Min((LONG)HostCornerRadius(w), W32Min(width / 2, height / 2));
+    if (ring->Radius > 0 && (ring->Corners = W32Alloc((SIZE_T)ring->Radius * ring->Radius * 4 * sizeof(ULONG))))
+        for (ULONG k = 0; k < 4; k++) {
+            RECT b = corner_box(ring, k);
+            for (LONG y = b.top; y < b.bottom; y++)
+                for (LONG x = b.left; x < b.right; x++)
+                    if (x >= 0 && y >= 0 && x < screen->Width && y < screen->Height)
+                        ring->Corners[(k * ring->Radius + (y - b.top)) * ring->Radius + (x - b.left)] =
+                            ((const ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride))[x];
+        }
+    if (!ring->Corners)
+        ring->Radius = 0;
     if (width <= 0 || height <= 0 || !(ring->Under = W32Alloc((SIZE_T)(width + height) * 2 * sizeof(ULONG))))
         return;
     for (LONG y = f->top; y < f->bottom; y++)
@@ -897,10 +949,11 @@ static void draw_border(SURFACE *screen, const REGION *vis, WND *w, RING *ring)
     ULONG pixel = (a << 24) | ((((color >> 16) & 0xFF) * a / 255) << 16) | ((((color >> 8) & 0xFF) * a / 255) << 8) |
                   ((color & 0xFF) * a / 255);
     RECT r = ring->Frame;
-    RECT edges[4] = {{r.left, r.top, r.right, r.top + 1},
-                     {r.left, r.bottom - 1, r.right, r.bottom},
-                     {r.left, r.top + 1, r.left + 1, r.bottom - 1},
-                     {r.right - 1, r.top + 1, r.right, r.bottom - 1}};
+    LONG c = ring->Radius;
+    RECT edges[4] = {{r.left + c, r.top, r.right - c, r.top + 1},
+                     {r.left + c, r.bottom - 1, r.right - c, r.bottom},
+                     {r.left, r.top + W32Max(c, 1), r.left + 1, r.bottom - W32Max(c, 1)},
+                     {r.right - 1, r.top + W32Max(c, 1), r.right, r.bottom - W32Max(c, 1)}};
     REGION clip;
     RgnInit(&clip);
     RgnCopy(&clip, vis);
@@ -915,6 +968,34 @@ static void draw_border(SURFACE *screen, const REGION *vis, WND *w, RING *ring)
                 ULONG *row = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
                 for (LONG x = part.Rects[i].left; x < part.Rects[i].right; x++)
                     row[x] = over(pixel, *ring_pixel(ring, x, y));
+            }
+        RgnFree(&part);
+    }
+    /*
+     * the round corners windows 11 draws with a gpu: what lies out of the round shows what is behind the window, and
+     * the border is the ring of a pixel along it.
+     */
+    for (ULONG k = 0; ring->Corners && k < 4; k++) {
+        RECT b = corner_box(ring, k);
+        LONG cx = 8 * ((k & 1) ? r.right - c : r.left + c), cy = 8 * ((k & 2) ? r.bottom - c : r.top + c);
+        REGION part;
+        RgnInit(&part);
+        RgnCopy(&part, &clip);
+        RgnCombineRect(&part, &part, &b, RGN_AND);
+        for (ULONG i = 0; i < part.Count; i++)
+            for (LONG y = part.Rects[i].top; y < part.Rects[i].bottom; y++) {
+                ULONG *row = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+                for (LONG x = part.Rects[i].left; x < part.Rects[i].right; x++) {
+                    ULONG outer = disk_cover(x, y, cx, cy, 8 * c), inner = disk_cover(x, y, cx, cy, 8 * (c - 1));
+                    ULONG under = ring->Corners[(k * c + (y - b.top)) * c + (x - b.left)];
+                    ULONG line = over(pixel, under), win = row[x], out = 0xFF000000u;
+                    for (ULONG shift = 0; shift < 24; shift += 8) {
+                        ULONG v = ((win >> shift & 0xFF) * inner + (line >> shift & 0xFF) * (outer - inner) +
+                                   (under >> shift & 0xFF) * (16 - outer) + 8) / 16;
+                        out |= (v > 255 ? 255 : v) << shift;
+                    }
+                    row[x] = out;
+                }
             }
         RgnFree(&part);
     }
@@ -1060,14 +1141,17 @@ static void draw_shadow(PUCHAR bits, LONG stride, POINT shift, const RECT *area,
             ys[y] = span_cover(shadow_source(r.top + y, frame.top, frame.bottom, SHADOW_BOX, scale), s->Inset + l->Down,
                                SHADOW_BOX - s->Inset + l->Down, l->Sigma);
     }
-    /* the line of the border lies over the shadow, out of what the window draws. */
+    /* the line of the border and the round corners lie over the shadow, out of what the window draws. */
     RECT inner = frame;
     if (HostBorderColor(w) >> 24)
         inner = (RECT){frame.left + 1, frame.top + 1, frame.right - 1, frame.bottom - 1};
+    LONG round = (LONG)HostCornerRadius(w);
     for (LONG y = r.top; y < r.bottom; y++) {
         ULONG *row = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (r.left - shift.x);
+        BOOLEAN corner_row = y < frame.top + round || y >= frame.bottom - round;
         for (LONG x = r.left; x < r.right; x++, row++) {
-            if (x >= inner.left && x < inner.right && y >= inner.top && y < inner.bottom)
+            if (x >= inner.left && x < inner.right && y >= inner.top && y < inner.bottom &&
+                !(corner_row && (x < frame.left + round || x >= frame.right - round)))
                 continue;
             ULONG keep = 65536;
             for (ULONG k = 0; k < 2; k++) {
@@ -1164,6 +1248,7 @@ void ScreenCompose(const RECT *area)
                        &place, TRUE);
         draw_border(screen, &plans[planned].Visible, plans[planned].Window, &ring);
         W32Free(ring.Under);
+        W32Free(ring.Corners);
         RgnFree(&plans[planned].Visible);
     }
     W32Free(plans);

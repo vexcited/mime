@@ -1342,6 +1342,52 @@ static void blit(const Blit *b, const MimeWlFrame *f, MimeRect part)
     }
 }
 
+/* an argb color with its alpha applied, as the buffers of the compositor have it. */
+static uint32_t premultiplied(uint32_t c)
+{
+    uint32_t a = c >> 24;
+    return a << 24 | ((c >> 16 & 0xFF) * a / 255) << 16 | ((c >> 8 & 0xFF) * a / 255) << 8 | (c & 0xFF) * a / 255;
+}
+
+/* the share of pixel x, y inside the circle of radius r around cx, cy, out of 16, from 4 by 4 samples. */
+static int disk_cover(int x, int y, double cx, double cy, double r)
+{
+    int n = 0;
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++) {
+            double dx = x + (i + 0.5) / 4 - cx, dy = y + (j + 0.5) / 4 - cy;
+            n += dx * dx + dy * dy <= r * r;
+        }
+    return n;
+}
+
+/*
+ * the corners of r rounded by radius: what lies out of the round is clear, and the border, premultiplied, is the ring
+ * of a pixel along it.
+ */
+static void round_corners(const MimeWlFrame *f, MimeRect r, MimeRect part, int radius, uint32_t border)
+{
+    for (int k = 0; k < 4; k++) {
+        bool right = k & 1, bottom = k & 2;
+        MimeRect box = {right ? r.right - radius : r.left, bottom ? r.bottom - radius : r.top,
+                        right ? r.right : r.left + radius, bottom ? r.bottom : r.top + radius};
+        double cx = right ? r.right - radius : r.left + radius, cy = bottom ? r.bottom - radius : r.top + radius;
+        box = rect_and(box, part);
+        for (int y = box.top; y < box.bottom; y++) {
+            uint32_t *row = (uint32_t *)(void *)(f->pixels + (size_t)y * f->stride);
+            for (int x = box.left; x < box.right; x++) {
+                int outer = disk_cover(x, y, cx, cy, radius), inner = border ? disk_cover(x, y, cx, cy, radius - 1) : outer;
+                uint32_t p = row[x], out = 0;
+                for (int shift = 0; shift < 32; shift += 8) {
+                    uint32_t c = ((p >> shift & 0xFF) * inner + (border >> shift & 0xFF) * (outer - inner) + 8) / 16;
+                    out |= (c > 255 ? 255 : c) << shift;
+                }
+                row[x] = out;
+            }
+        }
+    }
+}
+
 static void fill(const MimeWlFrame *f, MimeRect r, MimeRect part, uint32_t color)
 {
     r = rect_and(r, part);
@@ -1521,14 +1567,19 @@ static void draw(UiWindow *w)
                          (int32_t)round(fit.y + (holes[i].bottom - host.top) * fit.scale)};
         fill(&frame, hole, part, 0);
     }
-    if (w->config.border_color) {
-        uint32_t c = w->config.border_color;
-        MimeRect r = b.dst;
-        fill(&frame, (MimeRect){r.left, r.top, r.right, r.top + 1}, part, c);
-        fill(&frame, (MimeRect){r.left, r.bottom - 1, r.right, r.bottom}, part, c);
-        fill(&frame, (MimeRect){r.left, r.top, r.left + 1, r.bottom}, part, c);
-        fill(&frame, (MimeRect){r.right - 1, r.top, r.right, r.bottom}, part, c);
+    /* the corners of a window of windows 11 are round, its border follows them. */
+    int radius = w->fullscreen ? 0 : (int)lround(w->config.corner_radius * fit.scale);
+    MimeRect r = b.dst;
+    radius = MIME_MIN(radius, MIME_MIN((r.right - r.left) / 2, (r.bottom - r.top) / 2));
+    uint32_t border = premultiplied(w->config.border_color);
+    if (border) {
+        fill(&frame, (MimeRect){r.left + radius, r.top, r.right - radius, r.top + 1}, part, border);
+        fill(&frame, (MimeRect){r.left + radius, r.bottom - 1, r.right - radius, r.bottom}, part, border);
+        fill(&frame, (MimeRect){r.left, r.top + radius, r.left + 1, r.bottom - radius}, part, border);
+        fill(&frame, (MimeRect){r.right - 1, r.top + radius, r.right, r.bottom - radius}, part, border);
     }
+    if (radius > 0)
+        round_corners(&frame, r, part, radius, border);
     mime_wl_window_commit(w->window, &frame, all ? nullptr : &damage);
     if (w->vk)
         layers_drawn(w);
