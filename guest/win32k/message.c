@@ -2306,6 +2306,19 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_QUERYOPEN:
         return TRUE;
 
+    case WM_SHOWWINDOW:
+        /* xxxRealDefWindowProc: a popup or an owned window follows its owner, and only one hidden so comes back. */
+        if (!LOWORD(lparam) || (!(w->Style & WS_POPUP) && !w->Owner))
+            return 0;
+        if (wparam ? (w->Style & WS_VISIBLE) || !(w->Flags & WNDF_HIDDENPOPUP) : !(w->Style & WS_VISIBLE))
+            return 0;
+        if (wparam)
+            w->Flags &= ~WNDF_HIDDENPOPUP;
+        else
+            w->Flags |= WNDF_HIDDENPOPUP;
+        WndShow(w, wparam ? SW_SHOWNOACTIVATE : SW_HIDE);
+        return 0;
+
     case MX_WM_CLIENTSHUTDOWN:
         return ClientShutdown(w, (ULONG)wparam);
 

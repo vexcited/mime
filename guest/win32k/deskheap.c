@@ -115,6 +115,7 @@
 #define STATE_SENDNCPAINT 0x00000200u
 #define STATE_SENDERASEBKGND 0x00000800u
 #define STATE_INTERNALPAINT 0x00001000u
+#define STATE_HIDDENPOPUP 0x00004000u
 #define STATE_DIALOGWINDOW 0x00010000u
 #define STATE_HASCREATESTRUCTNAME 0x00020000u
 #define STATE_SERVER_PROC 0x00040000u
@@ -449,6 +450,8 @@ static void write_window(WND *w)
             state |= STATE_MSGBOX;
         if (w->Flags & WNDF_DLGPOINTER)
             state |= STATE_DIALOGWINDOW;
+        if (w->Flags & WNDF_HIDDENPOPUP)
+            state |= STATE_HIDDENPOPUP;
         if (w->Flags & WNDF_HASNAME)
             state |= STATE_HASCREATESTRUCTNAME;
         if (!(w->Style & (WS_CHILD | WS_POPUP)))

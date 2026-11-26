@@ -1495,6 +1495,46 @@ BOOLEAN WndCanMinimize(WND *w)
     return !(W32Display.NoMinimize && WndIsTopLevel(w));
 }
 
+/*
+ * xxxShowOwnedWindows: the top level windows a window owns are told that it closes or opens, and the default
+ * processing of WM_SHOWWINDOW hides the visible ones and shows the ones it hid.
+ */
+void WndShowOwned(WND *owner, UINT cmd)
+{
+    if ((owner->Style & (WS_CHILD | WS_POPUP)) == WS_CHILD)
+        return;
+    ULONG count = 0;
+    for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+        count++;
+    HWND *list = count ? W32Alloc(count * sizeof(HWND)) : nullptr;
+    if (!list)
+        return;
+    count = 0;
+    for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+        list[count++] = WndHandle(c);
+    BOOLEAN show = cmd >= SW_PARENTOPENING;
+    UserReference(&owner->Header);
+    for (ULONG i = 0; i < count && alive(owner); i++) {
+        WND *c = (WND *)UserLookup(list[i], USER_TYPE_WINDOW);
+        if (!c || c == owner || (c->Flags & WNDF_DESTROYING))
+            continue;
+        /* the owner at the top of the chain, which stops at an overlapped window. */
+        WND *top = c->Owner;
+        while (top && top != owner && top->Owner) {
+            ULONG kind = top->Style & (WS_CHILD | WS_POPUP);
+            if (!kind || kind == (WS_CHILD | WS_POPUP))
+                break;
+            top = top->Owner;
+        }
+        if (top != owner)
+            continue;
+        if (show ? (c->Flags & WNDF_HIDDENPOPUP) != 0 : (c->Style & WS_VISIBLE) != 0)
+            MsgSend(c, WM_SHOWWINDOW, show, cmd);
+    }
+    UserDereference(&owner->Header);
+    W32Free(list);
+}
+
 void WndShow(WND *w, int cmd)
 {
     if (!w || w == g_desktop || (UINT)cmd > SW_FORCEMINIMIZE)
@@ -1567,6 +1607,9 @@ void WndShow(WND *w, int cmd)
         if (!old_state)
             w->NormalRect = rect;
         if (new_state == WS_MINIMIZE) {
+            WndShowOwned(w, SW_PARENTCLOSING);
+            if (!alive(w))
+                goto done;
             WndEnsureSurface(w);
             if (old_state & WS_MAXIMIZE)
                 w->Flags |= WNDF_RESTORETOMAX;
@@ -1615,6 +1658,11 @@ void WndShow(WND *w, int cmd)
         WndSetPos(w, (WND *)HWND_TOP, x, y, cx, cy, flags);
         if (!alive(w))
             goto done;
+        if (state_changed && (old_state & WS_MINIMIZE)) {
+            WndShowOwned(w, SW_PARENTOPENING);
+            if (!alive(w))
+                goto done;
+        }
     }
     if (show && (w->Flags & WNDF_SENDSIZEMOVE)) {
         w->Flags &= ~WNDF_SENDSIZEMOVE;

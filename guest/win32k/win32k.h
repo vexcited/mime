@@ -903,6 +903,7 @@ typedef struct WND_CLASS {
 #define WNDF_HASNAME 0x8000000     /* made with a name, WNDS_HASCREATESTRUCTNAME. */
 #define WNDF_DLGPOINTER 0x10000000 /* user32 gave its dialog structure, WNDS_DIALOGWINDOW. */
 #define WNDF_MSGBOX 0x20000000     /* NtUserSetMsgBox, WNDS_MSGBOX. */
+#define WNDF_HIDDENPOPUP 0x40000000 /* hidden with its owner and shown again with it, WNDS_HIDDENPOPUP. */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -1044,6 +1045,7 @@ void WndSetPos(WND *w, WND *after, LONG x, LONG y, LONG cx, LONG cy, UINT flags)
 void WndPosThreadGone(W32THREAD *t);
 void WndDisplayChanged(void);
 void WndShow(WND *w, int cmd);
+void WndShowOwned(WND *owner, UINT cmd);
 void WndGetMinMaxInfo(WND *w, MINMAXINFO *info);
 void WndFullscreen(WND *w, BOOLEAN enter, const RECT *rect);
 BOOL WndSetPlacement(WND *w, const WINDOWPLACEMENT *placement);
