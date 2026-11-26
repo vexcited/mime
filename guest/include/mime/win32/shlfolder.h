@@ -76,6 +76,26 @@ typedef struct IShellFolder IShellFolder;
                                           PITEMID_CHILD * result);
 MIME_COM_INTERFACE(IShellFolder)
 
+/* ------------------------------------------------------------------ folder filters */
+
+MIME_DEFINE_GUID(IID_IFolderFilterSite, 0xC0A651F5, 0xB48B, 0x11D2, 0xB5, 0xED, 0x00, 0x60, 0x97, 0xC6, 0x86, 0xF6);
+MIME_DEFINE_GUID(IID_IFolderFilter, 0x9CC22886, 0xDC8E, 0x11D2, 0xB1, 0xD0, 0x00, 0xC0, 0x4F, 0x8E, 0xEB, 0x3E);
+
+typedef struct IFolderFilter IFolderFilter;
+#define IFolderFilter_METHODS(T)                                                                                       \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *ShouldShow)(T * This, IShellFolder * folder, PCIDLIST_ABSOLUTE folder_pidl,             \
+                                           PCUITEMID_CHILD item);                                                      \
+    HRESULT(STDMETHODCALLTYPE *GetEnumFlags)(T * This, IShellFolder * folder, PCIDLIST_ABSOLUTE folder_pidl,           \
+                                             HWND * hwnd, DWORD * flags);
+MIME_COM_INTERFACE(IFolderFilter)
+
+typedef struct IFolderFilterSite IFolderFilterSite;
+#define IFolderFilterSite_METHODS(T)                                                                                   \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *SetFilter)(T * This, IUnknown * filter);
+MIME_COM_INTERFACE(IFolderFilterSite)
+
 typedef struct IShellFolder2 IShellFolder2;
 #define IShellFolder2_METHODS(T)                                                                                       \
     IShellFolder_METHODS(T)                                                                                            \

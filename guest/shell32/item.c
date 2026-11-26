@@ -1145,22 +1145,7 @@ SHSTDAPI HRESULT WINAPI SHAssocEnumHandlers(PCWSTR extension, ASSOC_FILTER filte
     return S_OK;
 }
 
-/* ------------------------------------------------------------------ folder browsing and notifications */
-
-/* there is no folder browser dialog yet; the result is the one of a cancelled dialog. */
-SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderW(LPBROWSEINFOW info)
-{
-    if (info && info->pszDisplayName)
-        info->pszDisplayName[0] = 0;
-    return nullptr;
-}
-
-SHSTDAPI PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderA(LPBROWSEINFOA info)
-{
-    if (info && info->pszDisplayName)
-        info->pszDisplayName[0] = 0;
-    return nullptr;
-}
+/* ------------------------------------------------------------------ notifications */
 
 SHSTDAPI void WINAPI SHChangeNotify(LONG event, UINT flags, LPCVOID item1, LPCVOID item2)
 {

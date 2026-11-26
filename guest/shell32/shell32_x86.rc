@@ -1,1 +1,31 @@
 1 TYPELIB "@MIME_ROOT@/guest/shell32/shell32_x86.tlb"
+
+/* the folder browser of SHBrowseForFolder, with the layouts of windows' shell32. */
+1079 DIALOGEX 46, 21, 212, 188
+STYLE 0x00C808C8
+CAPTION "Browse for Folder"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL "", 14146, "STATIC", 0x50020000, 7, 7, 197, 20
+    CONTROL "", 14147, "STATIC", 0x50020000, 7, 27, 197, 12
+    CONTROL "", 14148, "EDIT", 0x50810080, 7, 27, 197, 12
+    CONTROL "", 14145, "SysTreeView32", 0x50814001, 7, 42, 197, 112
+    CONTROL "OK", 1, "BUTTON", 0x50030001, 100, 166, 50, 14
+    CONTROL "Cancel", 2, "BUTTON", 0x50030000, 154, 166, 50, 14
+END
+
+1087 DIALOGEX 20, 20, 212, 177
+STYLE 0x80CC08CC
+CAPTION "Browse For Folder"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL "", 14146, "STATIC", 0x50020000, 10, 7, 192, 24
+    CONTROL "", 14145, "STATIC", 0x50020000, 10, 35, 192, 91
+    CONTROL "&Folder:", 14152, "STATIC", 0x50020000, 10, 138, 30, 8
+    CONTROL "", 14148, "EDIT", 0x50810080, 45, 134, 157, 14
+    CONTROL "To view subfolders, click the symbol next to a folder.", 14153, "STATIC", 0x50020000, 10, 138, 192, 14
+    CONTROL "&Make New Folder", 14150, "BUTTON", 0x50010000, 10, 156, 70, 14
+    CONTROL "OK", 1, "BUTTON", 0x50010001, 98, 156, 50, 14
+    CONTROL "Cancel", 2, "BUTTON", 0x50010000, 152, 156, 50, 14
+    CONTROL "", 14151, "SCROLLBAR", 0x56020014, 1000, 1000, 16, 16
+END
