@@ -318,8 +318,11 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
     BOOLEAN block = opts && (opts->Flags & SMTO_BLOCK);
     ULONG64 deadline = opts && opts->Timeout ? now_ms() + opts->Timeout : 0;
     BOOLEAN timed_out = FALSE;
-    if (self)
+    SENT_MESSAGE *outer = self ? self->Sending : nullptr;
+    if (self) {
         self->InWait = TRUE;
+        self->Sending = sm;
+    }
     while (!sm->Completed) {
         if (self && !block && !IsListEmpty(&self->Sent)) {
             MsgProcessSent(self);
@@ -348,8 +351,10 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
         if (status == STATUS_THREAD_IS_TERMINATING && !sm->Completed)
             break;
     }
-    if (self)
+    if (self) {
         self->InWait = FALSE;
+        self->Sending = outer;
+    }
     if (!sm->Completed) {
         /* the receiver will complete the message after the sender has stopped waiting. */
         sm->Notify = TRUE;
@@ -370,6 +375,21 @@ static LRESULT send_to_thread(W32THREAD *target, WND *w, UINT msg, WPARAM wparam
         opts->Aborted = sm->Aborted;
     W32Free(sm);
     return r;
+}
+
+/*
+ * the window a thread waits on in a send, which the wait chain traversal of advapi32 follows. like win32kfull 26300, a
+ * thread that is not one of the window manager is ERROR_INVALID_PARAMETER, and one that sends nothing has none.
+ */
+HWND NTAPI NtUserGetSendMessageReceiver(DWORD thread_id)
+{
+    UserEnter();
+    W32THREAD *t = W32LookupThread((HANDLE)(ULONG_PTR)thread_id);
+    HWND hwnd = t && t->Sending ? t->Sending->Hwnd : nullptr;
+    UserLeave();
+    if (!t)
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    return hwnd;
 }
 
 static LRESULT send_to_window(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind, ULONG size, SEND_OPTS *opts)

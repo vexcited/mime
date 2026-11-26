@@ -703,6 +703,7 @@ typedef struct W32THREAD {
     ULONG CallbackDepth;
     ULONG LastRead;          /* tick of the last time the thread looked at its queue. */
     BOOLEAN InWait;          /* sleeping in a message wait or in a send, serving its queue. */
+    SENT_MESSAGE *Sending;   /* the message it waits to have answered, the innermost when sends nest. */
     struct HOOK *CurrentHook; /* the hook procedure running, for CallNextHookEx. */
     BOOLEAN Destroying;
     HCURSOR Cursor;

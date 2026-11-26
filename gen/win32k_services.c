@@ -273,6 +273,7 @@ void NtUserGetDC(void);
 void NtUserGetDCEx(void);
 void NtUserGetForegroundWindow(void);
 void NtUserGetGUIThreadInfo(void);
+void NtUserGetSendMessageReceiver(void);
 void NtUserGetGuiResources(void);
 void NtUserGetIconInfo(void);
 void NtUserGetKeyState(void);
@@ -2766,5 +2767,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserZapActiveAndFocus & 0xFFF] = (SERVICE){(void *)NtUserZapActiveAndFocus, STACK_ARGS(0), 1, 0};
 #else
 #warning "NtUserZapActiveAndFocus has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetSendMessageReceiver
+    table[MIME_SVC_NtUserGetSendMessageReceiver & 0xFFF] =
+        (SERVICE){(void *)NtUserGetSendMessageReceiver, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserGetSendMessageReceiver has no syscall number"
 #endif
 }
