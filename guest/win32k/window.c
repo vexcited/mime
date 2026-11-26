@@ -1169,8 +1169,9 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     (void)old_client_screen;
     RgnFree(&old_vis);
 
+    /* a visible top level window placed without SWP_NOACTIVATE becomes active, as BringWindowToTop makes it. */
     if (!(pos.flags & SWP_NOACTIVATE) && WndIsTopLevel(w) && visible && !(w->ExStyle & WS_EX_NOACTIVATE) &&
-        (pos.flags & SWP_SHOWWINDOW))
+        ((pos.flags & SWP_SHOWWINDOW) || w->Thread == W32GetThread()))
         WndActivate(w, FALSE);
     if ((pos.flags & SWP_HIDEWINDOW) && WndIsTopLevel(w) && InputForeground == w && w != g_hiding_destroyed) {
         /* hand activation to the owner or the next visible window. */
@@ -1885,8 +1886,10 @@ void WndShow(WND *w, int cmd)
             goto done;
         }
     }
+    BOOLEAN restored = state_changed && (old_state & WS_MINIMIZE);
     if (state_changed || show != was_visible) {
-        if (show && !noactivate && WndIsTopLevel(w))
+        /* a top level window comes to the top when it is activated, shown by SW_SHOWNA, or restored from an icon. */
+        if (show && WndIsTopLevel(w) && (!noactivate || cmd == SW_SHOWNA || restored))
             flags &= ~SWP_NOZORDER;
         /* what SetWindowPos is told to keep reaches WM_WINDOWPOSCHANGING as 0, as windows gives it. */
         LONG x = flags & SWP_NOMOVE ? 0 : rect.left, y = flags & SWP_NOMOVE ? 0 : rect.top;
