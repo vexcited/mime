@@ -312,6 +312,8 @@ static BOOLEAN gdi_batch_pending(PKTHREAD thread)
 ULONG KiFastSystemService(PKTRAP_FRAME frame)
 {
     ULONG number = KI_SERVICE_NUMBER(frame);
+    KiCurrentThread()->SystemCallNumber = (USHORT)number;
+    KiCurrentThread()->FirstArgument = KI_SERVICE_REGISTER_ARG(frame, 0);
 #ifdef __x86_64__
     /* the single step of a service that returns is raised the usual way, see KiServiceSingleStep. */
     if (frame->Rflags & 0x100)
@@ -534,8 +536,8 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     case FAST_WAIT_MANY:
     case FAST_REMOVE:
     case FAST_PARK:
-        status = KiWaitObjects(count, waits, wait_type, UserRequest, UserMode, alertable, timeout,
-                               count > THREAD_WAIT_OBJECTS ? blocks : nullptr);
+        status = KiWaitObjects(count, waits, wait_type, kind == FAST_PARK ? WrAlertByThreadId : UserRequest, UserMode,
+                               alertable, timeout, count > THREAD_WAIT_OBJECTS ? blocks : nullptr);
         if (kind == FAST_PARK && status == STATUS_WAIT_0) {
             status = STATUS_ALERTED;
         } else if (kind == FAST_REMOVE && status == STATUS_SUCCESS) {
@@ -685,9 +687,11 @@ void KiSystemService(PKTRAP_FRAME frame)
     thread->PreviousMode = UserMode;
     ULONG64 entry_pc = KI_TRAP_PC(frame);
     thread->ServiceInstrumented = ((PEPROCESS)thread->Process)->InstrumentationCallback != nullptr;
+    ULONG number = KI_SERVICE_NUMBER(frame);
+    thread->SystemCallNumber = (USHORT)number;
+    thread->FirstArgument = KI_SERVICE_REGISTER_ARG(frame, 0);
     KiEnableInterrupts();
 
-    ULONG number = KI_SERVICE_NUMBER(frame);
     ULONG table = number >> 12;
     ULONG index = number & 0xFFF;
     ULONG64 result;

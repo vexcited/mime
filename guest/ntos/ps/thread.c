@@ -1053,6 +1053,46 @@ NTSTATUS NTAPI NtResumeProcess(HANDLE handle)
 
 static NTSTATUS query_thread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length, PULONG returned);
 
+/*
+ * ThreadLastSystemCall, as PspQueryLastCallThread of windows 11 26300 answers it: of another thread that waits in a
+ * service it entered from user mode, the first argument and the number of that service, then in the longer form how
+ * long it has waited. the wait chain traversal of advapi32 learns the numbers of the waits it knows from it.
+ */
+static NTSTATUS query_last_call(HANDLE handle, PVOID info, ULONG length, PULONG returned)
+{
+    PETHREAD thread;
+    NTSTATUS status = PsReferenceThreadHandle(handle, THREAD_GET_CONTEXT, &thread);
+    if (!NT_SUCCESS(status))
+        return status;
+    struct {
+        ULONG_PTR FirstArgument;
+        USHORT SystemCallNumber;
+        USHORT Pad[3];
+        ULONG64 WaitTime;
+    } out = {};
+    if (length != 16 && length != 24) {
+        status = STATUS_INFO_LENGTH_MISMATCH;
+    } else if (thread == PsCurrentThread()) {
+        status = STATUS_INVALID_PARAMETER;
+    } else {
+        ULONG64 s = KiAcquireDispatcherLock();
+        BOOLEAN waiting = thread->Tcb.State == Waiting && thread->Tcb.PreviousMode == UserMode;
+        out.FirstArgument = thread->Tcb.FirstArgument;
+        out.SystemCallNumber = thread->Tcb.SystemCallNumber;
+        ULONG since = thread->Tcb.WaitTime;
+        KiReleaseDispatcherLock(s);
+        status = waiting ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        out.WaitTime = (ULONG64)KI_CLOCK_TICK_HNS * (ULONG)((ULONG)(KiQueryInterruptTime() / KI_CLOCK_TICK_HNS) - since);
+    }
+    if (NT_SUCCESS(status)) {
+        status = KiCopyToUser(info, &out, length);
+        if (NT_SUCCESS(status) && returned)
+            KiCopyToUser(returned, &length, sizeof(length));
+    }
+    ObDereferenceObject(thread);
+    return status;
+}
+
 /* like NtQueryInformationProcess: the probes, the length windows takes for the class, then the thread. */
 NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOID info, ULONG length,
                                         PULONG returned)
@@ -1064,6 +1104,8 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
         status = KiProbeReturnLength(returned);
     if (!NT_SUCCESS(status))
         return status;
+    if ((ULONG)klass == 21) /* ThreadLastSystemCall */
+        return query_last_call(handle, info, length, returned);
     if ((ULONG)klass == 29) { /* ThreadWow64Context */
         PETHREAD thread;
         status = PsReferenceThreadHandle(handle, THREAD_GET_CONTEXT, &thread);
@@ -1483,8 +1525,8 @@ NTSTATUS NTAPI NtWaitForAlertByThreadId(PVOID hint, PLARGE_INTEGER timeout)
     LARGE_INTEGER t;
     if (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t))))
         return STATUS_ACCESS_VIOLATION;
-    NTSTATUS status =
-        KeWaitForSingleObject(&KiCurrentThread()->AlertByIdEvent, UserRequest, UserMode, FALSE, timeout ? &t : nullptr);
+    NTSTATUS status = KeWaitForSingleObject(&KiCurrentThread()->AlertByIdEvent, WrAlertByThreadId, UserMode, FALSE,
+                                            timeout ? &t : nullptr);
     return status == STATUS_WAIT_0 ? STATUS_ALERTED : status;
 }
 

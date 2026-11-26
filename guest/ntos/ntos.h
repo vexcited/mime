@@ -149,6 +149,10 @@ typedef struct _KTHREAD {
     UCHAR Processor; /* the processor it runs or last ran on. */
     BOOLEAN IdleThread;
     LONG Quantum;
+    ULONG WaitTime; /* the low tick count when the thread began its last wait. */
+    /* the service the thread entered last and its first argument, which ThreadLastSystemCall tells of a waiting one. */
+    USHORT SystemCallNumber;
+    ULONG_PTR FirstArgument;
     LONG_PTR WaitStatus;
     PKWAIT_BLOCK WaitBlockList;
     KWAIT_BLOCK WaitBlock[THREAD_WAIT_OBJECTS + 1];

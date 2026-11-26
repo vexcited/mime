@@ -747,6 +747,7 @@ static ULONG fill_processes(PUCHAR buffer, ULONG capacity, PUCHAR user_base, BOO
                 t->Priority = thread->Tcb.Priority;
                 t->BasePriority = thread->Tcb.BasePriority;
                 t->ContextSwitches = (ULONG)thread->Tcb.ContextSwitches;
+                t->WaitTime = thread->Tcb.WaitTime;
                 t->ThreadState = thread == current ? Running : thread->Tcb.State;
                 t->WaitReason = thread->Tcb.WaitReason;
                 switches += thread->Tcb.ContextSwitches;

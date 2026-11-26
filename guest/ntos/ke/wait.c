@@ -399,6 +399,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
         thread->Alertable = alertable;
         thread->WaitReason = (UCHAR)reason;
         thread->WaitStatus = 0;
+        thread->WaitTime = (ULONG)(KiQueryInterruptTime() / KI_CLOCK_TICK_HNS);
         thread->State = Waiting;
         KiSwapThread();
         LONG_PTR status = thread->WaitStatus;

@@ -190,6 +190,12 @@ typedef enum _KWAIT_REASON {
     WrFastMutex,
     WrGuardedMutex,
     WrRundown,
+    WrAlertByThreadId,
+    WrDeferredPreempt,
+    WrPhysicalFault,
+    WrIoRing,
+    WrMdlCache,
+    WrRcu,
     MaximumWaitReason
 } KWAIT_REASON;
 
