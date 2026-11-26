@@ -18,6 +18,8 @@
 #define MIME_LAYOUT_BOOT_INFO 0x1000ull
 #define MIME_LAYOUT_BOOT_STACK 0x100000ull
 #define MIME_LAYOUT_BOOT_STACK_SIZE 0x10000ull
+/* the host's firmware, in the gap between the boot stack and the kernel at 0x200000. */
+#define MIME_LAYOUT_FIRMWARE 0x110000ull
 
 typedef struct MimeVm MimeVm;
 
@@ -138,6 +140,8 @@ struct MimeVm {
     uint8_t *ram;
     uint64_t ram_size;
     MimeBootInfo *boot;
+    void *firmware; /* MimeFirmware read from this machine, copied into ram and freed, zero without one. */
+    size_t firmware_size;
     MimeSharedPage *shared;
     uint64_t kernel_entry;
     uint64_t boot_stack_top;

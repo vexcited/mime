@@ -5,6 +5,7 @@
 #include "../gpu/gpu.h"
 #include "../identity.h"
 #include "../locale.h"
+#include "../firmware.h"
 #include "../rom.h"
 
 #include <stdio.h>
@@ -111,6 +112,22 @@ void mime_vm_init_boot(MimeVm *vm)
     boot->cpu_count = vm->vcpu_count;
     boot->rom_phys = MIME_ROM_BASE;
     boot->rom_size = mime_rom_size();
+    if (mime_firmware_load(vm->paths, (MimeFirmware **)&vm->firmware, &vm->firmware_size)) {
+        /* the guest reads it through the direct map, so it lives in the ram the loader keeps free. */
+        memcpy(vm->ram + MIME_LAYOUT_FIRMWARE, vm->firmware, vm->firmware_size);
+        free(vm->firmware);
+        vm->firmware = nullptr;
+        boot->firmware_phys = MIME_RAM_BASE + MIME_LAYOUT_FIRMWARE;
+        boot->firmware_size = (uint32_t)vm->firmware_size;
+        const MimeFirmware *firmware = (const MimeFirmware *)(vm->ram + MIME_LAYOUT_FIRMWARE);
+        if (firmware->edid_length == sizeof(boot->monitor_edid)) {
+            memcpy(boot->monitor_edid, (const uint8_t *)firmware + firmware->edid_offset, sizeof(boot->monitor_edid));
+            boot->monitor_edid_size = sizeof(boot->monitor_edid);
+        }
+        mime_info("firmware: %zu bytes of this machine", vm->firmware_size);
+    } else {
+        mime_info("firmware: the reference tables");
+    }
     mime_strlcpy(boot->system_root, "C:\\Windows", sizeof(boot->system_root));
     char feature_cache[MIME_PATH_MAX];
     mime_path_join(feature_cache, sizeof(feature_cache), vm->paths->cache, "features");

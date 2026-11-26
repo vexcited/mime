@@ -1,6 +1,8 @@
 /* machine lifecycle commands: up, run, down, status and config. */
 #include "identity.h"
+#include "firmware.h"
 #include "instance.h"
+#include "invoker.h"
 #include "ipc.h"
 #include "mime_cli.h"
 
@@ -180,6 +182,24 @@ static int machine_up(const MimePaths *paths, bool quiet)
 
 int mime_cmd_up(const MimePaths *paths, int argc, char **argv)
 {
+#ifdef __linux__
+    /* the firmware tables of this machine reach the guest through /sys/firmware, which is root only. */
+    if (geteuid() != 0) {
+        mime_error("the machine starts as root so the guest sees this machine's firmware, run `sudo mime up`");
+        return 1;
+    }
+    MimeFirmware *firmware = nullptr;
+    size_t size = 0;
+    if (!mime_firmware_build(&firmware, &size))
+        firmware = nullptr;
+    /* everything else, the files of the machine and the machine itself, is the user's. */
+    if (!mime_invoker_drop() || !mime_paths_ensure(paths)) {
+        free(firmware);
+        return 1;
+    }
+    mime_firmware_save(paths, firmware, size);
+    free(firmware);
+#endif
     return machine_up(paths, false);
 }
 
@@ -672,10 +692,13 @@ static uint32_t terminal_cursor(void)
 static int run_program(const MimePaths *paths, int argc, char **argv)
 {
     MimeIpcStatus status;
-    if (!query_status(paths, &status) || !status.ready || !same_build(&status)) {
-        int r = machine_up(paths, false);
-        if (r != 0)
-            return r;
+    if (!query_status(paths, &status) || !status.ready) {
+        mime_error("the machine is not running, start it with `sudo mime up`");
+        return 1;
+    }
+    if (!same_build(&status)) {
+        mime_error("the machine runs another build of mime, restart it with `sudo mime up`");
+        return 1;
     }
     char cwd[MIME_PATH_MAX];
     if (!getcwd(cwd, sizeof(cwd)))

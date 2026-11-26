@@ -38,9 +38,12 @@ cmake --build build
 ## Run
 
 ```sh
+sudo build/mime up
 build/mime run /path/to/program.exe
 build/mime down
 ```
+
+`up` runs as root because it reads this machine's firmware tables from `/sys/firmware` for the guest, then drops back to you.
 
 | Path                              | Content                                |
 |-----------------------------------|----------------------------------------|

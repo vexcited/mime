@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#define MIME_ABI_VERSION 6
+#define MIME_ABI_VERSION 7
 
 /* guest physical layout. */
 #ifdef __x86_64__
@@ -43,6 +43,8 @@
 #define MIME_WINDOW_SIZE 0x800000000ull
 #endif
 #define MIME_WINDOW_ALIGN 0x10000ull
+/* the host's own firmware tables, in the ram the loader keeps free, see MimeFirmware. */
+#define MIME_FIRMWARE_MAX 0xF0000ull
 #define MIME_PAGE_SIZE 4096ull
 
 /* x64: the i/o port of hypercalls and the apic vector of the host's interrupt. */
@@ -377,6 +379,12 @@ typedef struct MimeBootInfo {
     uint64_t rom_phys; /* MimeRomHeader, also mapped read only at physmap + rom_phys. */
     uint64_t rom_size;
 
+    uint64_t firmware_phys; /* MimeFirmware, also mapped read only at physmap + firmware_phys; zero without one. */
+    uint32_t firmware_size;
+    uint32_t firmware_padding;
+    uint8_t monitor_edid[128]; /* the host panel's edid, empty when it has none. */
+    uint32_t monitor_edid_size;
+
     uint64_t ttbr1_phys;  /* kernel translation tables built by the vmm. */
     uint64_t shared_phys; /* MimeSharedPage */
     uint64_t boot_stack_phys;
@@ -490,6 +498,34 @@ typedef struct MimeRomHeader {
     uint32_t built; /* when the build made it, in seconds since 1970: the time of every file in it. */
     MimeRomEntry entries[];
 } MimeRomHeader;
+
+/* the firmware of the machine mime runs on, so the guest sees the same tables as its bios. */
+#define MIME_FIRMWARE_MAGIC 0x52494d46u /* 'FMIR' */
+
+/* the header windows puts before the dmi table, see RAW_SMBIOS_DATA in the guest's nt.h. */
+typedef struct MimeFirmwareSmbios {
+    uint8_t used20;
+    uint8_t major;
+    uint8_t minor;
+    uint8_t revision;
+    uint32_t length;
+} MimeFirmwareSmbios;
+
+typedef struct MimeFirmwareTable {
+    uint32_t signature;
+    uint32_t offset;
+    uint32_t length;
+} MimeFirmwareTable;
+
+typedef struct MimeFirmware {
+    uint32_t magic;
+    uint32_t count; /* acpi tables */
+    uint32_t smbios_offset; /* RAW_SMBIOS_DATA: the header windows builds, then the dmi table. */
+    uint32_t smbios_length;
+    uint32_t edid_offset; /* the edid of a monitor of this machine, as the panel wrote it. */
+    uint32_t edid_length;
+    MimeFirmwareTable tables[];
+} MimeFirmware;
 
 /*
  * page shared by host and guest. irq_pending tells the guest why the host

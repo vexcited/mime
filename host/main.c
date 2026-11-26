@@ -1,3 +1,4 @@
+#include "invoker.h"
 #include "instance.h"
 #include "mime_cli.h"
 #include "ui/app_identity.h"
@@ -12,12 +13,13 @@ static void usage(void)
     printf("usage: mime <command> [arguments]\n\n");
     printf("  setup                        prepare the drive and download the Windows system files programs need,\n");
     printf("                               which up and run also do the first time\n");
-    printf("  up                           start the machine\n");
+    printf("  up                           start the machine, as root so it sees this machine's firmware\n");
     printf("  down [--force]               shut the machine down, letting programs close first unless --force\n");
     printf("  status                       show the machine's state\n");
     printf("  run [--admin] <target> [args]\n");
     printf("                               open a program, document, shortcut or url, or an app by its id or name,\n");
-    printf("                               as the Windows Run box does; a console program runs in the terminal\n");
+    printf("                               as the Windows Run box does; a console program runs in the terminal, and the\n");
+    printf("                               machine must already be up\n");
     printf("  apps [--installed | --scheme]\n");
     printf("                               list the apps run opens by name, the installed programs, or the url\n");
     printf("                               protocols that programs registered\n");
@@ -58,6 +60,10 @@ int main(int argc, char **argv)
         usage();
         return 2;
     }
+    mime_invoker_adopt();
+    /* up needs root for the firmware and gives it up itself, every other command runs as the user at once. */
+    if (strcmp(argv[1], "up") != 0 && !mime_invoker_drop())
+        return 1;
     MimePaths paths;
     if (!mime_paths_init(&paths))
         return 1;

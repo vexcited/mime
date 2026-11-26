@@ -7,11 +7,7 @@
 #define MIME_KERNEL_PNP
 #include <mime/pnp.h>
 #include <mime/gpu_identity.h>
-#ifdef __aarch64__
-#include "../ex/acpi_tables.h"
-#else
-#include "../ex/acpi_tables_x64.h"
-#endif
+#include "../ex/firmware.h"
 
 #define NT_CURRENT_VERSION L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
 #define NT_CURRENT_VERSION_32 L"\\REGISTRY\\MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion"
@@ -612,6 +608,9 @@ static void monitor_edid(ULONG index, ULONG width, ULONG height, ULONG hz, ULONG
  * the monitors of the host under the adapter that drives them, each with the instance user32 names it by and the
  * edid a real one leaves in its device key. returns how many there are.
  */
+static void monitor_friendly(const UCHAR *edid, WCHAR out[32]);
+static void monitor_name(const UCHAR *edid, WCHAR name[16]);
+
 static ULONG host_monitors(PCWSTR parent)
 {
     ULONG count = 0;
@@ -648,14 +647,52 @@ static ULONG host_monitors(PCWSTR parent)
                     L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent, nullptr, 0);
             continue;
         }
-        _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\MS_0025\\5&2f3c1a9b&0&UID%u", i);
-        monitor(number, instance, L"Generic PnP Monitor", L"PnPMonitor.Install", L"*PNP09FF", L"MONITOR\\MS_0025\0",
-                sizeof(L"MONITOR\\MS_0025\0"), L"Generic Monitor", i, L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent,
-                edid, sizeof(edid));
+        /* the panel of the host names the monitor, when the host had one to read. */
+        WCHAR name[16] = L"MS_0025", class[24] = L"MONITOR\\MS_0025", friendly[32] = L"Generic PnP Monitor";
+        if (HalBootInfo->monitor_edid_size == sizeof(edid) && i == 0) {
+            memcpy(edid, HalBootInfo->monitor_edid, sizeof(edid));
+            monitor_name(edid, name);
+            _snwprintf(class, RTL_NUMBER_OF(class) - 1, L"MONITOR\\%ls", name);
+            monitor_friendly(edid, friendly);
+            if (!friendly[0])
+                memcpy(friendly, L"Generic PnP Monitor", sizeof(L"Generic PnP Monitor"));
+        }
+        WCHAR cls[26] = {};
+        memcpy(cls, class, sizeof(cls));
+        _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\%ls\\5&2f3c1a9b&0&UID%u", name, i);
+        monitor(number, instance, friendly, L"PnPMonitor.Install", L"*PNP09FF", cls, sizeof(cls), L"Generic Monitor", i,
+                L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent, edid, sizeof(edid));
     }
     if (list)
         MmFreeContiguousPages(list, 4096);
     return count;
+}
+
+/* the plug and play name of a monitor is its maker, three letters, then the product, as its edid spells them. */
+static void monitor_name(const UCHAR *edid, WCHAR name[16])
+{
+    ULONG maker = (ULONG)edid[8] << 8 | edid[9];
+    name[0] = (WCHAR)('A' + ((maker >> 10) & 0x1F) - 1);
+    name[1] = (WCHAR)('A' + ((maker >> 5) & 0x1F) - 1);
+    name[2] = (WCHAR)('A' + (maker & 0x1F) - 1);
+    _snwprintf(name + 3, 12, L"%04X", (ULONG)(edid[10] | edid[11] << 8));
+}
+
+/* the description the panel wrote in its edid, the monitor's name in the device manager. */
+static void monitor_friendly(const UCHAR *edid, WCHAR out[32])
+{
+    out[0] = 0;
+    for (ULONG at = 0x36; at + 18 <= 0x7E; at += 18) {
+        if (edid[at] || edid[at + 1] || edid[at + 2] || edid[at + 3] != 0xFC || edid[at + 4])
+            continue;
+        ULONG n = 0;
+        for (; n < 13 && edid[at + 5 + n]; n++)
+            out[n] = edid[at + 5 + n];
+        while (n && out[n - 1] == ' ')
+            n--;
+        out[n] = 0;
+        return;
+    }
 }
 
 /* the two drivers windows always runs on the root bus, whatever drives the display: its fallback and warp's kernel half. */
@@ -959,14 +996,17 @@ static void acpi_description(void)
 {
     static const WCHAR root[] = L"\\REGISTRY\\MACHINE\\HARDWARE\\ACPI";
     CmpOpenPath(root, TRUE);
-    for (ULONG i = 0; i < ACPI_TABLE_COUNT; i++) {
-        const ACPI_TABLE_INFO *table = &acpi_tables[i];
+    for (ULONG i = 0; i < KiFirmwareAcpiCount(); i++) {
+        ULONG signature_word, size;
+        const UCHAR *data = KiFirmwareAcpi(i, &signature_word, &size);
+        if (!data || size < 36)
+            continue;
         char signature[5] = {};
-        memcpy(signature, &table->Signature, 4);
+        memcpy(signature, &signature_word, 4);
         WCHAR wide_sig[5], oem[7], table_id[9];
         widen(wide_sig, RTL_NUMBER_OF(wide_sig), signature);
-        widen(oem, RTL_NUMBER_OF(oem), (const char *)table->Data + 10);
-        widen(table_id, RTL_NUMBER_OF(table_id), (const char *)table->Data + 16);
+        widen(oem, RTL_NUMBER_OF(oem), (const char *)data + 10);
+        widen(table_id, RTL_NUMBER_OF(table_id), (const char *)data + 16);
         /* the instance, then the data key, where the four byte words of the header are named by their offset. */
         WCHAR instance[180] = {};
         _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"%ls\\%ls\\%ls\\%ls\\00000001", root, wide_sig, oem, table_id);
@@ -978,7 +1018,7 @@ static void acpi_description(void)
             WCHAR name[9];
             _snwprintf(name, RTL_NUMBER_OF(name), L"%08x", at);
             ULONG word;
-            memcpy(&word, table->Data + at, sizeof(word));
+            memcpy(&word, data + at, sizeof(word));
             set_dword(path, name, word);
         }
     }

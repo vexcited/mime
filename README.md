@@ -35,6 +35,7 @@ sudo pacman -S --needed wayland libxkbcommon libpipewire curl vulkan-icd-loader
 
 # download the x86_64 binary
 curl -L https://github.com/vexcited/mime/releases/latest/download/mime-x86_64-linux.tar.gz | tar -xz
+sudo ./mime up
 ./mime run notepad
 ```
 
@@ -44,6 +45,9 @@ Move `mime` anywhere in your `PATH` to keep it, and run the same command again t
 
 ```sh
 mime setup
+
+# the machine should be started as root.
+sudo mime up
 
 mime run ~/program.exe
 mime run notepad

@@ -1,6 +1,7 @@
 /* system information and time services. */
 #include "../ntos.h"
 #include "../se/se.h"
+#include "firmware.h"
 #include <mime/harderror.h>
 #ifdef __aarch64__
 #include "acpi_tables.h"
@@ -401,7 +402,13 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
  */
 static void fit_madt(UCHAR *madt, ULONG size)
 {
-    ULONG cpus = HalBootInfo->cpu_count, n = 0;
+    ULONG cpus = HalBootInfo->cpu_count, n = 0, enabled = 0;
+    for (ULONG at = 44; at + 2 <= size && madt[at + 1] >= 2 && at + madt[at + 1] <= size; at += madt[at + 1])
+        if (madt[at] == 0 && madt[at + 1] >= 8 && (madt[at + 4] & 1))
+            enabled++;
+    /* a table that already has as many processors as the machine is the host's own and stands as it is. */
+    if (enabled == cpus)
+        return;
     for (ULONG at = 44; at + 2 <= size && madt[at + 1] >= 2 && at + madt[at + 1] <= size; at += madt[at + 1]) {
         if (madt[at] != 0 || madt[at + 1] < 8)
             continue;
@@ -423,6 +430,54 @@ static void fit_madt(UCHAR *madt, ULONG size)
     madt[9] = (UCHAR)-sum;
 }
 
+/* the host's own firmware, when it could read it: the guest then sees the machine it runs on, not a reference. */
+static const MimeFirmware *runtime_firmware(VOID)
+{
+    static const MimeFirmware *found;
+    static BOOLEAN looked;
+    if (!looked) {
+        looked = TRUE;
+        if (HalBootInfo->firmware_phys && HalBootInfo->firmware_size) {
+            const MimeFirmware *firmware = (const MimeFirmware *)HalPhysmap(HalBootInfo->firmware_phys);
+            if (firmware->magic == MIME_FIRMWARE_MAGIC)
+                found = firmware;
+        }
+    }
+    return found;
+}
+
+ULONG KiFirmwareAcpiCount(VOID)
+{
+    const MimeFirmware *firmware = runtime_firmware();
+    return firmware ? firmware->count : ACPI_TABLE_COUNT;
+}
+
+const UCHAR *KiFirmwareAcpi(ULONG index, PULONG signature, PULONG size)
+{
+    const MimeFirmware *firmware = runtime_firmware();
+    if (firmware) {
+        if (index >= firmware->count)
+            return nullptr;
+        *signature = firmware->tables[index].signature;
+        *size = firmware->tables[index].length;
+        return (const UCHAR *)firmware + firmware->tables[index].offset;
+    }
+    if (index >= ACPI_TABLE_COUNT)
+        return nullptr;
+    *signature = acpi_tables[index].Signature;
+    *size = acpi_tables[index].Size;
+    return acpi_tables[index].Data;
+}
+
+const UCHAR *KiFirmwareSmbios(PULONG size)
+{
+    const MimeFirmware *firmware = runtime_firmware();
+    if (!firmware || !firmware->smbios_length)
+        return nullptr;
+    *size = firmware->smbios_length;
+    return (const UCHAR *)firmware + firmware->smbios_offset;
+}
+
 /* what a provider refuses: the length that comes back is the header's. */
 static NTSTATUS firmware_refused(NTSTATUS status, ULONG header_size, PULONG returned)
 {
@@ -435,7 +490,7 @@ static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, S
                                   PULONG returned)
 {
     if (header->Action == SystemFirmwareTable_Enumerate) {
-        ULONG count = ACPI_TABLE_COUNT;
+        ULONG count = KiFirmwareAcpiCount();
         ULONG need = header_size + count * sizeof(ULONG);
         if (header->TableBufferLength < count * sizeof(ULONG) || length < need) {
             header->TableBufferLength = count * sizeof(ULONG);
@@ -450,8 +505,11 @@ static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, S
         header->TableBufferLength = count * sizeof(ULONG);
         memcpy(out, header, header_size);
         ULONG at = header_size;
-        for (ULONG i = 0; i < ACPI_TABLE_COUNT; i++) {
-            memcpy(out + at, &acpi_tables[i].Signature, sizeof(ULONG));
+        for (ULONG i = 0; i < count; i++) {
+            ULONG signature, size;
+            if (!KiFirmwareAcpi(i, &signature, &size))
+                break;
+            memcpy(out + at, &signature, sizeof(ULONG));
             at += sizeof(ULONG);
         }
         NTSTATUS status = copy_info(info, out, need, length, returned);
@@ -461,16 +519,21 @@ static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, S
 
     if (header->Action != SystemFirmwareTable_Get)
         return firmware_refused(STATUS_NOT_IMPLEMENTED, header_size, returned);
-    const ACPI_TABLE_INFO *table = nullptr;
-    for (ULONG i = 0; i < ACPI_TABLE_COUNT; i++)
-        if (acpi_tables[i].Signature == header->TableId)
-            table = &acpi_tables[i];
-    if (!table)
+    const UCHAR *data = nullptr;
+    ULONG table_signature = 0, table_size = 0;
+    for (ULONG i = 0; i < KiFirmwareAcpiCount() && !data; i++) {
+        const UCHAR *candidate = KiFirmwareAcpi(i, &table_signature, &table_size);
+        if (!candidate)
+            break;
+        if (table_signature == header->TableId)
+            data = candidate;
+    }
+    if (!data)
         return firmware_refused(STATUS_NOT_FOUND, header_size, returned);
 
-    ULONG need = header_size + table->Size;
-    if (header->TableBufferLength < table->Size || length < need) {
-        header->TableBufferLength = table->Size;
+    ULONG need = header_size + table_size;
+    if (header->TableBufferLength < table_size || length < need) {
+        header->TableBufferLength = table_size;
         NTSTATUS status = KiCopyToUser(info, header, header_size);
         if (NT_SUCCESS(status) && returned)
             status = KiCopyToUser(returned, &need, sizeof(need));
@@ -479,21 +542,22 @@ static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, S
     UCHAR *out = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('A', 'c', 'p', 'T'));
     if (!out)
         return STATUS_INSUFFICIENT_RESOURCES;
-    header->TableBufferLength = table->Size;
+    header->TableBufferLength = table_size;
     memcpy(out, header, header_size);
-    memcpy(out + header_size, table->Data, table->Size);
-    if (table->Signature == 0x43495041)
-        fit_madt(out + header_size, table->Size);
+    memcpy(out + header_size, data, table_size);
+    if (table_signature == 0x43495041)
+        fit_madt(out + header_size, table_size);
     NTSTATUS status = copy_info(info, out, need, length, returned);
     ExFreePool(out);
     return status;
 }
 
 /*
- * SystemFirmwareTableInformation: the RSMB provider, the raw smbios data, and the ACPI one, the acpi tables of the
- * reference machine. like wdm, a too small buffer gets the required size in TableBufferLength. measured on windows
- * 11 26300 on uefi firmware: no other provider is there, FIRM and RSDT included, and asking one is
- * STATUS_NOT_IMPLEMENTED, as is an action a provider does not know. a table acpi does not have is STATUS_NOT_FOUND.
+ * SystemFirmwareTableInformation: the RSMB provider, the raw smbios data, and the ACPI one, the acpi tables. both are
+ * the host's own when it could read them, else those of the reference machine. like wdm, a too small buffer gets the
+ * required size in TableBufferLength. measured on windows 11 26300 on uefi firmware: no other provider is there, FIRM
+ * and RSDT included, and asking one is STATUS_NOT_IMPLEMENTED, as is an action a provider does not know. a table acpi
+ * does not have is STATUS_NOT_FOUND.
  */
 static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
 {
@@ -534,10 +598,17 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
     PUCHAR table = stack_table;
     ULONG table_size = smb_build(table, sizeof(stack_table));
     ULONG data_size = sizeof(RAW_SMBIOS_DATA) - 1 + table_size;
+    /* the machine's own smbios when the host read it, else the reference one byte for byte. */
+    ULONG raw_size = 0;
+    const UCHAR *raw = KiFirmwareSmbios(&raw_size);
 #ifdef MIME_SMBIOS_RAW
-    /* x64 serves the reference machine's RAW_SMBIOS_DATA byte for byte. */
-    data_size = MIME_SMBIOS_RAW_SIZE;
+    if (!raw) {
+        raw = MIME_SMBIOS_RAW;
+        raw_size = MIME_SMBIOS_RAW_SIZE;
+    }
 #endif
+    if (raw)
+        data_size = raw_size;
     ULONG need = header_size + data_size;
     if (header.TableBufferLength < data_size || length < need) {
         header.TableBufferLength = data_size;
@@ -551,31 +622,17 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
         return STATUS_INSUFFICIENT_RESOURCES;
     header.TableBufferLength = data_size;
     memcpy(out, &header, header_size);
-#ifdef MIME_SMBIOS_RAW
-    memcpy(out + header_size, MIME_SMBIOS_RAW, data_size);
-    /* the processor structure follows the machine: its id is cpuid's, its cores and threads the processors'. */
-    for (ULONG at = header_size + 8; at + 4 <= need && out[at] != 127;) {
-        ULONG formatted = out[at + 1];
-        if (out[at] == 4 && formatted >= 0x26) {
-            ULONG64 id = KiProcessorSmbiosId();
-            UCHAR cores = HalBootInfo->cpu_count > 0xFF ? 0xFF : (UCHAR)HalBootInfo->cpu_count;
-            memcpy(out + at + 8, &id, sizeof(id));
-            out[at + 0x23] = out[at + 0x24] = out[at + 0x25] = cores;
-        }
-        at += formatted;
-        while (at + 2 <= need && (out[at] || out[at + 1]))
-            at++;
-        at += 2;
+    if (raw) {
+        memcpy(out + header_size, raw, data_size);
+    } else {
+        RAW_SMBIOS_DATA *built = (RAW_SMBIOS_DATA *)(out + header_size);
+        built->Used20CallingMethod = 1;
+        built->SMBIOSMajorVersion = 3;
+        built->SMBIOSMinorVersion = 4;
+        built->DmiRevision = 0;
+        built->Length = table_size;
+        memcpy(built->SMBIOSTableData, table, table_size);
     }
-#else
-    RAW_SMBIOS_DATA *raw = (RAW_SMBIOS_DATA *)(out + header_size);
-    raw->Used20CallingMethod = 1;
-    raw->SMBIOSMajorVersion = 3;
-    raw->SMBIOSMinorVersion = 4;
-    raw->DmiRevision = 0;
-    raw->Length = table_size;
-    memcpy(raw->SMBIOSTableData, table, table_size);
-#endif
     status = copy_info(info, out, need, length, returned);
     ExFreePool(out);
     return status;
