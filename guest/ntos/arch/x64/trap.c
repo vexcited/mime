@@ -283,6 +283,7 @@ static void user_exception(PKTRAP_FRAME frame)
     PKTHREAD thread = KiCurrentThread();
     thread->TrapFrame = frame;
     thread->PreviousMode = UserMode;
+    ULONG64 gs_base = KiReadMsr(MSR_KERNEL_GS_BASE);
     KiEnableInterrupts();
     if (frame->Vector == 14 && !(frame->ErrorCode & 0x8)) {
         BOOLEAN write = (frame->ErrorCode & 0x2) != 0;
@@ -294,10 +295,11 @@ static void user_exception(PKTRAP_FRAME frame)
         /*
          * like KiPageFault of ntoskrnl 26300: a failed access of 64-bit code while its gs base is not the teb, as
          * after a load of the gs selector, gets the teb back as gs base and runs again. wow64cpu loads the 32-bit
-         * data selector into gs and then reads the 64-bit teb through gs.
+         * data selector into gs and then reads the 64-bit teb through gs. the gs base is read at the fault, as
+         * windows keeps it in the trap frame: a switch since then has given the thread its teb back.
          */
         PVOID teb = thread->Teb;
-        if (frame->Cs == 0x33 && teb && KiReadMsr(MSR_KERNEL_GS_BASE) != (ULONG64)teb) {
+        if (frame->Cs == 0x33 && teb && gs_base != (ULONG64)teb) {
             KiWriteMsr(MSR_KERNEL_GS_BASE, (ULONG64)teb);
             KiExitToUserMode(frame);
             return;
