@@ -1433,6 +1433,7 @@ ULONG HostBorderColor(WND *w);
 /* tray.c: the notification area. */
 void TrayHostEvent(const MimeInputEvent *ev);
 void TrayWindowDestroyed(WND *w);
+void TrayFreeProcess(W32PROCESS *p);
 /* list menu items and submenus with their ids for the host, menu.c. */
 ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG max);
 void WndCheckMonitorDpi(WND *w);

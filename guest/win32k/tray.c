@@ -28,7 +28,8 @@
 typedef struct TRAY {
     BOOLEAN Used;
     ULONG HostId;
-    W32PROCESS *Process;
+    W32PROCESS *Process; /* the one that keeps the icon: shell32 of the program, or the shell for it. */
+    W32PROCESS *Owner;   /* the one of its window, which the host shows it for. */
     ULONG Key;
     HWND Window;
     UINT Id;
@@ -162,7 +163,7 @@ static void send_balloon(TRAY *t, const MIME_TRAY_REQUEST *r)
         return;
     c->op = MIME_TRAY_BALLOON;
     c->id = t->HostId;
-    app_name(t->Process, c->app);
+    app_name(t->Owner, c->app);
     copy_text(c->balloon_title, RTL_NUMBER_OF(c->balloon_title), r->InfoTitle);
     copy_text(c->balloon_text, RTL_NUMBER_OF(c->balloon_text), r->Info);
     ULONG kind = r->InfoFlags & NIIF_ICON_MASK;
@@ -184,8 +185,8 @@ static void send_icon(TRAY *t, const MIME_TRAY_REQUEST *r, BOOLEAN hidden)
         return;
     c->op = MIME_TRAY_SET;
     c->id = t->HostId;
-    c->process_id = (ULONG)(ULONG_PTR)PsGetCurrentProcessId();
-    app_name(t->Process, c->app);
+    c->process_id = (ULONG)(ULONG_PTR)t->Owner->Pid;
+    app_name(t->Owner, c->app);
     if (hidden)
         c->flags |= MIME_TRAY_HIDDEN;
     if ((r->Flags & NIF_TIP)) {
@@ -195,6 +196,19 @@ static void send_icon(TRAY *t, const MIME_TRAY_REQUEST *r, BOOLEAN hidden)
     if ((r->Flags & NIF_ICON) && picture((HICON)(ULONG_PTR)r->Icon, c->pixels, &c->width, &c->height))
         c->flags |= MIME_TRAY_HAS_PICTURE;
     send(c);
+}
+
+static void remove_icon(TRAY *t)
+{
+    MimeTrayCommand *c = new_command();
+    if (c) {
+        c->op = MIME_TRAY_REMOVE;
+        c->id = t->HostId;
+        send(c);
+    }
+    if (g_menu.State && g_menu.HostId == t->HostId)
+        g_menu.State = 0;
+    memset(t, 0, sizeof(*t));
 }
 
 ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR user_request, ULONG size)
@@ -220,6 +234,7 @@ ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR user_request, ULONG size)
         t->Used = TRUE;
         t->HostId = ++g_next_host_id;
         t->Process = p;
+        t->Owner = w->Thread && w->Thread->Process ? w->Thread->Process : p;
         t->Key = r.Key;
         t->Window = (HWND)(ULONG_PTR)r.Window;
         t->Id = r.Id;
@@ -248,17 +263,7 @@ ULONG NTAPI NtUserMimeTray(ULONG op, PUCHAR user_request, ULONG size)
     case MIME_TRAYOP_DELETE:
         if (!t)
             break;
-        {
-            MimeTrayCommand *c = new_command();
-            if (c) {
-                c->op = MIME_TRAY_REMOVE;
-                c->id = t->HostId;
-                send(c);
-            }
-        }
-        if (g_menu.State && g_menu.HostId == t->HostId)
-            g_menu.State = 0;
-        memset(t, 0, sizeof(*t));
+        remove_icon(t);
         result = 1;
         break;
     case MIME_TRAYOP_MENU:
@@ -402,18 +407,15 @@ void TrayHostEvent(const MimeInputEvent *ev)
 void TrayWindowDestroyed(WND *w)
 {
     HWND handle = WndHandle(w);
-    for (ULONG i = 0; i < TRAY_MAX; i++) {
-        TRAY *t = &g_tray[i];
-        if (!t->Used || t->Window != handle)
-            continue;
-        MimeTrayCommand *c = new_command();
-        if (c) {
-            c->op = MIME_TRAY_REMOVE;
-            c->id = t->HostId;
-            send(c);
-        }
-        if (g_menu.State && g_menu.HostId == t->HostId)
-            g_menu.State = 0;
-        memset(t, 0, sizeof(*t));
-    }
+    for (ULONG i = 0; i < TRAY_MAX; i++)
+        if (g_tray[i].Used && g_tray[i].Window == handle)
+            remove_icon(&g_tray[i]);
+}
+
+/* the icons a process kept go with it, as those of a taskbar do when the shell ends. */
+void TrayFreeProcess(W32PROCESS *p)
+{
+    for (ULONG i = 0; i < TRAY_MAX; i++)
+        if (g_tray[i].Used && (g_tray[i].Process == p || g_tray[i].Owner == p))
+            remove_icon(&g_tray[i]);
 }

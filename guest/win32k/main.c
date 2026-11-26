@@ -607,6 +607,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
         GfxShareFreeProcess(p);
         RawFreeProcess(p);
         ShellFreeProcess(p);
+        TrayFreeProcess(p);
         MenuFreeProcess(p);
         ClassFreeProcess(p);
         CursorFreeProcess(p);
