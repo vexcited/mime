@@ -59,18 +59,18 @@ static LONG clamp(LONG v, LONG low, LONG high)
 
 static void set_cursor(const MOVESIZE *ms)
 {
-    ULONG id = MIME_CURSOR_SIZE_ALL;
+    ULONG idc = 32646; /* IDC_SIZEALL */
     if (ms->Size) {
         if (ms->Edge == WMSZ_LEFT || ms->Edge == WMSZ_RIGHT)
-            id = MIME_CURSOR_SIZE_WE;
+            idc = 32644; /* IDC_SIZEWE */
         else if (ms->Edge == WMSZ_TOP || ms->Edge == WMSZ_BOTTOM)
-            id = MIME_CURSOR_SIZE_NS;
+            idc = 32645; /* IDC_SIZENS */
         else if (ms->Edge == WMSZ_TOPLEFT || ms->Edge == WMSZ_BOTTOMRIGHT)
-            id = MIME_CURSOR_SIZE_NWSE;
+            idc = 32642; /* IDC_SIZENWSE */
         else if (ms->Edge == WMSZ_TOPRIGHT || ms->Edge == WMSZ_BOTTOMLEFT)
-            id = MIME_CURSOR_SIZE_NESW;
+            idc = 32643; /* IDC_SIZENESW */
     }
-    HostSetCursor(id);
+    CursorSet(CursorSystem(idc));
 }
 
 /* the window while it still exists and belongs to this thread. */

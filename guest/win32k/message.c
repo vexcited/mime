@@ -1957,23 +1957,24 @@ static void fill_client(WND *w, HDC hdc, HBRUSH hbrush)
     RgnFree(&clip);
 }
 
-static ULONG system_cursor_for_hit(LONG hit)
+/* the cursor of the system for a place of the frame, which DefWindowProc sets as any program sets a cursor. */
+static HCURSOR system_cursor_for_hit(LONG hit)
 {
     switch (hit) {
     case HTLEFT:
     case HTRIGHT:
-        return MIME_CURSOR_SIZE_WE;
+        return CursorSystem(32644 /* IDC_SIZEWE */);
     case HTTOP:
     case HTBOTTOM:
-        return MIME_CURSOR_SIZE_NS;
+        return CursorSystem(32645 /* IDC_SIZENS */);
     case HTTOPLEFT:
     case HTBOTTOMRIGHT:
-        return MIME_CURSOR_SIZE_NWSE;
+        return CursorSystem(32642 /* IDC_SIZENWSE */);
     case HTTOPRIGHT:
     case HTBOTTOMLEFT:
-        return MIME_CURSOR_SIZE_NESW;
+        return CursorSystem(32643 /* IDC_SIZENESW */);
     default:
-        return MIME_CURSOR_ARROW;
+        return CursorSystem(32512 /* IDC_ARROW */);
     }
 }
 
@@ -2124,7 +2125,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         LONG hit = (SHORT)LOWORD(lparam);
         if (HIWORD(lparam) && hit >= HTLEFT && hit <= HTBOTTOMRIGHT) {
             /* whatever the frame is: a program that answers the hit test of a border itself gets the cursor too. */
-            HostSetCursor(w->Style & WS_MAXIMIZE ? MIME_CURSOR_ARROW : system_cursor_for_hit(hit));
+            CursorSet(system_cursor_for_hit(w->Style & WS_MAXIMIZE ? HTNOWHERE : hit));
             return TRUE;
         }
         if ((w->Style & WS_CHILD) && w->Parent && WndIsChildOf(w, WndDesktop()) && w->Parent->Thread == w->Thread) {
@@ -2132,7 +2133,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
                 return TRUE;
         }
         if (!HIWORD(lparam)) {
-            HostSetCursor(MIME_CURSOR_ARROW);
+            CursorSet(system_cursor_for_hit(HTNOWHERE));
             return FALSE;
         }
         if (hit == HTCLIENT) {
@@ -2147,7 +2148,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
                 HostBeep(MB_OK);
             return TRUE;
         }
-        HostSetCursor(system_cursor_for_hit(hit));
+        CursorSet(system_cursor_for_hit(hit));
         return TRUE;
     }
 

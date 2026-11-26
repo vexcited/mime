@@ -1102,7 +1102,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
                 WndActivate(popup, TRUE);
             MsgSend(w, WM_SETCURSOR, (WPARAM)WndHandle(w), MAKELPARAM(HTERROR, msg));
         } else if (remove) {
-            HostSetCursor(MIME_CURSOR_ARROW);
+            CursorSet(CursorSystem(32512 /* IDC_ARROW */));
         }
         *consumed = TRUE;
         return FALSE;
