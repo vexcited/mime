@@ -28,17 +28,17 @@ typedef struct MimePciCapture {
     MimePciHostFunction functions[];
 } MimePciCapture;
 
-/* linux/pci.c: the functions of pci domain 0 in bus order, false when sysfs lists none. */
+/* linux/pci.c: the functions of pci domain 0 in bus order, false with an error when sysfs lists none. */
 bool mime_pci_capture(MimePciCapture **out, size_t *size);
 
-/* what mime up read as root for the machine, which runs as the user; nullptr removes the one of an earlier start. */
-void mime_pci_save(const MimePaths *paths, const MimePciCapture *capture, size_t size);
+/* what mime up read as root for the machine, which runs as the user. false with an error when it cannot be written. */
+bool mime_pci_save(const MimePaths *paths, const MimePciCapture *capture, size_t size);
 
 /*
- * the bus of the machine, from what mime up saved or else what the user can read; after the firmware is placed. the
- * guest reads and writes copies of the host's configuration spaces, never the devices themselves.
+ * the bus of the machine, from what mime up saved, after the firmware is placed. false with an error when nothing was
+ * saved. the guest reads and writes copies of the host's configuration spaces, never the devices themselves.
  */
-void mime_pci_init(MimeVm *vm);
+bool mime_pci_init(MimeVm *vm);
 void mime_pci_destroy(MimeVm *vm);
 
 /* one access of a vcpu, false when it is not the bus's. data holds size bytes, read into or written from. */

@@ -10,15 +10,16 @@
 #include <stddef.h>
 
 /*
- * reads the dmi table and the acpi tables of this machine into one MimeFirmware blob, false when neither could be
- * read. root is needed, the /sys/firmware tables are root only.
+ * reads the acpi tables and the smbios of this machine into one MimeFirmware blob, with the edid of a panel when one
+ * has it. false with an error when the tables or the smbios cannot be read. root is needed, the /sys/firmware tables
+ * are root only.
  */
 bool mime_firmware_build(MimeFirmware **out, size_t *size);
 
-/* the firmware mime up saved for this start, false when there is none and the reference tables are served. */
+/* the firmware mime up saved for this start, false when there is none. */
 bool mime_firmware_load(const MimePaths *paths, MimeFirmware **out, size_t *size);
 
-/* saves the firmware read as root for the machine; nullptr removes the one of an earlier start. */
-void mime_firmware_save(const MimePaths *paths, const MimeFirmware *firmware, size_t size);
+/* saves the firmware read as root for the machine, false with an error when it cannot be written. */
+bool mime_firmware_save(const MimePaths *paths, const MimeFirmware *firmware, size_t size);
 
 #endif

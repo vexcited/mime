@@ -200,7 +200,8 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
         return false;
     }
 
-    mime_vm_init_boot(vm);
+    if (!mime_vm_init_boot(vm))
+        return false;
     MimeBootInfo *boot = vm->boot;
     boot->memory_block_shift = 14;
 

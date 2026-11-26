@@ -189,25 +189,25 @@ int mime_cmd_up(const MimePaths *paths, int argc, char **argv)
         mime_error("the machine starts as root so the guest sees this machine's firmware, run `sudo mime up`");
         return 1;
     }
+    /* the guest shows this machine and nothing made up, so a machine that cannot be read is not started. */
     MimeFirmware *firmware = nullptr;
     size_t size = 0;
     if (!mime_firmware_build(&firmware, &size))
-        firmware = nullptr;
+        return 1;
     /* and the pci configuration spaces past their headers, root only too. */
     MimePciCapture *pci = nullptr;
     size_t pci_size = 0;
-    if (!mime_pci_capture(&pci, &pci_size))
-        pci = nullptr;
-    /* everything else, the files of the machine and the machine itself, is the user's. */
-    if (!mime_invoker_drop() || !mime_paths_ensure(paths)) {
+    if (!mime_pci_capture(&pci, &pci_size)) {
         free(firmware);
-        free(pci);
         return 1;
     }
-    mime_firmware_save(paths, firmware, size);
+    /* everything else, the files of the machine and the machine itself, is the user's. */
+    bool saved = mime_invoker_drop() && mime_paths_ensure(paths) && mime_firmware_save(paths, firmware, size) &&
+                 mime_pci_save(paths, pci, pci_size);
     free(firmware);
-    mime_pci_save(paths, pci, pci_size);
     free(pci);
+    if (!saved)
+        return 1;
 #endif
     return machine_up(paths, false);
 }

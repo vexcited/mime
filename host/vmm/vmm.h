@@ -212,7 +212,7 @@ static inline MimeFsHandle **mime_fs_handle_slot(MimeVm *vm, uint32_t index)
 
 /* machine.c, shared by every host. */
 uint64_t mime_unix_to_filetime(struct timespec ts);
-void mime_vm_init_boot(MimeVm *vm);
+bool mime_vm_init_boot(MimeVm *vm);
 
 /* vm.c on macOS, linux/kvm.c on linux. */
 void mime_host_volume_label(char *out, size_t size);

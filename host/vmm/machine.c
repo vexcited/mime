@@ -95,7 +95,7 @@ static void fill_identity(MimeVm *vm)
 }
 
 /* the boot information at the start of RAM; the platform adds its timer and interrupt controller. */
-void mime_vm_init_boot(MimeVm *vm)
+bool mime_vm_init_boot(MimeVm *vm)
 {
     vm->shared = (MimeSharedPage *)(vm->ram + MIME_LAYOUT_SHARED);
     vm->boot = (MimeBootInfo *)(vm->ram + MIME_LAYOUT_BOOT_INFO);
@@ -114,22 +114,25 @@ void mime_vm_init_boot(MimeVm *vm)
     boot->cpu_count = vm->vcpu_count;
     boot->rom_phys = MIME_ROM_BASE;
     boot->rom_size = mime_rom_size();
-    if (mime_firmware_load(vm->paths, (MimeFirmware **)&vm->firmware, &vm->firmware_size)) {
-        /* the guest reads it through the direct map, so it lives in the ram the loader keeps free. */
-        memcpy(vm->ram + MIME_LAYOUT_FIRMWARE, vm->firmware, vm->firmware_size);
-        free(vm->firmware);
-        vm->firmware = nullptr;
-        boot->firmware_phys = MIME_RAM_BASE + MIME_LAYOUT_FIRMWARE;
-        boot->firmware_size = (uint32_t)vm->firmware_size;
-        const MimeFirmware *firmware = (const MimeFirmware *)(vm->ram + MIME_LAYOUT_FIRMWARE);
-        if (firmware->edid_length == sizeof(boot->monitor_edid)) {
-            memcpy(boot->monitor_edid, (const uint8_t *)firmware + firmware->edid_offset, sizeof(boot->monitor_edid));
-            boot->monitor_edid_size = sizeof(boot->monitor_edid);
-        }
-        mime_info("firmware: %zu bytes of this machine", vm->firmware_size);
-    } else {
-        mime_info("firmware: the reference tables");
+#if defined(__x86_64__)
+    /* an x64 guest has the firmware of this machine and no other. an arm64 host has no acpi or smbios to read. */
+    if (!mime_firmware_load(vm->paths, (MimeFirmware **)&vm->firmware, &vm->firmware_size)) {
+        mime_error("the firmware of this machine was not saved, start the machine with `sudo mime up`");
+        return false;
     }
+    /* the guest reads it through the direct map, so it lives in the ram the loader keeps free. */
+    memcpy(vm->ram + MIME_LAYOUT_FIRMWARE, vm->firmware, vm->firmware_size);
+    free(vm->firmware);
+    vm->firmware = nullptr;
+    boot->firmware_phys = MIME_RAM_BASE + MIME_LAYOUT_FIRMWARE;
+    boot->firmware_size = (uint32_t)vm->firmware_size;
+    const MimeFirmware *firmware = (const MimeFirmware *)(vm->ram + MIME_LAYOUT_FIRMWARE);
+    if (firmware->edid_length == sizeof(boot->monitor_edid)) {
+        memcpy(boot->monitor_edid, (const uint8_t *)firmware + firmware->edid_offset, sizeof(boot->monitor_edid));
+        boot->monitor_edid_size = sizeof(boot->monitor_edid);
+    }
+    mime_info("firmware: %zu bytes of this machine", vm->firmware_size);
+#endif
     mime_strlcpy(boot->system_root, "C:\\Windows", sizeof(boot->system_root));
     char feature_cache[MIME_PATH_MAX];
     mime_path_join(feature_cache, sizeof(feature_cache), vm->paths->cache, "features");
@@ -152,6 +155,7 @@ void mime_vm_init_boot(MimeVm *vm)
     }
     vm->boot_stack_top = MIME_KVA_PHYSMAP + boot->boot_stack_phys + MIME_LAYOUT_BOOT_STACK_SIZE;
     fill_identity(vm);
+    return true;
 }
 
 void mime_vm_request_stop(MimeVm *vm, int exit_code)

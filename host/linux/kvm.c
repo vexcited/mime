@@ -426,8 +426,8 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     sigemptyset(&sa.sa_mask);
     sigaction(KICK_SIGNAL, &sa, nullptr);
 
-    mime_vm_init_boot(vm);
-    mime_pci_init(vm);
+    if (!mime_vm_init_boot(vm) || !mime_pci_init(vm))
+        return false;
     vm->boot->irq_intid = MIME_X64_IRQ_VECTOR;
     vm->boot->memory_block_shift = transparent_huge_pages(vm) ? 21 : 12;
     vm->boot->swap_size = host_swap_size();

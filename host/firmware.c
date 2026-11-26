@@ -152,8 +152,10 @@ static void take_acpi(MimeFirmware *f, uint8_t *blob, size_t cap, size_t *at, si
 bool mime_firmware_build(MimeFirmware **out, size_t *size)
 {
     uint8_t *blob = firmware_alloc();
-    if (!blob)
+    if (!blob) {
+        mime_error("cannot reserve memory for this machine's firmware");
         return false;
+    }
     MimeFirmware *f = (MimeFirmware *)blob;
     f->magic = MIME_FIRMWARE_MAGIC;
     /* the table array is walked before its count is known, so it sits at the front. */
@@ -162,9 +164,13 @@ bool mime_firmware_build(MimeFirmware **out, size_t *size)
     take_acpi(f, blob, MIME_FIRMWARE_MAX, &at, tables_at);
     take_smbios(f, blob, MIME_FIRMWARE_MAX, &at);
     take_edid(f, blob, MIME_FIRMWARE_MAX, &at);
-    if (!f->count && !f->smbios_length && !f->edid_length) {
+    /* the guest has no tables but this machine's, so there is no machine without them. a panel may have no edid. */
+    const char *missing = !f->count           ? "acpi tables from /sys/firmware/acpi/tables"
+                          : !f->smbios_length ? "smbios from /sys/firmware/dmi/tables"
+                                              : nullptr;
+    if (missing) {
         free(blob);
-        mime_warn("firmware: nothing of this machine's firmware could be read, the reference data is served");
+        mime_error("cannot read this machine's %s, so the machine does not start", missing);
         return false;
     }
     mime_info("firmware: %u acpi tables, smbios %u bytes, edid %u of this machine", f->count, f->smbios_length,
@@ -204,24 +210,16 @@ bool mime_firmware_load(const MimePaths *paths, MimeFirmware **out, size_t *size
     return false;
 }
 
-void mime_firmware_save(const MimePaths *paths, const MimeFirmware *firmware, size_t size)
+bool mime_firmware_save(const MimePaths *paths, const MimeFirmware *firmware, size_t size)
 {
     char path[MIME_PATH_MAX];
-    if (!firmware_path(paths, path, sizeof(path)))
-        return;
-    /* without a read of this machine the reference tables are served, not those of an earlier start. */
-    if (!firmware) {
+    int fd = firmware_path(paths, path, sizeof(path)) ? open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600) : -1;
+    bool saved = fd >= 0 && write(fd, firmware, size) == (ssize_t)size;
+    if (fd >= 0)
+        close(fd);
+    if (!saved) {
+        mime_error("cannot write this machine's firmware to %s", path);
         unlink(path);
-        return;
     }
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (fd < 0 || write(fd, firmware, size) != (ssize_t)size) {
-        mime_warn("cannot write %s, the guest gets the reference firmware", path);
-        if (fd >= 0) {
-            close(fd);
-            unlink(path);
-        }
-        return;
-    }
-    close(fd);
+    return saved;
 }

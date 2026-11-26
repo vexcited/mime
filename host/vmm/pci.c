@@ -350,25 +350,18 @@ static bool pci_path(const MimePaths *paths, char *out, size_t size)
     return out[0] != 0;
 }
 
-void mime_pci_save(const MimePaths *paths, const MimePciCapture *capture, size_t size)
+bool mime_pci_save(const MimePaths *paths, const MimePciCapture *capture, size_t size)
 {
     char path[MIME_PATH_MAX];
-    if (!pci_path(paths, path, sizeof(path)))
-        return;
-    if (!capture) {
+    int fd = pci_path(paths, path, sizeof(path)) ? open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600) : -1;
+    bool saved = fd >= 0 && write(fd, capture, size) == (ssize_t)size;
+    if (fd >= 0)
+        close(fd);
+    if (!saved) {
+        mime_error("cannot write this machine's pci devices to %s", path);
         unlink(path);
-        return;
     }
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (fd < 0 || write(fd, capture, size) != (ssize_t)size) {
-        mime_warn("cannot write %s, the guest gets the pci headers the user can read", path);
-        if (fd >= 0) {
-            close(fd);
-            unlink(path);
-        }
-        return;
-    }
-    close(fd);
+    return saved;
 }
 
 static MimePciCapture *load(const MimePaths *paths)
@@ -427,23 +420,19 @@ static void find_ecam(MimeVm *vm, MimePciBus *b)
     }
 }
 
-void mime_pci_init(MimeVm *vm)
+bool mime_pci_init(MimeVm *vm)
 {
 #if defined(__x86_64__)
     MimePciCapture *capture = load(vm->paths);
-#ifdef __linux__
-    size_t size;
-    if (!capture && !mime_pci_capture(&capture, &size))
-        capture = nullptr;
-#endif
     if (!capture) {
-        mime_warn("pci: nothing of this machine's pci could be read, the bus is empty");
-        return;
+        mime_error("the pci devices of this machine were not saved, start the machine with `sudo mime up`");
+        return false;
     }
     MimePciBus *b = calloc(1, sizeof(*b) + capture->count * sizeof(PciFunction));
     if (!b) {
         free(capture);
-        return;
+        mime_error("cannot reserve memory for the pci bus");
+        return false;
     }
     for (uint32_t i = 0; i < capture->count; i++) {
         const MimePciHostFunction *h = &capture->functions[i];
@@ -480,6 +469,7 @@ void mime_pci_init(MimeVm *vm)
 #else
     (void)vm;
 #endif
+    return true;
 }
 
 void mime_pci_destroy(MimeVm *vm)

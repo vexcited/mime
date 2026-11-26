@@ -124,9 +124,7 @@ static int by_address(const void *a, const void *b)
 bool mime_pci_capture(MimePciCapture **out, size_t *size)
 {
     DIR *dir = opendir(PCI_DEVICES);
-    if (!dir)
-        return false;
-    MimePciCapture *capture = calloc(1, sizeof(*capture));
+    MimePciCapture *capture = dir ? calloc(1, sizeof(*capture)) : nullptr;
     uint32_t room = 0;
     struct dirent *e;
     while (capture && (e = readdir(dir))) {
@@ -159,9 +157,11 @@ bool mime_pci_capture(MimePciCapture **out, size_t *size)
         read_sizes(e->d_name, f->sizes);
         capture->count++;
     }
-    closedir(dir);
+    if (dir)
+        closedir(dir);
     if (!capture || !capture->count) {
         free(capture);
+        mime_error("cannot read this machine's pci devices from " PCI_DEVICES ", so the machine does not start");
         return false;
     }
     capture->magic = MIME_PCI_MAGIC;

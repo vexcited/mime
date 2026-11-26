@@ -391,7 +391,7 @@ static const IOP_PCI_DEVICE *pci_basic_display(void)
 
 #endif
 
-/* a host whose pci could not be read keeps the vga device of the reference machine. */
+/* a host whose pci has no vga controller keeps the vga device of the reference machine. */
 static PCWSTR basic_display_instance(void)
 {
 #if !defined(__aarch64__)
