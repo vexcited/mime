@@ -156,6 +156,9 @@ static void drop_watch(LONG slot);
  */
 static void changed_locked(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree)
 {
+    /* a directory made as \a\b\ is the entry of \a\b. */
+    while (chars > 1 && name[chars - 1] == '\\')
+        chars--;
     ULONG parent = parent_chars(name, chars);
     ATTR_CHANGE *c = &g_ring[(ULONG)g_seq % ATTR_RING];
     c->Volume = volume;
@@ -323,7 +326,8 @@ BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token)
 {
     ULONG chars = name->Length / sizeof(WCHAR);
     *token = 0;
-    if (g_disabled || !chars || chars > 400)
+    /* a trailing backslash asks for a directory, which the answer for the plain name does not tell. */
+    if (g_disabled || !chars || chars > 400 || (chars > 1 && name->Buffer[chars - 1] == '\\'))
         return FALSE;
     ULONG dir = parent_chars(name->Buffer, chars);
     ULONG hash = hash_of(name->Buffer, dir);
@@ -347,7 +351,7 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
     if (!__atomic_load_n(&g_entries, __ATOMIC_ACQUIRE))
         return FALSE;
     ULONG chars = name->Length / sizeof(WCHAR);
-    if (!chars)
+    if (!chars || (chars > 1 && name->Buffer[chars - 1] == '\\'))
         return FALSE;
     ULONG hash = hash_of(name->Buffer, chars);
     BOOLEAN found = FALSE;
