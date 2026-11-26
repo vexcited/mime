@@ -1,5 +1,6 @@
 ; the namespaces of the shell folders, the desktop, this pc, the control panel and the others, as the SOFTWARE hive of
-; the pinned image has them. the 32-bit side is made by regc.
+; the pinned image has them. the 32-bit side is made by regc. the desktop leaves out Gallery, which needs Windows Search
+; and does not open, and Libraries, which stays empty: both only cluttered the folder pickers.
 
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommonPlaces\NameSpace]
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommonPlaces\NameSpace\DelegateFolders]
@@ -100,9 +101,6 @@
 @="CLSID_FrequentPlacesFolder"
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}]
 @="Removable Drives"
-[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{031E4825-7B94-4dc3-B131-E946B44C8DD5}]
-@="UsersLibraries"
-"Removal Message"="@shell32.dll,-9047"
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{04731B67-D933-450a-90E6-4ACD2E9408FE}]
 @="CLSID_SearchFolder"
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{11016101-E366-4D22-BC06-4ADA335C892B}]
@@ -154,8 +152,6 @@
 @="CLSID_StartMenuProviderFolder"
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{e345f35f-9397-435c-8f95-4e922c26259e}]
 @="CLSID_StartMenuPathCompleteProviderFolder"
-[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}]
-@="{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}"
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{EDC978D6-4D53-4b2f-A265-5805674BE568}]
 @="StreamBackedFolder"
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}]
