@@ -367,7 +367,7 @@ void TrayHostEvent(const MimeInputEvent *ev)
         /* send a right-click request and forward the resulting popup menu to the host. */
         g_menu.State = 1;
         g_menu.HostId = t->HostId;
-        g_menu.Process = t->Process;
+        g_menu.Process = t->Owner;
         g_menu.Window = t->Window;
         g_menu.Deadline = now_ms() + MENU_ASK_MS;
         click(t, 0, WM_CONTEXTMENU, WM_RBUTTONDOWN, WM_RBUTTONUP, x, y);
