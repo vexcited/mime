@@ -2,7 +2,7 @@ LIBRARY dwmapi.dll
 EXPORTS
     DwmDefWindowProc=_DwmDefWindowProc@20
     DwmEnableBlurBehindWindow=_DwmEnableBlurBehindWindow@8
-    DwmEnableComposition=_DwmEnableComposition@4
+    DwmEnableComposition=_DwmEnableComposition@4 @102
     DwmEnableMMCSS=_DwmEnableMMCSS@4
     DwmExtendFrameIntoClientArea=_DwmExtendFrameIntoClientArea@8
     DwmFlush=_DwmFlush@0
