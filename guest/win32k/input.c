@@ -1300,6 +1300,19 @@ static BOOLEAN newer_size_queued(W32THREAD *t, const QUEUED_MESSAGE *from)
 }
 
 /* a host focus event for a window of the thread that is still waiting in its queue. */
+/* a focus the host is about to give a window that was shown without activation, which windows would not activate. */
+static BOOLEAN refused_gain_queued(W32THREAD *t, const QUEUED_MESSAGE *current)
+{
+    for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink) {
+        QUEUED_MESSAGE *q = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
+        if (q == current || q->Kind != QM_INPUT || q->Input.type != MIME_INPUT_WINDOW_FOCUS)
+            continue;
+        WND *w = WndLookup((HWND)(ULONG_PTR)q->Input.window_id);
+        return q->Input.x && w && w->ShownInactive;
+    }
+    return FALSE;
+}
+
 static BOOLEAN focus_gain_queued(W32THREAD *t)
 {
     for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink) {
@@ -1399,6 +1412,17 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
                 WndUpdateHostConfig(pending, TRUE);
                 break;
             }
+            /*
+             * a window shown without activation is not activated by windows, where kwin focuses each window it maps:
+             * the active window asks the host for the focus back. a click activates it as any other.
+             */
+            if (w->ShownInactive) {
+                w->ShownInactive = FALSE;
+                if (InputForeground && InputForeground != w && WndIsVisible(InputForeground)) {
+                    WndUpdateHostConfig(InputForeground, TRUE);
+                    break;
+                }
+            }
             if (InputForeground != w && !(w->Style & WS_DISABLED)) {
                 WndActivatedByHost = TRUE;
                 WndActivate(w, TRUE);
@@ -1418,7 +1442,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
                 WndHostFocus = nullptr;
             WndHostPending = nullptr;
         }
-        if (!ev->x && InputForeground == w) {
+        if (!ev->x && InputForeground == w && !refused_gain_queued(t, qm)) {
             UserReference(&w->Header);
             InputSetForeground(nullptr);
             t->Active = nullptr;

@@ -960,6 +960,7 @@ typedef struct WND {
     DWORD ExStyle;
     ULONG Flags;
     DWORD CreateStyle; /* the style CreateWindowEx was asked for. */
+    BOOLEAN ShownInactive; /* shown without activation: the focus the host gives it next is not the program's. */
     USHORT Fnid;       /* FNID_* of the procedure user32 runs it with, from its class or NtUserSetWindowFNID. */
     RECT WindowRect;  /* screen coordinates of the window's DPI awareness. */
     RECT ClientRect;  /* screen coordinates of the window's DPI awareness. */

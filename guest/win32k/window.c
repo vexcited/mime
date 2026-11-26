@@ -1113,6 +1113,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     if (WndIsTopLevel(w)) {
         if ((pos.flags & SWP_HIDEWINDOW) && w->Surface)
             w->Flags |= WNDF_SURFACE_GONE;
+        if (pos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW))
+            w->ShownInactive = (pos.flags & SWP_SHOWWINDOW) && (pos.flags & SWP_NOACTIVATE) && InputForeground != w;
         if (visible && !(w->Style & WS_MINIMIZE))
             WndEnsureSurfaceShown(w);
         if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible && !(w->Style & WS_MINIMIZE)) {
@@ -2082,6 +2084,7 @@ void WndActivate(WND *w, BOOLEAN click)
     }
     WndUpdateHostConfig(w, !WndActivatedByHost);
     WndHostPending = WndActivatedByHost || WndHostFocus == w ? nullptr : w;
+    w->ShownInactive = FALSE;
     if (!old || old->Thread != w->Thread)
         WndSendActivateApp(w->Thread, TRUE, old && old->Thread ? old->Thread->Tid : nullptr);
     MsgSendEvent(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
