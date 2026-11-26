@@ -31,7 +31,13 @@ typedef struct TREEVIEW {
     COLORREF Bk, Text, Line, InsertMark;
     HWND Tooltips;
     UINT ScrollTime;
+    /* the label being edited, and the selected item a click may start editing when the double click time passes. */
+    HWND Edit;
+    NODE *Editing, *PendingEdit;
+    BOOL EditEnding, Tracking;
 } TREEVIEW;
+
+#define EDIT_TIMER 0x7E1
 
 static TREEVIEW *get_data(HWND hwnd)
 {
@@ -308,7 +314,11 @@ static BOOL select_item(TREEVIEW *tv, NODE *n, UINT cause)
                 expand(tv, p, TVE_EXPAND, TRUE);
         if ((tv->Style & TVS_SINGLEEXPAND) && cause != TVC_UNKNOWN) {
             expand(tv, n, TVE_EXPAND, TRUE);
-            if (old && old->Magic == TREE_MAGIC && old != n->Parent)
+            /* the old item folds unless it holds the new one or the extended style keeps it open. */
+            BOOL ancestor = FALSE;
+            for (NODE *p = n->Parent; p && p->Magic == TREE_MAGIC; p = p->Parent)
+                ancestor |= p == old;
+            if (old && old->Magic == TREE_MAGIC && !ancestor && !(tv->ExStyle & TVS_EX_NOSINGLECOLLAPSE))
                 expand(tv, old, TVE_COLLAPSE, TRUE);
         }
         ensure_visible(tv, n);
@@ -439,6 +449,10 @@ static void delete_subtree(TREEVIEW *tv, NODE *n)
         tv->Drop = nullptr;
     if (tv->Hot == n)
         tv->Hot = nullptr;
+    if (tv->PendingEdit == n)
+        tv->PendingEdit = nullptr;
+    if (tv->Editing == n)
+        tv->Editing = nullptr;
     if (n->Text != LPSTR_TEXTCALLBACKW)
         CcFree(n->Text);
     n->Magic = 0;
@@ -611,6 +625,8 @@ static void paint(TREEVIEW *tv, HDC dc, const RECT *update)
     SetBkMode(dc, TRANSPARENT);
     BOOL focused = GetFocus() == tv->Hwnd;
     COLORREF line = tv->Line == CLR_DEFAULT ? GetSysColor(COLOR_GRAYTEXT) : tv->Line;
+    /* a theme with item parts, like Explorer's, draws selection and hot items behind the icon and the label. */
+    BOOL themed_items = tv->Theme && IsThemePartDefined(tv->Theme, CC_TVP_TREEITEM, 0);
     for (NODE *n = tv->Root.Child; n; n = next_visible(n)) {
         ROW_RECTS r;
         if (n->Row < tv->Top || !row_rects(tv, n, &r))
@@ -633,11 +649,13 @@ static void paint(TREEVIEW *tv, HDC dc, const RECT *update)
         if ((tv->Style & TVS_HASBUTTONS) && (!at_root || (tv->Style & TVS_LINESATROOT)) && has_children(tv, n)) {
             BOOL open = (n->State & TVIS_EXPANDED) != 0;
             SIZE size = {9, 9};
+            /* the hot glyph of an item under the mouse, part 4. */
+            int part = themed_items && n == tv->Hot ? 4 : CC_TVP_GLYPH;
             if (tv->Theme)
-                GetThemePartSize(tv->Theme, dc, CC_TVP_GLYPH, open ? 2 : 1, nullptr, TS_DRAW, &size);
+                GetThemePartSize(tv->Theme, dc, part, open ? 2 : 1, nullptr, TS_DRAW, &size);
             RECT g = {cx - size.cx / 2, mid - size.cy / 2, cx - size.cx / 2 + size.cx, mid - size.cy / 2 + size.cy};
             if (tv->Theme) {
-                DrawThemeBackground(tv->Theme, dc, CC_TVP_GLYPH, open ? 2 : 1, &g, nullptr);
+                DrawThemeBackground(tv->Theme, dc, part, open ? 2 : 1, &g, nullptr);
             } else {
                 CcFillSolid(dc, &g, bk);
                 FrameRect(dc, &g, GetSysColorBrush(COLOR_GRAYTEXT));
@@ -658,6 +676,27 @@ static void paint(TREEVIEW *tv, HDC dc, const RECT *update)
                                ILD_NORMAL);
         }
         BOOL selected = n == tv->Caret || n == tv->Drop;
+        if (themed_items) {
+            BOOL hot = n == tv->Hot, shown = selected && (focused || n == tv->Drop || (tv->Style & TVS_SHOWSELALWAYS));
+            int state = shown ? (hot ? 6 : focused || n == tv->Drop ? 3 : 5) : hot ? 2 : 0;
+            if (state) {
+                RECT back = {tv->Normal ? r.Image.left : r.Label.left, r.Row.top, r.Label.right, r.Row.bottom};
+                if (tv->Style & TVS_FULLROWSELECT) {
+                    back.left = 0;
+                    back.right = client.right;
+                }
+                DrawThemeBackground(tv->Theme, dc, CC_TVP_TREEITEM, state, &back, nullptr);
+                /* the focus is a rounded border in the highlight color over the selection, as on windows 11. */
+                if (n == tv->Caret && focused && !CcFocusCuesHidden(tv->Hwnd)) {
+                    HPEN pen = CreatePen(PS_SOLID, 1, GetSysColor(COLOR_HIGHLIGHT));
+                    HGDIOBJ old_pen = SelectObject(dc, pen), old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                    RoundRect(dc, back.left, back.top, back.right, back.bottom, 4, 4);
+                    SelectObject(dc, old_brush);
+                    SelectObject(dc, old_pen);
+                    DeleteObject(pen);
+                }
+            }
+        }
         if (tv->Normal) {
             int image = item_image(tv, n, n == tv->Caret);
             int icy;
@@ -672,7 +711,8 @@ static void paint(TREEVIEW *tv, HDC dc, const RECT *update)
         RECT label = r.Label;
         if ((tv->Style & TVS_FULLROWSELECT) && !(tv->Style & TVS_HASLINES))
             label.right = client.right;
-        if (selected && (focused || n == tv->Drop)) {
+        if (themed_items) {
+        } else if (selected && (focused || n == tv->Drop)) {
             CcFillSolid(dc, &label, GetSysColor(COLOR_HIGHLIGHT));
             text_color = GetSysColor(COLOR_HIGHLIGHTTEXT);
         } else if (selected && (tv->Style & TVS_SHOWSELALWAYS)) {
@@ -695,7 +735,7 @@ static void paint(TREEVIEW *tv, HDC dc, const RECT *update)
             SelectObject(dc, tree_font(tv));
             DeleteObject(bold);
         }
-        if (n == tv->Caret && focused && !CcFocusCuesHidden(tv->Hwnd))
+        if (n == tv->Caret && focused && !themed_items && !CcFocusCuesHidden(tv->Hwnd))
             DrawFocusRect(dc, &label);
     }
     SelectObject(dc, old);
@@ -819,6 +859,147 @@ static void sort_children(TREEVIEW *tv, NODE *parent, PFNTVCOMPARE compare, LPAR
             sort_children(tv, c, compare, param, TRUE);
 }
 
+/* ------------------------------------------------------------------ label editing */
+
+static void end_edit(TREEVIEW *tv, BOOL cancel)
+{
+    if (!tv->Edit || tv->EditEnding)
+        return;
+    tv->EditEnding = TRUE;
+    HWND edit = tv->Edit;
+    NODE *n = tv->Editing;
+    WCHAR text[260] = {0};
+    GetWindowTextW(edit, text, 260);
+    BOOL accept = FALSE;
+    if (n) {
+        if (tv->Notify.Unicode) {
+            NMTVDISPINFOW nm = {};
+            nm.item.mask = TVIF_HANDLE | TVIF_PARAM | TVIF_TEXT;
+            nm.item.hItem = n;
+            nm.item.lParam = n->Param;
+            nm.item.pszText = cancel ? nullptr : text;
+            nm.item.cchTextMax = 260;
+            accept = CcNotify(&tv->Notify, TVN_ENDLABELEDITW, &nm.hdr) != 0;
+        } else {
+            char ansi[520];
+            WideCharToMultiByte(CP_ACP, 0, text, -1, ansi, sizeof(ansi), nullptr, nullptr);
+            NMTVDISPINFOA nm = {};
+            nm.item.mask = TVIF_HANDLE | TVIF_PARAM | TVIF_TEXT;
+            nm.item.hItem = n;
+            nm.item.lParam = n->Param;
+            nm.item.pszText = cancel ? nullptr : ansi;
+            nm.item.cchTextMax = sizeof(ansi);
+            accept = CcNotify(&tv->Notify, TVN_ENDLABELEDITW, &nm.hdr) != 0;
+        }
+        /* the parent may have deleted the item meanwhile. */
+        if (!cancel && accept && tv->Editing == n && !CcIsCallback(n->Text))
+            CcSetText(&n->Text, text);
+    }
+    tv->Edit = nullptr;
+    tv->Editing = nullptr;
+    DestroyWindow(edit);
+    tv->EditEnding = FALSE;
+    InvalidateRect(tv->Hwnd, nullptr, TRUE);
+}
+
+static LRESULT CALLBACK edit_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data)
+{
+    TREEVIEW *tv = (TREEVIEW *)data;
+    switch (msg) {
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS;
+    case WM_KEYDOWN:
+        if (wparam == VK_RETURN || wparam == VK_ESCAPE) {
+            end_edit(tv, wparam == VK_ESCAPE);
+            return 0;
+        }
+        break;
+    case WM_CHAR:
+        if (wparam == VK_RETURN || wparam == VK_ESCAPE)
+            return 0;
+        break;
+    case WM_KILLFOCUS: {
+        LRESULT result = DefSubclassProc(hwnd, msg, wparam, lparam);
+        end_edit(tv, FALSE);
+        return result;
+    }
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, edit_proc, id);
+        break;
+    }
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+static HWND edit_label(TREEVIEW *tv, NODE *n)
+{
+    if (!n)
+        return nullptr;
+    if (tv->Edit)
+        end_edit(tv, FALSE);
+    tv->PendingEdit = nullptr;
+    KillTimer(tv->Hwnd, EDIT_TIMER);
+    ensure_visible(tv, n);
+    WCHAR text[260];
+    item_text(tv, n, text, 260);
+    LRESULT refused;
+    if (tv->Notify.Unicode) {
+        NMTVDISPINFOW nm = {};
+        nm.item.mask = TVIF_HANDLE | TVIF_PARAM | TVIF_STATE | TVIF_TEXT;
+        nm.item.hItem = n;
+        nm.item.state = n->State;
+        nm.item.lParam = n->Param;
+        nm.item.pszText = text;
+        nm.item.cchTextMax = 260;
+        refused = CcNotify(&tv->Notify, TVN_BEGINLABELEDITW, &nm.hdr);
+    } else {
+        char ansi[520];
+        WideCharToMultiByte(CP_ACP, 0, text, -1, ansi, sizeof(ansi), nullptr, nullptr);
+        NMTVDISPINFOA nm = {};
+        nm.item.mask = TVIF_HANDLE | TVIF_PARAM | TVIF_STATE | TVIF_TEXT;
+        nm.item.hItem = n;
+        nm.item.state = n->State;
+        nm.item.lParam = n->Param;
+        nm.item.pszText = ansi;
+        nm.item.cchTextMax = sizeof(ansi);
+        refused = CcNotify(&tv->Notify, TVN_BEGINLABELEDITW, &nm.hdr);
+    }
+    if (refused || n->Magic != TREE_MAGIC)
+        return nullptr;
+    ROW_RECTS r;
+    if (!row_rects(tv, n, &r))
+        return nullptr;
+    RECT client;
+    GetClientRect(tv->Hwnd, &client);
+    int width = r.Label.right - r.Label.left + 4 * GetSystemMetrics(SM_CXEDGE) + 24;
+    if (r.Label.left + width > client.right)
+        width = client.right - r.Label.left;
+    HWND edit = CreateWindowExW(0, L"Edit", text, WS_CHILD | WS_BORDER | ES_AUTOHSCROLL | ES_LEFT, r.Label.left,
+                                r.Row.top, width > 20 ? width : 20, r.Row.bottom - r.Row.top, tv->Hwnd, nullptr,
+                                (HINSTANCE)GetWindowLongPtrW(tv->Hwnd, GWLP_HINSTANCE), nullptr);
+    if (!edit)
+        return nullptr;
+    SendMessageW(edit, WM_SETFONT, (WPARAM)tree_font(tv), FALSE);
+    SendMessageW(edit, EM_SETSEL, 0, -1);
+    SetWindowSubclass(edit, edit_proc, 0, (DWORD_PTR)tv);
+    tv->Edit = edit;
+    tv->Editing = n;
+    ShowWindow(edit, SW_SHOW);
+    SetFocus(edit);
+    return edit;
+}
+
+static void track_hot(TREEVIEW *tv, NODE *n)
+{
+    if (n == tv->Hot)
+        return;
+    tv->Hot = n;
+    if (n && !tv->Tracking) {
+        TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, tv->Hwnd, 0};
+        tv->Tracking = TrackMouseEvent(&track);
+    }
+    InvalidateRect(tv->Hwnd, nullptr, FALSE);
+}
+
 LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     TREEVIEW *tv = get_data(hwnd);
@@ -847,6 +1028,9 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         relayout(tv);
         return 0;
     case WM_DESTROY:
+        if (tv->Edit)
+            end_edit(tv, TRUE);
+        KillTimer(hwnd, EDIT_TIMER);
         delete_item(tv, TVI_ROOT);
         if (tv->Theme)
             CloseThemeData(tv->Theme);
@@ -908,6 +1092,10 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         POINT pt = {(short)LOWORD(lparam), (short)HIWORD(lparam)};
         UINT flags;
         NODE *n = hit_test(tv, pt, &flags);
+        /* a click on the label of the selected item edits it when no double click follows. */
+        BOOL was_caret = n && n == tv->Caret && GetFocus() == hwnd;
+        KillTimer(hwnd, EDIT_TIMER);
+        tv->PendingEdit = nullptr;
         SetFocus(hwnd);
         if (msg == WM_RBUTTONDOWN) {
             if (!CcNotifyHdr(&tv->Notify, NM_RCLICK)) {
@@ -925,6 +1113,10 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             InvalidateRect(hwnd, nullptr, TRUE);
         } else if (n && (flags & (TVHT_ONITEM | TVHT_ONITEMRIGHT | TVHT_ONITEMINDENT))) {
             select_item(tv, n, TVC_BYMOUSE);
+            if (msg == WM_LBUTTONDOWN && was_caret && (flags & TVHT_ONITEMLABEL) && (tv->Style & TVS_EDITLABELS)) {
+                tv->PendingEdit = n;
+                SetTimer(hwnd, EDIT_TIMER, GetDoubleClickTime(), nullptr);
+            }
         }
         if (msg == WM_LBUTTONDBLCLK) {
             if (!CcNotifyHdr(&tv->Notify, NM_DBLCLK) && n && (flags & (TVHT_ONITEM | TVHT_ONITEMRIGHT)))
@@ -996,12 +1188,39 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         case VK_RETURN:
             CcNotifyHdr(&tv->Notify, NM_RETURN);
             break;
+        case VK_F2:
+            if (c && (tv->Style & TVS_EDITLABELS))
+                edit_label(tv, c);
+            break;
         }
         if (target)
             select_item(tv, target, TVC_BYKEYBOARD);
         return 0;
     }
+    case WM_TIMER:
+        if (wparam == EDIT_TIMER) {
+            KillTimer(hwnd, EDIT_TIMER);
+            if (tv->PendingEdit && tv->PendingEdit == tv->Caret && GetFocus() == hwnd)
+                edit_label(tv, tv->PendingEdit);
+            tv->PendingEdit = nullptr;
+            return 0;
+        }
+        break;
+    case WM_MOUSEMOVE: {
+        POINT pt = {(short)LOWORD(lparam), (short)HIWORD(lparam)};
+        UINT flags;
+        NODE *n = hit_test(tv, pt, &flags);
+        if (tv->Theme || (tv->Style & TVS_TRACKSELECT))
+            track_hot(tv, n && (flags & (TVHT_ONITEM | TVHT_ONITEMBUTTON)) ? n : nullptr);
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        tv->Tracking = FALSE;
+        track_hot(tv, nullptr);
+        return 0;
     case WM_VSCROLL: {
+        if (tv->Edit)
+            end_edit(tv, FALSE);
         SCROLLINFO si = {sizeof(si), SIF_ALL};
         GetScrollInfo(hwnd, SB_VERT, &si);
         int top = tv->Top;
@@ -1035,6 +1254,8 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return 0;
     }
     case WM_MOUSEWHEEL: {
+        if (tv->Edit)
+            end_edit(tv, FALSE);
         int top = tv->Top - (short)HIWORD(wparam) / WHEEL_DELTA * 3;
         RECT client;
         GetClientRect(hwnd, &client);
@@ -1240,11 +1461,16 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return tv->ExStyle;
     case TVM_EDITLABELA:
     case TVM_EDITLABELW:
+        return (LRESULT)edit_label(tv, node(tv, (HTREEITEM)lparam));
     case TVM_GETEDITCONTROL:
+        return (LRESULT)tv->Edit;
     case TVM_CREATEDRAGIMAGE:
         return 0;
     case TVM_ENDEDITLABELNOW:
-        return FALSE;
+        if (!tv->Edit)
+            return FALSE;
+        end_edit(tv, wparam != 0);
+        return TRUE;
     case CCM_SETUNICODEFORMAT: {
         BOOL old = tv->Notify.Unicode;
         tv->Notify.Unicode = wparam != 0;
