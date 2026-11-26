@@ -77,11 +77,18 @@ NTSTATUS W32CaptureString(PUNICODE_STRING user, PWSTR *out, SIZE_T *chars)
     return STATUS_SUCCESS;
 }
 
+/*
+ * UserSetLastError of win32kbase 26300: the error goes in the teb, and for a 32-bit program in the teb of its 32-bit
+ * code too, 0x2000 further, where its LastErrorValue is at 0x34.
+ */
 void W32SetLastError(ULONG error)
 {
     PUCHAR teb = PsGetCurrentThreadTeb();
-    if (teb)
-        MimeCopyToUser(teb + FIELD_OFFSET(TEB, LastErrorValue), &error, sizeof(error));
+    if (!teb)
+        return;
+    MimeCopyToUser(teb + FIELD_OFFSET(TEB, LastErrorValue), &error, sizeof(error));
+    if (PsGetProcessWow64Process(PsGetCurrentProcess()))
+        MimeCopyToUser(teb + 0x2000 + 0x34, &error, sizeof(error));
 }
 
 DWORD W32TickCount(void)
