@@ -42,6 +42,7 @@ typedef struct D3dSwapChain {
 
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
+    BOOL premultiplied; /* the vulkan swap chain composes by alpha. */
     VkFormat format;
     VkExtent2D extent;
     VkPresentModeKHR mode;
@@ -193,6 +194,22 @@ static void send_metadata(D3dSwapChain *sc)
         vk->vkSetHdrMetadataEXT(vk->device, 1, &sc->swapchain, &sc->metadata);
 }
 
+/*
+ * a swap chain of the bitblt model copies into the redirection surface of its window on windows, which the dwm
+ * composes by its alpha when the window extended its frame or asked for blur behind, as gdi's pixels, measured with
+ * blur.c of scratch/pr17 in the research repository. the image then goes premultiplied over what win32k composes
+ * under the window.
+ */
+static BOOL composed_by_alpha(const D3dSwapChain *sc)
+{
+    if (sc->desc.AlphaMode == DXGI_ALPHA_MODE_PREMULTIPLIED)
+        return TRUE;
+    if (sc->desc.SwapEffect != DXGI_SWAP_EFFECT_DISCARD && sc->desc.SwapEffect != DXGI_SWAP_EFFECT_SEQUENTIAL)
+        return FALSE;
+    HWND top = GetAncestor(sc->window, GA_ROOT);
+    return top && (GetPropW(top, L"DwmBlurBehind") || GetPropW(top, L"DwmMarginsLR") || GetPropW(top, L"DwmMarginsTB"));
+}
+
 /* VK_NOT_READY when the window has no area to show anything in. */
 static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
 {
@@ -229,8 +246,8 @@ static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    info.compositeAlpha = sc->desc.AlphaMode == DXGI_ALPHA_MODE_PREMULTIPLIED ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
-                                                                               : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    BOOL premultiplied = composed_by_alpha(sc);
+    info.compositeAlpha = premultiplied ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR : VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.presentMode = chosen;
     info.clipped = TRUE;
     info.oldSwapchain = sc->swapchain;
@@ -246,6 +263,7 @@ static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
         return r;
     destroy_swapchain(sc);
     sc->swapchain = swapchain;
+    sc->premultiplied = premultiplied;
     sc->extent = caps.currentExtent;
     sc->mode = mode;
     UINT images = MAX_IMAGES;
@@ -312,7 +330,8 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
         return S_OK;
     VkPresentModeKHR mode = interval ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
     VkResult made = VK_SUCCESS;
-    if ((!sc->swapchain || sc->mode != mode) && (made = create_swapchain(sc, mode)) != VK_SUCCESS)
+    if ((!sc->swapchain || sc->mode != mode || sc->premultiplied != composed_by_alpha(sc)) &&
+        (made = create_swapchain(sc, mode)) != VK_SUCCESS)
         return present_failed(sc, made);
 
     UINT slot = sc->present_count % SEMAPHORES;
