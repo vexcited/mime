@@ -4405,6 +4405,68 @@ HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
     return found;
 }
 
+/* HasCaptionIcon of win32kfull 26300: any caption but a tool window's, a dialog frame only with an icon of its own. */
+static BOOLEAN caption_icon(const WND *w)
+{
+    if (w->ExStyle & WS_EX_TOOLWINDOW)
+        return FALSE;
+    if ((w->Style & WS_CAPTION) != WS_DLGFRAME && !(w->ExStyle & WS_EX_DLGMODALFRAME))
+        return TRUE;
+    return w->Icon || w->IconSmall || (w->Class && (w->Class->Icon || w->Class->IconSmall));
+}
+
+/*
+ * GetTitleBarInfo, as NtUserGetTitleBarInfo and xxxCommonGetTitleBarInfo of win32kfull 26300: the 44 bytes of
+ * TITLEBARINFO, ERROR_INVALID_PARAMETER for another size. the title bar is the window less its border, one caption
+ * high, after the icon, in the units of the caller. a button the style has not is invisible, or unavailable when the
+ * other one of minimize and maximize is there. measured on windows.
+ */
+BOOL NTAPI NtUserGetTitleBarInfo(HWND hwnd, TITLEBARINFO *user)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    TITLEBARINFO info = {};
+    BOOL ok = FALSE;
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    else if (!NT_SUCCESS(MimeCopyFromUser(&info.cbSize, user, sizeof(info.cbSize))))
+        ;
+    else if (info.cbSize != sizeof(TITLEBARINFO))
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    else {
+        DWORD style = w->Style;
+        info.rgstate[0] = STATE_SYSTEM_FOCUSABLE;
+        if ((style & WS_CAPTION) != WS_CAPTION) {
+            info.rgstate[0] |= STATE_SYSTEM_INVISIBLE;
+        } else {
+            FRAME_METRICS m;
+            FrameGetMetrics(style, w->ExStyle, WndFrameDpi(w), &m);
+            RECT *r = &info.rcTitleBar;
+            *r = w->WindowRect;
+            r->left += m.Border;
+            r->top += m.Border;
+            r->right -= m.Border;
+            r->bottom = r->top + m.Caption;
+            if ((style & WS_SYSMENU) && caption_icon(w)) {
+                if (w->ExStyle & WS_EX_LAYOUTRTL)
+                    r->right -= r->bottom - r->top - 1;
+                else
+                    r->left += r->bottom - r->top - 1;
+            }
+            rect_to_caller(w, r);
+            BOOLEAN menu = (style & WS_SYSMENU) != 0, min = (style & WS_MINIMIZEBOX) != 0, max = (style & WS_MAXIMIZEBOX) != 0;
+            info.rgstate[1] = STATE_SYSTEM_INVISIBLE;
+            info.rgstate[2] = !menu ? STATE_SYSTEM_INVISIBLE : min ? 0 : max ? STATE_SYSTEM_UNAVAILABLE : STATE_SYSTEM_INVISIBLE;
+            info.rgstate[3] = !menu ? STATE_SYSTEM_INVISIBLE : max ? 0 : min ? STATE_SYSTEM_UNAVAILABLE : STATE_SYSTEM_INVISIBLE;
+            info.rgstate[4] = !(w->ExStyle & WS_EX_CONTEXTHELP) || min || max ? STATE_SYSTEM_INVISIBLE : 0;
+            info.rgstate[5] = !menu ? STATE_SYSTEM_INVISIBLE : (w->Flags & WNDF_NOCLOSE) ? STATE_SYSTEM_UNAVAILABLE : 0;
+        }
+        ok = NT_SUCCESS(MimeCopyToUser(user, &info, sizeof(info)));
+    }
+    UserLeave();
+    return ok;
+}
+
 /*
  * SetShellWindow and SetShellWindowEx, as NtUserSetShellWindowEx and RegisterShell of win32kfull 26300 do them: a window
  * of the calling process becomes the shell window of the desktop if there is none, top level, without an owner and not

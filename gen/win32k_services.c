@@ -31,6 +31,7 @@ void NtGdiDdDDIOpenAdapterFromLuid(void);
 void NtGdiDdDDIOpenAdapterFromDeviceName(void);
 void NtGdiDdDDIEnumAdapters2(void);
 void NtUserSetShellWindowEx(void);
+void NtUserGetTitleBarInfo(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2816,5 +2817,10 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserSetShellWindowEx & 0xFFF] = (SERVICE){(void *)NtUserSetShellWindowEx, STACK_ARGS(2), 2, 0};
 #else
 #warning "NtUserSetShellWindowEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetTitleBarInfo
+    table[MIME_SVC_NtUserGetTitleBarInfo & 0xFFF] = (SERVICE){(void *)NtUserGetTitleBarInfo, STACK_ARGS(2), 2, 0};
+#else
+#warning "NtUserGetTitleBarInfo has no syscall number"
 #endif
 }
