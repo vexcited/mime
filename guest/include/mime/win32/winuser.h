@@ -1927,6 +1927,7 @@ WINUSERAPI int WINAPI ShowCursor(BOOL show);
 WINUSERAPI BOOL WINAPI ClipCursor(const RECT *rect);
 WINUSERAPI BOOL WINAPI GetClipCursor(LPRECT rect);
 WINUSERAPI HCURSOR WINAPI SetCursor(HCURSOR cursor);
+WINUSERAPI HCURSOR WINAPI GetCursor(void);
 WINUSERAPI int WINAPI LoadStringW(HINSTANCE instance, UINT id, LPWSTR buffer, int count);
 WINUSERAPI int WINAPI GetSystemMetrics(int index);
 WINUSERAPI int WINAPI GetSystemMetricsForDpi(int index, UINT dpi);
