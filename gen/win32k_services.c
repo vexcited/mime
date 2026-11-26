@@ -441,6 +441,8 @@ void NtUserUnhookWindowsHookEx(void);
 void NtUserUnregisterClass(void);
 void NtUserUpdateLayeredWindow(void);
 void NtUserValidateRect(void);
+void NtUserInvalidateRgn(void);
+void NtUserValidateRgn(void);
 void NtUserWaitForInputIdle(void);
 void NtUserWaitMessage(void);
 void NtGdiGetPublicFontTableChangeCookie(void);
@@ -2624,6 +2626,16 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserValidateRect & 0xFFF] = (SERVICE){(void *)NtUserValidateRect, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtUserValidateRect has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserInvalidateRgn
+    table[MIME_SVC_NtUserInvalidateRgn & 0xFFF] = (SERVICE){(void *)NtUserInvalidateRgn, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserInvalidateRgn has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserValidateRgn
+    table[MIME_SVC_NtUserValidateRgn & 0xFFF] = (SERVICE){(void *)NtUserValidateRgn, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserValidateRgn has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserWaitForInputIdle
     table[MIME_SVC_NtUserWaitForInputIdle & 0xFFF] = (SERVICE){(void *)NtUserWaitForInputIdle, STACK_ARGS(3), 1, 0};

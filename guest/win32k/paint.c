@@ -885,6 +885,17 @@ BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect)
     return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE);
 }
 
+/* like win32kfull 26300, a region of the client area, or all of it, without a window for the whole screen. */
+BOOL NTAPI NtUserInvalidateRgn(HWND hwnd, HRGN region, BOOL erase)
+{
+    return hwnd && NtUserRedrawWindow(hwnd, nullptr, region, RDW_INVALIDATE | (erase ? RDW_ERASE : 0));
+}
+
+BOOL NTAPI NtUserValidateRgn(HWND hwnd, HRGN region)
+{
+    return hwnd && NtUserRedrawWindow(hwnd, nullptr, region, RDW_VALIDATE);
+}
+
 static void erase_update(WND *w)
 {
     if (!(w->Flags & WNDF_ERASE_PENDING) || w->Thread != W32GetThread())
