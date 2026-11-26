@@ -996,6 +996,53 @@ static void copy_surface_bits(SURFACE *s, const REGION *dst, LONG dx, LONG dy)
     SurfaceMarkDrawn(s, &dst->Extents, dst);
 }
 
+/*
+ * a top level window whose client area moves in it, as when its frame changes: the frame windows draws is not in the
+ * redirection surface, which still holds what it held there, the white a window with a border starts with or nothing
+ * yet, and the pixels of the client area that stay valid move with it unless SWP_NOCOPYBITS. measured on windows.
+ */
+static void client_bits(WND *w, const RECT *old_window, const RECT *old_client, UINT flags)
+{
+    SURFACE *s = w->Surface;
+    LONG old_x = old_client->left - old_window->left, old_y = old_client->top - old_window->top;
+    LONG new_x = w->ClientRect.left - w->WindowRect.left, new_y = w->ClientRect.top - w->WindowRect.top;
+    if (!s || s->Bpp != 32 || (w->LayerFlags & MIME_LAYER_UPDATE) || (old_x == new_x && old_y == new_y))
+        return;
+    RECT bounds = {0, 0, s->Width, s->Height};
+    RECT client = {old_x, old_y, old_x + (old_client->right - old_client->left), old_y + (old_client->bottom - old_client->top)};
+    if (flags & SWP_FRAMECHANGED) {
+        REGION frame;
+        RgnInit(&frame);
+        RECT window = {0, 0, old_window->right - old_window->left, old_window->bottom - old_window->top};
+        RgnSetRect(&frame, &window);
+        RgnCombineRect(&frame, &frame, &client, RGN_DIFF);
+        RgnCombineRect(&frame, &frame, &bounds, RGN_AND);
+        for (ULONG i = 0; i < frame.Count; i++)
+            fill_surface(s, &frame.Rects[i], s->Unpainted ? 0 : 0xFFFFFFFFu);
+        if (s->Unpainted)
+            RgnCombine(s->Unpainted, s->Unpainted, &frame, RGN_OR);
+        RgnFree(&frame);
+    }
+    if (!(flags & SWP_NOCOPYBITS)) {
+        LONG width = W32Min(client.right - client.left, w->ClientRect.right - w->ClientRect.left);
+        LONG height = W32Min(client.bottom - client.top, w->ClientRect.bottom - w->ClientRect.top);
+        RECT to = {new_x, new_y, new_x + width, new_y + height}, from = {old_x, old_y, old_x + width, old_y + height};
+        RectOffset(&from, new_x - old_x, new_y - old_y);
+        REGION kept;
+        RgnInit(&kept);
+        RgnSetRect(&kept, &to);
+        RgnCombineRect(&kept, &kept, &bounds, RGN_AND);
+        RgnCombineRect(&kept, &kept, &from, RGN_AND);
+        RectOffset(&bounds, new_x - old_x, new_y - old_y);
+        RgnCombineRect(&kept, &kept, &bounds, RGN_AND);
+        if (!RgnIsEmpty(&kept))
+            copy_surface_bits(s, &kept, new_x - old_x, new_y - old_y);
+        RgnFree(&kept);
+    }
+    RECT all = {0, 0, s->Width, s->Height};
+    SurfaceMarkDirty(s, &all);
+}
+
 /* the window DestroyWindow hides, whose activation and focus leave it after it is hidden. */
 static WND *g_hiding_destroyed;
 static void WndDeactivate(void);
@@ -1117,6 +1164,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             w->ShownInactive = (pos.flags & SWP_SHOWWINDOW) && (pos.flags & SWP_NOACTIVATE) && InputForeground != w;
         if (visible && !(w->Style & WS_MINIMIZE))
             WndEnsureSurfaceShown(w);
+        if (visible && !(w->Style & WS_MINIMIZE) && !(pos.flags & SWP_SHOWWINDOW))
+            client_bits(w, &old_screen, &old_client_screen, pos.flags);
         if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible && !(w->Style & WS_MINIMIZE)) {
             w->Flags |= WNDF_FRAME_DIRTY;
             WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
@@ -1177,7 +1226,6 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             }
         }
     }
-    (void)old_client_screen;
     RgnFree(&old_vis);
 
     /* a visible top level window placed without SWP_NOACTIVATE becomes active, as BringWindowToTop makes it. */
