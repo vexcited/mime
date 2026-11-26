@@ -3,6 +3,7 @@
  * an irqfd routed as MSI; port-write hypercalls exchange registers through kvm_run.
  */
 #include "../vmm/vmm.h"
+#include "../vmm/pci.h"
 
 #include "../rom.h"
 #include "../audio/audio.h"
@@ -565,6 +566,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     sigaction(KICK_SIGNAL, &sa, nullptr);
 
     mime_vm_init_boot(vm);
+    mime_pci_init(vm);
     vm->boot->irq_intid = MIME_X64_IRQ_VECTOR;
     vm->boot->memory_block_shift = transparent_huge_pages(vm) ? 21 : 12;
     vm->boot->swap_size = host_swap_size();
@@ -632,6 +634,7 @@ void mime_vm_destroy(MimeVm *vm)
         close(vm->kvm_fd);
     if (vm->ram)
         munmap(vm->ram, vm->ram_size);
+    mime_pci_destroy(vm);
 }
 
 /* ------------------------------------------------------------------ vcpus */
@@ -752,9 +755,12 @@ static bool handle_io(MimeVcpu *vcpu)
 {
     struct kvm_run *run = vcpu->run;
     if (run->io.direction != KVM_EXIT_IO_OUT || run->io.port != MIME_HC_PORT) {
-        /* other ports have nothing behind them: reads see all ones. */
-        if (run->io.direction == KVM_EXIT_IO_IN)
-            memset((uint8_t *)run + run->io.data_offset, 0xFF, (size_t)run->io.size * run->io.count);
+        uint8_t *data = (uint8_t *)run + run->io.data_offset;
+        bool write = run->io.direction == KVM_EXIT_IO_OUT;
+        /* a string instruction moves count elements through the one port. */
+        for (uint32_t i = 0; i < run->io.count; i++, data += run->io.size)
+            if (!mime_pci_io(vcpu->vm, run->io.port, run->io.size, write, data) && !write)
+                memset(data, 0xFF, run->io.size); /* other ports have nothing behind them: reads see all ones. */
         return true;
     }
     struct kvm_regs *r = &run->s.regs.regs;
@@ -885,6 +891,9 @@ static void *vcpu_main(void *arg)
             }
             break;
         case KVM_EXIT_MMIO:
+            if (mime_pci_mmio(vm, vcpu->run->mmio.phys_addr, vcpu->run->mmio.len, vcpu->run->mmio.is_write,
+                              vcpu->run->mmio.data))
+                break;
             if (!vcpu->run->mmio.is_write)
                 memset(vcpu->run->mmio.data, 0xFF, sizeof(vcpu->run->mmio.data));
             dump_state(vcpu, "guest accessed unmapped physical memory");

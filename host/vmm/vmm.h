@@ -197,6 +197,8 @@ struct MimeVm {
 
     char host_root_label[8];
 
+    struct MimePciBus *pci; /* the host's pci functions as the guest sees them, see pci.h. */
+
     /* the emulated microsoft hypervisor arm64 guests see. */
     uint64_t hv_guest_os_id;
     uint64_t hv_boot_ns;

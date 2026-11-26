@@ -1965,6 +1965,28 @@ void IopPnpHostChanged(void);
 void IopPnpEachDevice(void (*visit)(PCWSTR instance, PCWSTR klass));
 /* devlinks.c: the interfaces and dos names of the devices, made once the drivers have theirs. */
 void IopPublishDeviceLinks(void);
+
+/* a function of the pci bus as pci.sys reports it, with what the inbox inf of its class installs. */
+typedef struct IOP_PCI_DEVICE {
+    UCHAR Bus, Devfn, Header, Secondary;
+    UCHAR Class, Subclass, Interface, Revision;
+    UCHAR PortType; /* the pcie device or port type, 0xFF on conventional pci. */
+    BOOLEAN HasSerial;
+    USHORT Vendor, Device;
+    ULONG Subsystem; /* windows' SUBSYS_, the subsystem in the high half and its vendor in the low one. */
+    LONG Parent;     /* the bridge above it, -1 on the root bus. */
+    ULONG Level;     /* of its device node, the root complex being 3. */
+    ULONG64 Serial;
+    WCHAR Instance[128];
+    WCHAR HardwareIds[320];
+    WCHAR CompatibleIds[320];
+    PCWSTR Desc, ClassName, ClassGuid, Manufacturer, Service; /* only Desc when no inf installs it. */
+} IOP_PCI_DEVICE;
+
+/* pcibus.c: the functions of the pci bus in the order pci.sys enumerates them, scanned once; none on arm64. */
+ULONG IopPciDevices(const IOP_PCI_DEVICE **devices);
+/* the prefix of the instances a device's children get from plug and play, "4&3740937b&0" for a level 4 parent. */
+void IopParentIdPrefix(PCWSTR parent, ULONG level, PWCHAR out, ULONG chars);
 void IopDrivesInterrupt(void);
 
 /* http.c: the http server driver. */

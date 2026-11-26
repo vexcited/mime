@@ -46,6 +46,11 @@ static void devices(void)
         owners[i] = driver_named(g_owners[i]);
     ObCreateDirectory(L"\\Device\\cimfs", nullptr);
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_devices); i++) {
+#if !defined(__aarch64__)
+        /* pci.sys numbers one for each function of the bus, made below. */
+        if (!wcsncmp(g_devices[i].Name, L"NTPNP_PCI", 9))
+            continue;
+#endif
         WCHAR path[96] = L"\\Device\\";
         wcscat(path, g_devices[i].Name);
         UNICODE_STRING name;
@@ -55,6 +60,20 @@ static void devices(void)
         if (NT_SUCCESS(IoCreateDevice(driver, 0, &name, FILE_DEVICE_UNKNOWN, 0, FALSE, &device)))
             device->Flags &= ~(ULONG)DO_DEVICE_INITIALIZING;
     }
+#if !defined(__aarch64__)
+    const IOP_PCI_DEVICE *list;
+    ULONG functions = IopPciDevices(&list);
+    PDRIVER_OBJECT pci = driver_named(L"\\Driver\\pci");
+    for (ULONG i = 0; i < functions; i++) {
+        WCHAR path[40] = {};
+        _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\Device\\NTPNP_PCI%04u", i);
+        UNICODE_STRING name;
+        RtlInitUnicodeString(&name, path);
+        PDEVICE_OBJECT device;
+        if (NT_SUCCESS(IoCreateDevice(pci ? pci : own, 0, &name, FILE_DEVICE_UNKNOWN, 0, FALSE, &device)))
+            device->Flags &= ~(ULONG)DO_DEVICE_INITIALIZING;
+    }
+#endif
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_device_links); i++) {
         WCHAR path[96] = L"\\Device\\";
         wcscat(path, g_device_links[i].Name);

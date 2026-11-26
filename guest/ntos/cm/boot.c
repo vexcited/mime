@@ -366,6 +366,42 @@ static BOOLEAN display_plain_monitor(void)
     return display_basic();
 }
 
+#if !defined(__aarch64__)
+/* the host gpu a function of the bus is, nullptr for any other function and behind the basic display adapter. */
+static const MimeBootGpu *pci_gpu(const IOP_PCI_DEVICE *d)
+{
+    for (ULONG i = 0; !display_basic() && i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
+        const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
+        if (gpu->bus == d->Bus && (gpu->slot & 0xFF) == d->Devfn && gpu->vendor == d->Vendor && gpu->device == d->Device)
+            return gpu;
+    }
+    return nullptr;
+}
+
+/* what windows' basic display adapter drives: the first vga or xga controller, which display.inf matches. */
+static const IOP_PCI_DEVICE *pci_basic_display(void)
+{
+    const IOP_PCI_DEVICE *list;
+    ULONG count = IopPciDevices(&list);
+    for (ULONG i = 0; display_basic() && i < count; i++)
+        if (list[i].Class == 0x03 && list[i].Subclass <= 0x01)
+            return &list[i];
+    return nullptr;
+}
+
+#endif
+
+/* a host whose pci could not be read keeps the vga device of the reference machine. */
+static PCWSTR basic_display_instance(void)
+{
+#if !defined(__aarch64__)
+    const IOP_PCI_DEVICE *d = pci_basic_display();
+    if (d)
+        return d->Instance;
+#endif
+    return BASIC_DISPLAY_INSTANCE;
+}
+
 /* the driver key of a device, in its class key and in its video key: what its inf left there. */
 static void driver_key(PCWSTR key, PCWSTR desc, PCWSTR provider, PCWSTR date, ULONG64 date_data, PCWSTR version,
                        PCWSTR inf, PCWSTR section, PCWSTR matching, ULONG score)
@@ -611,8 +647,10 @@ static void monitor_edid(ULONG index, ULONG width, ULONG height, ULONG hz, ULONG
 static void monitor_friendly(const UCHAR *edid, WCHAR out[32]);
 static void monitor_name(const UCHAR *edid, WCHAR name[16]);
 
-static ULONG host_monitors(PCWSTR parent)
+static ULONG host_monitors(PCWSTR parent, ULONG level)
 {
+    WCHAR prefix[32];
+    IopParentIdPrefix(parent, level, prefix, RTL_NUMBER_OF(prefix));
     ULONG count = 0;
     MimeMonitor *list = MmAllocateContiguousPages(4096);
     if (list) {
@@ -640,8 +678,7 @@ static ULONG host_monitors(PCWSTR parent)
         _snwprintf(number, RTL_NUMBER_OF(number) - 1, L"%04u", i);
         /* the instance ends with the target of the adapter, a plain number, after the prefix of its parent. */
         if (display_plain_monitor()) {
-            _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\Default_Monitor\\%ls&UID%u",
-                       display_basic() ? L"4&3740937b&0" : L"5&2f3c1a9b&0", i);
+            _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\Default_Monitor\\%ls&UID%u", prefix, i);
             monitor(number, instance, L"Generic Non-PnP Monitor", L"NonPnPMonitor.Install", L"MONITOR\\Default_Monitor",
                     L"MONITOR\\Default_Monitor\0", sizeof(L"MONITOR\\Default_Monitor\0"), L"Generic Monitor", i,
                     L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent, nullptr, 0);
@@ -659,7 +696,7 @@ static ULONG host_monitors(PCWSTR parent)
         }
         WCHAR cls[26] = {};
         memcpy(cls, class, sizeof(cls));
-        _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\%ls\\5&2f3c1a9b&0&UID%u", name, i);
+        _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\%ls\\%ls&UID%u", name, prefix, i);
         monitor(number, instance, friendly, L"PnPMonitor.Install", L"*PNP09FF", cls, sizeof(cls), L"Generic Monitor", i,
                 L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent, edid, sizeof(edid));
     }
@@ -727,7 +764,7 @@ static void root_display_drivers(void)
     }
     driver_service(L"BasicDisplay",
                    L"\\SystemRoot\\System32\\DriverStore\\FileRepository\\basicdisplay.inf_amd64_9f34636ebdd89def\\BasicDisplay.sys",
-                   1, L"Video", 1, L"ROOT\\BasicDisplay\\0000", display_basic() ? BASIC_DISPLAY_INSTANCE : nullptr);
+                   1, L"Video", 1, L"ROOT\\BasicDisplay\\0000", display_basic() ? basic_display_instance() : nullptr);
     set_multi(SERVICES L"BasicDisplay", L"Owners", L"display.inf\0basicdisplay.inf\0");
     set_dword(SERVICES L"BasicDisplay\\Parameters", L"SingleDeviceInstall", 1);
     driver_service(L"BasicRender",
@@ -1047,10 +1084,63 @@ static void pnp(PCWSTR instance, PCWSTR parent, PCWSTR desc, PCWSTR hardware, PC
     MimePnpAddDevice(instance, parent, &p);
 }
 
+#if !defined(__aarch64__)
 /*
- * the host's gpus, real hardware in the machine, each where the host has it; the first is the display key's. behind
- * the basic display adapter they take the driver keys after its own.
+ * a function of the host's pci, under the bridge it is behind. a host gpu has the driver package of its vendor and
+ * the first one the display key's, the basic display adapter drives the vga controller of a host without one, and
+ * every other function has what the inbox inf of its class installs, or nothing.
  */
+static void pci_device(const IOP_PCI_DEVICE *list, const IOP_PCI_DEVICE *d, PCWSTR root)
+{
+    WCHAR location[64] = {}, name[128];
+    _snwprintf(location, RTL_NUMBER_OF(location) - 1, L"PCI bus %u, device %u, function %u", d->Bus, d->Devfn >> 3,
+               d->Devfn & 7);
+    MIME_DEVICE_PROPERTIES p = {d->Desc, d->HardwareIds, d->CompatibleIds, d->ClassName, d->ClassGuid,
+                                d->Manufacturer, d->Service, location, L"{00000000-0000-0000-ffff-ffffffffffff}",
+                                nullptr};
+    const MimeBootGpu *gpu = pci_gpu(d);
+    BOOLEAN basic = d == pci_basic_display();
+    if (gpu) {
+        MimeGpuName(gpu->name, name, RTL_NUMBER_OF(name));
+        p.DeviceDesc = p.FriendlyName = name;
+        p.Manufacturer = MimeGpuProvider(gpu->vendor);
+        p.Service = gpu_service(gpu->vendor);
+    } else if (basic) {
+        p.DeviceDesc = L"Microsoft Basic Display Adapter";
+        p.Manufacturer = L"(Standard display types)";
+        p.Service = L"BasicDisplay";
+    }
+    if (gpu || basic) {
+        p.Class = L"Display";
+        p.ClassGuid = DISPLAY_CLASS;
+    }
+    MimePnpAddDevice(d->Instance, d->Parent >= 0 ? list[d->Parent].Instance : root, &p);
+    WCHAR path[220] = ENUM;
+    wcscat(path, d->Instance);
+    set_dword(path, L"Address", (ULONG)(d->Devfn >> 3) << 16 | (d->Devfn & 7));
+    set_dword(path, L"Capabilities", 0);
+    /* what windows leaves on a device it found no driver for. */
+    set_dword(path, L"ConfigFlags", p.ClassGuid ? 0 : 0x40);
+    if (gpu != HalBootInfo->gpus && !basic)
+        return;
+    set_sz(path, L"Driver", REG_SZ, DISPLAY_DRIVER);
+    wcscat(path, L"\\Device Parameters");
+    set_sz(path, L"VideoID", REG_SZ, VIDEO_ID);
+    host_monitors(d->Instance, d->Level);
+}
+
+static BOOLEAN gpu_on_bus(const MimeBootGpu *gpu)
+{
+    const IOP_PCI_DEVICE *list;
+    ULONG count = IopPciDevices(&list);
+    for (ULONG i = 0; i < count; i++)
+        if (pci_gpu(&list[i]) == gpu)
+            return TRUE;
+    return FALSE;
+}
+#endif
+
+/* the host's gpus the bus does not have, when the host could not read its pci: under the root, where the host has them. */
 static void host_gpus(PCWSTR root)
 {
 #if !defined(__aarch64__)
@@ -1058,6 +1148,8 @@ static void host_gpus(PCWSTR root)
         return;
     for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
         const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
+        if (gpu_on_bus(gpu))
+            continue;
         WCHAR instance[160], hardware[100] = {}, name[128], location[64] = {};
         gpu_instance(gpu, instance, RTL_NUMBER_OF(instance));
         gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware) - 1);
@@ -1067,7 +1159,7 @@ static void host_gpus(PCWSTR root)
         pnp(instance, root, name, hardware, L"Display", DISPLAY_CLASS, MimeGpuProvider(gpu->vendor),
             gpu_service(gpu->vendor), location);
         if (i == 0) {
-            host_monitors(instance);
+            host_monitors(instance, 4);
             WCHAR path[220] = ENUM;
             wcscat(path, instance);
             set_sz(path, L"Driver", REG_SZ, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000");
@@ -1078,11 +1170,14 @@ static void host_gpus(PCWSTR root)
 #endif
 }
 
-/* the vga device of the machine under windows' basic display adapter, with the monitor it cannot identify. */
+/*
+ * the vga device of the reference machine under windows' basic display adapter, with the monitor it cannot identify,
+ * for a host whose pci has no vga controller to drive.
+ */
 static void basic_display_devices(PCWSTR root)
 {
 #if !defined(__aarch64__)
-    if (!display_basic())
+    if (!display_basic() || pci_basic_display())
         return;
     static const WCHAR hardware[] = L"PCI\\VEN_1234&DEV_1111&SUBSYS_11001AF4&REV_02\0PCI\\VEN_1234&DEV_1111&SUBSYS_11001AF4\0"
                                     L"PCI\\VEN_1234&DEV_1111&CC_030000\0PCI\\VEN_1234&DEV_1111&CC_0300\0";
@@ -1101,24 +1196,31 @@ static void basic_display_devices(PCWSTR root)
     set_sz(path, L"Driver", REG_SZ, DISPLAY_DRIVER);
     set_sz(ENUM BASIC_DISPLAY_INSTANCE L"\\Device Parameters", L"VideoID", REG_SZ, VIDEO_ID);
     /* the reference machine's vga device has a monitor with no edid, and so have the host's monitors under it. */
-    host_monitors(BASIC_DISPLAY_INSTANCE);
+    host_monitors(BASIC_DISPLAY_INSTANCE, 4);
 #endif
 }
 
 /*
- * the device tree of the reference machine, as its firmware presents it: the pci root bridge, the chipset and its
- * peripherals, the battery and thermal zone of a laptop. mime has no acpi or pci driver, so these are the enumeration
- * a program reads; the drivers of the devices themselves are win32k's or the host's own services.
+ * the device tree as the firmware presents it: the pci root bridge, the functions of the pci, the battery and thermal
+ * zone of a laptop. on x64 the functions are the host's, as the guest reads them from the bus; arm64 keeps those of
+ * the reference machine. mime has no acpi or pci driver, so these are the enumeration a program reads; the drivers
+ * of the devices themselves are win32k's or the host's own services.
  */
 static void devices(void)
 {
     static const WCHAR root[] = L"ACPI\\PNP0A08\\0";
     pnp(root, nullptr, L"PCI Express Root Complex", L"ACPI\\PNP0A08\0ACPI\\PNP0A03\0", L"System", SYSTEM_CLASS,
         L"Microsoft", L"pci", L"PCI bus 0");
-    pnp(L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\\3&11583659&0&00", root, L"Intel(R) Host Bridge",
-        L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"", L"PCI bus 0, device 0, function 0");
+#if !defined(__aarch64__)
+    const IOP_PCI_DEVICE *list;
+    ULONG count = IopPciDevices(&list);
+    for (ULONG i = 0; i < count; i++)
+        pci_device(list, &list[i], root);
     basic_display_devices(root);
     host_gpus(root);
+#else
+    pnp(L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\\3&11583659&0&00", root, L"Intel(R) Host Bridge",
+        L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"", L"PCI bus 0, device 0, function 0");
     pnp(L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\\3&11583659&0&1F", root, L"Intel(R) LPC Controller",
         L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"msisadrv",
         L"PCI bus 0, device 31, function 0");
@@ -1133,6 +1235,7 @@ static void devices(void)
     pnp(L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\\3&11583659&0&1D", root, L"Samsung NVMe Controller",
         L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\0", L"DiskDrive", DISK_CLASS, L"Samsung",
         L"stornvme", L"PCI bus 0, device 29, function 0");
+#endif
     /* the keyboard and mouse every pc has, whose interfaces lead to the class devices the raw input names open. */
     pnp(KEYBOARD_INSTANCE, root, L"Standard PS/2 Keyboard", L"ACPI\\PNP0303\0*PNP0303\0", L"Keyboard", KEYBOARD_CLASS,
         L"(Standard keyboards)", L"i8042prt", L"plugged into keyboard port");
@@ -1200,13 +1303,32 @@ static void drivers(void)
     IoCreateDriver(L"\\Driver\\kbdclass", kbdclass_entry, nullptr);
     IoCreateDriver(L"\\Driver\\mouclass", mouclass_entry, nullptr);
     static const PCWSTR names[] = {
-        L"\\Driver\\ACPI", L"\\Driver\\pci", L"\\Driver\\msisadrv", L"\\Driver\\disk", L"\\Driver\\partmgr",
-        L"\\Driver\\volmgr", L"\\Driver\\volsnap", L"\\Driver\\mountmgr", L"\\Driver\\stornvme",
-        L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\IntcAudioBus", L"\\Driver\\i8042prt",
-        L"\\FileSystem\\FltMgr",
+        L"\\Driver\\ACPI", L"\\Driver\\pci", L"\\Driver\\disk", L"\\Driver\\partmgr", L"\\Driver\\volmgr",
+        L"\\Driver\\volsnap", L"\\Driver\\mountmgr", L"\\Driver\\stornvme", L"\\Driver\\CmBatt",
+        L"\\Driver\\i8042prt", L"\\FileSystem\\FltMgr",
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
         IoCreateDriver(names[i], empty_driver, nullptr);
+#if defined(__aarch64__)
+    static const PCWSTR chipset[] = {L"\\Driver\\msisadrv", L"\\Driver\\netwtw", L"\\Driver\\IntcAudioBus"};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(chipset); i++)
+        IoCreateDriver(chipset[i], empty_driver, nullptr);
+#else
+    /* the drivers the inbox infs install on the functions of the bus, once each. */
+    const IOP_PCI_DEVICE *list;
+    ULONG count = IopPciDevices(&list);
+    for (ULONG i = 0; i < count; i++) {
+        BOOLEAN made = !list[i].Service || pci_gpu(&list[i]) || !_wcsicmp(list[i].Service, L"pci") ||
+                       !_wcsicmp(list[i].Service, L"stornvme") || !_wcsicmp(list[i].Service, L"BasicDisplay");
+        for (ULONG j = 0; j < i && !made; j++)
+            made = list[j].Service && !_wcsicmp(list[j].Service, list[i].Service);
+        if (made)
+            continue;
+        WCHAR name[48] = L"\\Driver\\";
+        wcscat(name, list[i].Service);
+        IoCreateDriver(name, empty_driver, nullptr);
+    }
+#endif
 #if defined(__aarch64__)
     static const PCWSTR vendors[] = {L"\\Driver\\nvlddmkm", L"\\Driver\\amdkmdag", L"\\Driver\\igdkmd64"};
     for (ULONG i = 0; i < RTL_NUMBER_OF(vendors); i++)

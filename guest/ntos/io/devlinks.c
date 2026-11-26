@@ -189,8 +189,20 @@ static void software(void)
     }
 }
 
+/* the storage controller the disk is behind on the bus, an nvme one before any other. */
+static const IOP_PCI_DEVICE *disk_controller(void)
+{
+    const IOP_PCI_DEVICE *list;
+    ULONG count = IopPciDevices(&list);
+    const IOP_PCI_DEVICE *found = nullptr;
+    for (ULONG i = 0; i < count && (!found || found->Subclass != 0x08); i++)
+        if (list[i].Class == 0x01 && (!found || list[i].Subclass == 0x08))
+            found = &list[i];
+    return found;
+}
+
 /*
- * the disk behind the nvme controller, named as its inquiry answers in mimefs.c, and the two volumes the machine
+ * the disk behind the storage controller, named as its inquiry answers in mimefs.c, and the two volumes the machine
  * boots with. their interfaces open the devices the drive names open.
  */
 static void storage(void)
@@ -202,8 +214,19 @@ static void storage(void)
 #define DISK_PRODUCT L"SAMSUNG_MZVL21T0"
 #define DISK_NAME L"SAMSUNG MZVL21T0HCLR-00BL2"
 #endif
-    static const WCHAR disk[] = L"SCSI\\Disk&Ven_NVMe&Prod_" DISK_PRODUCT L"\\5&2f0c7c9c&0&000000";
-    device(disk, L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\\3&11583659&0&1D", L"Disk drive",
+    /* the instance follows its controller's, the reference machine's without a bus to read. */
+    const IOP_PCI_DEVICE *controller = disk_controller(), *list;
+    PCWSTR parent = L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\\3&11583659&0&1D";
+    WCHAR disk[160] = L"SCSI\\Disk&Ven_NVMe&Prod_" DISK_PRODUCT L"\\", prefix[32] = L"5&2f0c7c9c&0";
+    if (controller) {
+        parent = controller->Instance;
+        IopParentIdPrefix(parent, controller->Level, prefix, RTL_NUMBER_OF(prefix));
+    } else if (IopPciDevices(&list)) {
+        parent = L"ACPI\\PNP0A08\\0";
+    }
+    wcscat(disk, prefix);
+    wcscat(disk, L"&000000");
+    device(disk, parent, L"Disk drive",
            L"SCSI\\DiskNVMe____" DISK_PRODUCT L"AGXA\0SCSI\\DiskNVMe____" DISK_PRODUCT L"\0SCSI\\DiskNVMe____\0"
            L"SCSI\\NVMe____" DISK_PRODUCT L"A\0NVMe____" DISK_PRODUCT L"A\0GenDisk\0",
            L"SCSI\\Disk\0SCSI\\RAW\0", L"DiskDrive", DISK_CLASS, L"(Standard disk drives)", L"disk", DISK_NAME);
@@ -228,6 +251,17 @@ static void storage(void)
                    letter);
         ObCreateSymbolicLink(name, target);
     }
+}
+
+/* the number pci.sys gave the device object of a function, in the order it found them; -1 without a bus. */
+static LONG pci_number(PCWSTR instance)
+{
+    const IOP_PCI_DEVICE *list;
+    ULONG count = IopPciDevices(&list);
+    for (ULONG i = 0; i < count; i++)
+        if (!_wcsicmp(list[i].Instance, instance))
+            return (LONG)i;
+    return -1;
 }
 
 /* the interfaces of a device the tree already had, by what it is. */
@@ -257,6 +291,7 @@ static void present(PCWSTR instance, PCWSTR klass)
     } else if (!_wcsnicmp(instance, L"PCI\\", 4)) {
         ULONG number;
         PCWSTR a, b, c = nullptr;
+        LONG bus = pci_number(instance);
         if (!_wcsicmp(klass, DISPLAY_CLASS)) {
             number = gpu_pdo[g_gpus < RTL_NUMBER_OF(gpu_pdo) ? g_gpus : RTL_NUMBER_OF(gpu_pdo) - 1];
             g_gpus++;
@@ -271,6 +306,8 @@ static void present(PCWSTR instance, PCWSTR klass)
         } else {
             return;
         }
+        if (bus >= 0)
+            number = (ULONG)bus;
         _snwprintf(target, RTL_NUMBER_OF(target), L"\\Device\\NTPNP_PCI%04u", number);
         interfaces(instance, target, a, b, c, nullptr);
     }

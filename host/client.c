@@ -5,6 +5,7 @@
 #include "invoker.h"
 #include "ipc.h"
 #include "mime_cli.h"
+#include "vmm/pci.h"
 
 #include <mime/abi.h>
 
@@ -192,13 +193,21 @@ int mime_cmd_up(const MimePaths *paths, int argc, char **argv)
     size_t size = 0;
     if (!mime_firmware_build(&firmware, &size))
         firmware = nullptr;
+    /* and the pci configuration spaces past their headers, root only too. */
+    MimePciCapture *pci = nullptr;
+    size_t pci_size = 0;
+    if (!mime_pci_capture(&pci, &pci_size))
+        pci = nullptr;
     /* everything else, the files of the machine and the machine itself, is the user's. */
     if (!mime_invoker_drop() || !mime_paths_ensure(paths)) {
         free(firmware);
+        free(pci);
         return 1;
     }
     mime_firmware_save(paths, firmware, size);
     free(firmware);
+    mime_pci_save(paths, pci, pci_size);
+    free(pci);
 #endif
     return machine_up(paths, false);
 }
