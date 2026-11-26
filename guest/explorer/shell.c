@@ -1,40 +1,15 @@
 #include <mime/abi.h>
 #include <mime/ntuser.h>
+#include <mime/traydata.h>
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
 #include <mime/win32/shellapi.h>
 #include <rtl.h>
 
 #define MAX_ICONS 256
-#define TRAY_SIGNATURE 0x34753423u
-#define TRAY_REQUEST 1
+#define ICON_SIDE 16
 #define WM_QUERY_NOTIFICATION_STATE (WM_USER + 0x3EF)
 #define QUNS_ACCEPTS_NOTIFICATIONS 5
-
-/*
- * what Shell_NotifyIconW of shell32 26300 sends the taskbar in a WM_COPYDATA of dwData 1. the icon data is the
- * NOTIFYICONDATAW of a 32-bit program whatever the program is, so its handles are 32 bits wide, and the flags are
- * cut to those the size the program gave allows. the path of the program follows, which is not read here.
- */
-typedef struct TRAY_DATA {
-    ULONG Signature;
-    ULONG Message;
-    ULONG Size;
-    ULONG Window;
-    ULONG Id;
-    ULONG Flags;
-    ULONG Callback;
-    ULONG Icon;
-    WCHAR Tip[128];
-    ULONG State;
-    ULONG StateMask;
-    WCHAR Info[256];
-    ULONG Version; /* uTimeout of a balloon, uVersion of NIM_SETVERSION. */
-    WCHAR InfoTitle[64];
-    ULONG InfoFlags;
-    GUID Guid;
-    ULONG BalloonIcon;
-} TRAY_DATA;
 
 typedef struct ICON {
     BOOL Used;
@@ -118,7 +93,7 @@ static void mirror(ULONG op, const ICON *icon, const TRAY_DATA *data)
 static LRESULT tray_request(const COPYDATASTRUCT *copy)
 {
     const TRAY_DATA *data = copy->lpData;
-    if (copy->cbData < sizeof(*data) || data->Signature != TRAY_SIGNATURE)
+    if (copy->cbData < offsetof(TRAY_DATA, Path) || data->Signature != TRAY_SIGNATURE)
         return FALSE;
     HWND window = (HWND)(ULONG_PTR)data->Window;
     const GUID *guid = data->Flags & NIF_GUID ? &data->Guid : nullptr;
@@ -172,25 +147,68 @@ static LRESULT tray_request(const COPYDATASTRUCT *copy)
     return FALSE;
 }
 
-/* the taskbar is the strip the host keeps outside the work area of the first monitor, or its bottom edge. */
-static void place(HWND window)
+/*
+ * the taskbar is the strip the host keeps outside the work area of the first monitor, or its bottom edge. the
+ * icons have no place of their own: each is said to be a square at the end of the strip, or in the corner of
+ * the work area.
+ */
+static BOOL taskbar_strip(RECT *strip, RECT *icon)
 {
     POINT origin = {0, 0};
     MONITORINFO info = {sizeof(info)};
     if (!GetMonitorInfoW(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), &info))
-        return;
+        return FALSE;
     RECT m = info.rcMonitor, w = info.rcWork, r = m;
-    if (w.bottom < m.bottom)
+    BOOL along = TRUE, reserved = TRUE;
+    if (w.bottom < m.bottom) {
         r.top = w.bottom;
-    else if (w.top > m.top)
+    } else if (w.top > m.top) {
         r.bottom = w.top;
-    else if (w.left > m.left)
+    } else if (w.left > m.left) {
         r.right = w.left;
-    else if (w.right < m.right)
+        along = FALSE;
+    } else if (w.right < m.right) {
         r.left = w.right;
-    else
+        along = FALSE;
+    } else {
         r.top = m.bottom;
-    SetWindowPos(window, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        reserved = FALSE;
+    }
+    *strip = r;
+    if (!reserved) {
+        icon->left = w.right - 4 - ICON_SIDE;
+        icon->top = w.bottom - 4 - ICON_SIDE;
+    } else if (along) {
+        icon->left = r.right - 4 - ICON_SIDE;
+        icon->top = (r.top + r.bottom - ICON_SIDE) / 2;
+    } else {
+        icon->left = (r.left + r.right - ICON_SIDE) / 2;
+        icon->top = r.bottom - 4 - ICON_SIDE;
+    }
+    icon->right = icon->left + ICON_SIDE;
+    icon->bottom = icon->top + ICON_SIDE;
+    return TRUE;
+}
+
+static void place(HWND window)
+{
+    RECT r, icon;
+    if (taskbar_strip(&r, &icon))
+        SetWindowPos(window, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+/* Shell_NotifyIconGetRect asks the size of an icon, then its place. 0 is an icon that is not shown. */
+static LRESULT rect_request(const COPYDATASTRUCT *copy)
+{
+    static const GUID none;
+    const TRAY_RECT_DATA *data = copy->lpData;
+    RECT strip, at;
+    if (copy->cbData < sizeof(*data) || data->Signature != TRAY_SIGNATURE)
+        return 0;
+    ICON *icon = find_icon((HWND)(ULONG_PTR)data->Window, data->Id, memcmp(&data->Guid, &none, sizeof(GUID)) ? &data->Guid : nullptr);
+    if (!icon || (icon->State & NIS_HIDDEN) || !taskbar_strip(&strip, &at))
+        return 0;
+    return data->Kind == TRAY_RECT_SIZE ? MAKELONG(ICON_SIDE, ICON_SIDE) : MAKELONG(at.left, at.top);
 }
 
 static LRESULT CALLBACK taskbar_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
@@ -198,7 +216,11 @@ static LRESULT CALLBACK taskbar_proc(HWND window, UINT message, WPARAM wparam, L
     switch (message) {
     case WM_COPYDATA: {
         const COPYDATASTRUCT *copy = (const COPYDATASTRUCT *)lparam;
-        return copy && copy->dwData == TRAY_REQUEST && copy->lpData ? tray_request(copy) : FALSE;
+        if (!copy || !copy->lpData)
+            return FALSE;
+        return copy->dwData == TRAY_COPYDATA_NOTIFY ? tray_request(copy)
+               : copy->dwData == TRAY_COPYDATA_RECT ? rect_request(copy)
+                                                   : FALSE;
     }
     case WM_QUERY_NOTIFICATION_STATE:
         return QUNS_ACCEPTS_NOTIFICATIONS;

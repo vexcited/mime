@@ -48,10 +48,6 @@ SHSTDAPI BOOL WINAPI ShellExecuteExA(SHELLEXECUTEINFOA *info)
     return ok;
 }
 
-/* the sizes of the oldest structure, with its 64 character tip, and of the one adding the balloon. */
-#define OLD_SIZE_A (offsetof(NOTIFYICONDATAA, szTip) + 64)
-#define BALLOON_SIZE_A offsetof(NOTIFYICONDATAA, guidItem)
-
 static void to_wide(WCHAR *out, int out_chars, const CHAR *in, int in_chars)
 {
     int n = 0;
@@ -62,39 +58,51 @@ static void to_wide(WCHAR *out, int out_chars, const CHAR *in, int in_chars)
     out[made] = 0;
 }
 
+/*
+ * Shell_NotifyIconA of shell32 26300: the wide structure of the size that matches, the first one for a size that is
+ * none of the known ones, with the texts the flags of that size name.
+ */
 SHSTDAPI BOOL WINAPI Shell_NotifyIconA(DWORD message, PNOTIFYICONDATAA data)
 {
-    if (!data || data->cbSize < OLD_SIZE_A) {
+    if (!data) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
     NOTIFYICONDATAW wide;
     memset(&wide, 0, sizeof(wide));
     DWORD size = data->cbSize;
+    UINT flags = data->uFlags;
+    wide.cbSize = sizeof(wide);
     wide.hWnd = data->hWnd;
     wide.uID = data->uID;
-    wide.uFlags = data->uFlags;
     wide.uCallbackMessage = data->uCallbackMessage;
     wide.hIcon = data->hIcon;
-    /* the tip holds 64 characters in the oldest form, 128 in the others. */
-    to_wide(wide.szTip, 128, data->szTip, size >= BALLOON_SIZE_A ? 128 : 64);
-    if (size >= BALLOON_SIZE_A) {
+    if (size >= offsetof(NOTIFYICONDATAA, guidItem)) {
         wide.dwState = data->dwState;
         wide.dwStateMask = data->dwStateMask;
-        to_wide(wide.szInfo, 256, data->szInfo, 256);
         wide.uTimeout = data->uTimeout;
-        to_wide(wide.szInfoTitle, 64, data->szInfoTitle, 64);
         wide.dwInfoFlags = data->dwInfoFlags;
     }
-    if (size >= sizeof(NOTIFYICONDATAA) - sizeof(HICON)) {
-        wide.guidItem = data->guidItem;
-        wide.cbSize = size >= sizeof(NOTIFYICONDATAA) ? sizeof(NOTIFYICONDATAW) : sizeof(NOTIFYICONDATAW) - sizeof(HICON);
-        if (size >= sizeof(NOTIFYICONDATAA))
-            wide.hBalloonIcon = data->hBalloonIcon;
-    } else if (size >= BALLOON_SIZE_A) {
+    if (size == sizeof(NOTIFYICONDATAA)) {
+        wide.hBalloonIcon = data->hBalloonIcon;
+    } else if (size == offsetof(NOTIFYICONDATAA, hBalloonIcon)) {
+        wide.cbSize = offsetof(NOTIFYICONDATAW, hBalloonIcon);
+        flags &= 0x3F;
+    } else if (size == offsetof(NOTIFYICONDATAA, guidItem)) {
         wide.cbSize = offsetof(NOTIFYICONDATAW, guidItem);
+        flags &= 0x1F;
     } else {
         wide.cbSize = offsetof(NOTIFYICONDATAW, szTip) + 64 * sizeof(WCHAR);
+        flags &= 7;
     }
+    wide.uFlags = flags;
+    if (flags & NIF_TIP)
+        to_wide(wide.szTip, 128, data->szTip, wide.cbSize < offsetof(NOTIFYICONDATAW, guidItem) ? 64 : 128);
+    if (flags & NIF_INFO) {
+        to_wide(wide.szInfo, 256, data->szInfo, 256);
+        to_wide(wide.szInfoTitle, 64, data->szInfoTitle, 64);
+    }
+    if (flags & NIF_GUID)
+        wide.guidItem = data->guidItem;
     return Shell_NotifyIconW(message, &wide);
 }

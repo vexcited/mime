@@ -1,210 +1,166 @@
-/*
- * the notification area and app bars.
- *
- * mime has no taskbar. win32k keeps the notification icons and shows them in the host desktop's notification area when
- * there is one, balloons as desktop notifications, and sends clicks back to the window. app bar queries describe the
- * edge the host reserves outside the work area, where the taskbar would be.
- */
 #include "shell32_private.h"
-#include <mime/ntuser.h>
+#include <mime/traydata.h>
 
-/* icons stay until deleted or until their window is gone. */
-#define MAX_ICONS 256
+WINUSERAPI BOOL WINAPI AllowSetForegroundWindow(DWORD process);
 
-typedef struct _TRAY_ICON {
-    BOOL Used;
-    HWND Window;
-    UINT Id;
-    GUID Guid;
-    BOOL HasGuid;
-    UINT Callback;
-    HICON Icon;
-    WCHAR Tip[128];
-    DWORD State;
-    UINT Version;
-} TRAY_ICON;
-
-static SRWLOCK g_icon_lock = SRWLOCK_INIT;
-static TRAY_ICON g_icons[MAX_ICONS];
-
-/* the original structure size, with a 64 character tip. */
+/* the sizes a program gives for the structure: the first one, with the balloon, with the guid, and whole. */
 #define V1_SIZE (offsetof(NOTIFYICONDATAW, szTip) + 64 * sizeof(WCHAR))
-/* V2 adds the balloon text and title, V4 the balloon icon. */
 #define V2_SIZE offsetof(NOTIFYICONDATAW, guidItem)
+#define V3_SIZE offsetof(NOTIFYICONDATAW, hBalloonIcon)
 #define V4_SIZE sizeof(NOTIFYICONDATAW)
+#define ERROR_INCORRECT_SIZE 1462L
 
-static TRAY_ICON *find_icon(HWND window, UINT id, const GUID *guid)
+/* the picture of a balloon has the size of a small icon, or at least that of an icon when it is a large one. */
+static BOOL balloon_icon_fits(const NOTIFYICONDATAW *data)
 {
-    for (int i = 0; i < MAX_ICONS; i++) {
-        TRAY_ICON *icon = &g_icons[i];
-        if (!icon->Used)
-            continue;
-        /* an icon dies with its window. */
-        if (!IsWindow(icon->Window)) {
-            memset(icon, 0, sizeof(*icon));
-            continue;
-        }
-        if (guid ? icon->HasGuid && IsEqualGUID(&icon->Guid, guid) : !icon->HasGuid && icon->Window == window && icon->Id == id)
-            return icon;
+    HICON icon = data->hBalloonIcon ? data->hBalloonIcon : data->hIcon;
+    ICONINFO info;
+    BITMAP bitmap;
+    BOOL fits = TRUE;
+    if (!icon)
+        return TRUE;
+    if (!GetIconInfo(icon, &info)) {
+        SetLastError(ERROR_SUCCESS);
+        return TRUE;
     }
-    return nullptr;
+    if (GetObjectW(info.hbmColor, sizeof(bitmap), &bitmap)) {
+        BOOL large = (data->dwInfoFlags & NIIF_LARGE_ICON) != 0;
+        if (!data->hBalloonIcon)
+            fits = !(large && (bitmap.bmWidth < 32 || bitmap.bmHeight < 32));
+        else if (large)
+            fits = bitmap.bmWidth >= GetSystemMetrics(SM_CXICON) && bitmap.bmHeight >= GetSystemMetrics(SM_CYICON);
+        else
+            fits = bitmap.bmWidth == GetSystemMetrics(SM_CXSMICON) && bitmap.bmHeight == GetSystemMetrics(SM_CYSMICON);
+    }
+    DeleteObject(info.hbmColor);
+    DeleteObject(info.hbmMask);
+    if (!fits)
+        SetLastError(ERROR_INCORRECT_SIZE);
+    return fits;
 }
 
-static void apply_icon(TRAY_ICON *icon, const NOTIFYICONDATAW *data, SIZE_T size)
-{
-    if (data->uFlags & NIF_MESSAGE)
-        icon->Callback = data->uCallbackMessage;
-    if (data->uFlags & NIF_ICON)
-        icon->Icon = data->hIcon;
-    if (data->uFlags & NIF_TIP) {
-        SIZE_T chars = size >= sizeof(NOTIFYICONDATAW) - sizeof(HICON) - sizeof(GUID) ? 128 : 64;
-        SIZE_T n = 0;
-        while (n + 1 < chars && data->szTip[n]) {
-            icon->Tip[n] = data->szTip[n];
-            n++;
-        }
-        icon->Tip[n] = 0;
-    }
-    if (data->uFlags & NIF_STATE)
-        icon->State = (icon->State & ~data->dwStateMask) | (data->dwState & data->dwStateMask);
-}
-
-#define H32(h) ((ULONG)(ULONG_PTR)(h))
-
-/* only the fields the program's structure size covers are passed on. */
-static void mirror(UINT op, const TRAY_ICON *icon, const NOTIFYICONDATAW *data, SIZE_T size)
-{
-    MIME_TRAY_REQUEST r;
-    memset(&r, 0, sizeof(r));
-    r.Window = H32(icon->Window);
-    r.Key = (ULONG)(icon - g_icons) + 1;
-    r.Id = icon->Id;
-    r.Callback = icon->Callback;
-    r.Icon = H32(icon->Icon);
-    r.State = icon->State;
-    r.Version = icon->Version;
-    if (data) {
-        r.Flags = data->uFlags;
-        if (data->uFlags & NIF_TIP) {
-            SIZE_T chars = size >= V2_SIZE ? 128 : 64;
-            for (SIZE_T n = 0; n < chars && n + 1 < RTL_NUMBER_OF(r.Tip) && data->szTip[n]; n++)
-                r.Tip[n] = data->szTip[n];
-        }
-        if ((data->uFlags & NIF_INFO) && size >= V2_SIZE) {
-            for (SIZE_T n = 0; n + 1 < RTL_NUMBER_OF(r.Info) && data->szInfo[n]; n++)
-                r.Info[n] = data->szInfo[n];
-            for (SIZE_T n = 0; n + 1 < RTL_NUMBER_OF(r.InfoTitle) && data->szInfoTitle[n]; n++)
-                r.InfoTitle[n] = data->szInfoTitle[n];
-            r.InfoFlags = data->dwInfoFlags;
-            r.Timeout = data->uTimeout;
-            if (size >= V4_SIZE)
-                r.BalloonIcon = H32(data->hBalloonIcon);
-        }
-    }
-    NtUserMimeTray(op, (PUCHAR)&r, sizeof(r));
-}
-
-/* windows answers FALSE when the taskbar is not running, which never happens here. */
+/*
+ * Shell_NotifyIconW of shell32 26300: the request goes to the taskbar of the shell, and the answer is whether it
+ * took it. a size that is none of the known ones is the first one, and the flags a size cannot carry are dropped.
+ * every refusal leaves E_FAIL as the last error.
+ */
 SHSTDAPI BOOL WINAPI Shell_NotifyIconW(DWORD message, PNOTIFYICONDATAW data)
 {
-    SetLastError(ERROR_SUCCESS);
-    if (!data || data->cbSize < V1_SIZE) {
+    static UINT taskbar_created;
+    if (!data) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    BOOL ok = FALSE;
-    DWORD error = ERROR_SUCCESS;
-    const GUID *guid = (data->uFlags & NIF_GUID) && data->cbSize >= sizeof(NOTIFYICONDATAW) - sizeof(HICON) ? &data->guidItem : nullptr;
-    AcquireSRWLockExclusive(&g_icon_lock);
-    TRAY_ICON *icon = find_icon(data->hWnd, data->uID, guid);
-    switch (message) {
-    case NIM_ADD: {
-        if (!IsWindow(data->hWnd)) {
-            error = ERROR_INVALID_WINDOW_HANDLE;
-            break;
-        }
-        if (icon) {
-            error = ERROR_ALREADY_EXISTS;
-            break;
-        }
-        for (int i = 0; i < MAX_ICONS && !icon; i++)
-            if (!g_icons[i].Used)
-                icon = &g_icons[i];
-        if (!icon) {
-            error = ERROR_NOT_ENOUGH_MEMORY;
-            break;
-        }
-        memset(icon, 0, sizeof(*icon));
-        icon->Used = TRUE;
-        icon->Window = data->hWnd;
-        icon->Id = data->uID;
-        if (guid) {
-            icon->Guid = *guid;
-            icon->HasGuid = TRUE;
-        }
-        apply_icon(icon, data, data->cbSize);
-        mirror(MIME_TRAYOP_ADD, icon, data, data->cbSize);
-        ok = TRUE;
-        break;
+    SetLastError(ERROR_SUCCESS);
+    HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    DWORD size = data->cbSize;
+    UINT allowed = 0x1FF;
+    BOOL ok = taskbar != nullptr;
+    if (ok && size == V4_SIZE) {
+        if (message <= NIM_MODIFY && (data->uFlags & NIF_INFO) && (data->dwInfoFlags & NIIF_USER))
+            ok = balloon_icon_fits(data);
+    } else if (size == V3_SIZE) {
+        allowed = 0x3F;
+    } else if (size == V2_SIZE) {
+        allowed = 0x1F;
+    } else if (size != V4_SIZE) {
+        size = V1_SIZE;
+        allowed = 7;
     }
-    case NIM_MODIFY:
-        if (!icon) {
-            error = ERROR_NOT_FOUND;
-            break;
+    if (ok) {
+        TRAY_DATA request;
+        memset(&request, 0, sizeof(request));
+        request.Signature = TRAY_SIGNATURE;
+        request.Message = message;
+        request.Size = offsetof(TRAY_DATA, Path) - offsetof(TRAY_DATA, Size);
+        request.Window = (ULONG)(ULONG_PTR)data->hWnd;
+        request.Id = data->uID;
+        request.Flags = data->uFlags & allowed;
+        request.Callback = data->uCallbackMessage;
+        request.Icon = (ULONG)(ULONG_PTR)data->hIcon;
+        memcpy(request.Tip, data->szTip, (size == V1_SIZE ? 64 : 128) * sizeof(WCHAR));
+        if (size >= V2_SIZE) {
+            request.State = data->dwState;
+            request.StateMask = data->dwStateMask;
+            memcpy(request.Info, data->szInfo, sizeof(request.Info));
+            request.Version = data->uVersion;
+            memcpy(request.InfoTitle, data->szInfoTitle, sizeof(request.InfoTitle));
+            request.InfoFlags = data->dwInfoFlags;
         }
-        apply_icon(icon, data, data->cbSize);
-        mirror(MIME_TRAYOP_MODIFY, icon, data, data->cbSize);
-        ok = TRUE;
-        break;
-    case NIM_DELETE:
-        if (!icon) {
-            error = ERROR_NOT_FOUND;
-            break;
+        if (size >= V3_SIZE)
+            request.Guid = data->guidItem;
+        if (size >= V4_SIZE)
+            request.BalloonIcon = (ULONG)(ULONG_PTR)data->hBalloonIcon;
+        if (request.Flags & NIF_TIP)
+            request.Tip[RTL_NUMBER_OF(request.Tip) - 1] = 0;
+        if (size >= V2_SIZE && (request.Flags & NIF_INFO)) {
+            request.Info[RTL_NUMBER_OF(request.Info) - 1] = 0;
+            request.InfoTitle[RTL_NUMBER_OF(request.InfoTitle) - 1] = 0;
         }
-        mirror(MIME_TRAYOP_DELETE, icon, nullptr, 0);
-        memset(icon, 0, sizeof(*icon));
-        ok = TRUE;
-        break;
-    case NIM_SETFOCUS:
-        ok = icon != nullptr;
-        if (!ok)
-            error = ERROR_NOT_FOUND;
-        break;
-    case NIM_SETVERSION:
-        if (!icon) {
-            error = ERROR_NOT_FOUND;
-        } else if (data->uVersion > NOTIFYICON_VERSION_4) {
-            error = ERROR_INVALID_PARAMETER;
+        if (message == NIM_SETFOCUS) {
+            DWORD process = 0;
+            GetWindowThreadProcessId(taskbar, &process);
+            AllowSetForegroundWindow(process);
+        }
+        if (!taskbar_created)
+            taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+        if (message == NIM_ADD)
+            GetModuleFileNameW(nullptr, request.Path, RTL_NUMBER_OF(request.Path));
+        /* the taskbar, of lower integrity than an elevated program, is let through for what it sends the window. */
+        if (message <= NIM_DELETE && (request.Flags & NIF_MESSAGE) && data->hWnd) {
+            DWORD action = message == NIM_DELETE ? MSGFLT_DISALLOW : MSGFLT_ALLOW;
+            ChangeWindowMessageFilterEx(data->hWnd, request.Callback, action, nullptr);
+            ChangeWindowMessageFilterEx(data->hWnd, taskbar_created, action, nullptr);
+        }
+        COPYDATASTRUCT copy = {TRAY_COPYDATA_NOTIFY, sizeof(request), &request};
+        DWORD_PTR result = 0;
+        BOOL sent = SendMessageTimeoutW(taskbar, WM_COPYDATA, (WPARAM)data->hWnd, (LPARAM)&copy,
+                                        SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_NOTIMEOUTIFNOTHUNG, 7000, &result) != 0;
+        if (sent) {
+            ok = result == 1;
+            SetLastError(ok ? ERROR_SUCCESS : (DWORD)E_FAIL);
         } else {
-            icon->Version = data->uVersion;
-            mirror(MIME_TRAYOP_MODIFY, icon, nullptr, 0);
-            ok = TRUE;
+            if (!GetLastError())
+                SetLastError(ERROR_TIMEOUT);
+            ok = FALSE;
         }
-        break;
-    default:
-        error = ERROR_INVALID_PARAMETER;
     }
-    ReleaseSRWLockExclusive(&g_icon_lock);
-    if (error)
-        SetLastError(error);
+    if (!ok && !GetLastError())
+        SetLastError((DWORD)E_FAIL);
     return ok;
 }
 
-/* the end of the taskbar strip when the display reserves one. */
-static BOOL tray_corner(RECT *rect);
-
+/* the taskbar answers the size of the icon, then its place. no size is an icon it does not show. */
 SHSTDAPI HRESULT WINAPI Shell_NotifyIconGetRect(const NOTIFYICONIDENTIFIER *identifier, RECT *rect)
 {
-    if (!identifier || !rect || identifier->cbSize != sizeof(*identifier))
-        return E_INVALIDARG;
+    if (!identifier || !rect)
+        return E_POINTER;
     memset(rect, 0, sizeof(*rect));
-    AcquireSRWLockExclusive(&g_icon_lock);
-    TRAY_ICON *icon = find_icon(identifier->hWnd, identifier->uID, IsEqualGUID(&identifier->guidItem, &GUID_NULL) ? nullptr : &identifier->guidItem);
-    BOOL hidden = icon && (icon->State & NIS_HIDDEN);
-    ReleaseSRWLockExclusive(&g_icon_lock);
-    if (!icon || hidden)
+    HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!taskbar)
         return E_FAIL;
-    return tray_corner(rect) ? S_OK : E_FAIL;
+    if (identifier->cbSize != sizeof(*identifier))
+        return E_INVALIDARG;
+    TRAY_RECT_DATA request = {TRAY_SIGNATURE, TRAY_RECT_SIZE, 32, 0, (ULONG)(ULONG_PTR)identifier->hWnd, identifier->uID,
+                              identifier->guidItem};
+    COPYDATASTRUCT copy = {TRAY_COPYDATA_RECT, sizeof(request), &request};
+    DWORD_PTR size = 0, place = 0;
+    if (!SendMessageTimeoutW(taskbar, WM_COPYDATA, (WPARAM)identifier->hWnd, (LPARAM)&copy, SMTO_BLOCK | SMTO_ABORTIFHUNG,
+                             7000, &size))
+        return E_FAIL;
+    if ((ULONG)size == 0xFFFFFFFF)
+        return S_FALSE;
+    if (!size)
+        return E_FAIL;
+    request.Kind = TRAY_RECT_POSITION;
+    if (!SendMessageTimeoutW(taskbar, WM_COPYDATA, (WPARAM)identifier->hWnd, (LPARAM)&copy, SMTO_BLOCK | SMTO_ABORTIFHUNG,
+                             7000, &place))
+        return E_FAIL;
+    rect->left = (SHORT)LOWORD(place);
+    rect->top = (SHORT)HIWORD(place);
+    rect->right = rect->left + (SHORT)LOWORD(size);
+    rect->bottom = rect->top + (SHORT)HIWORD(size);
+    return S_OK;
 }
 
 /* the strip of the primary monitor outside its work area stands in for the taskbar. */
@@ -231,36 +187,6 @@ static BOOL taskbar_position(UINT *edge, RECT *rect)
     } else {
         return FALSE;
     }
-    return TRUE;
-}
-
-static BOOL tray_corner(RECT *rect)
-{
-    UINT edge;
-    RECT strip;
-    const int size = 16;
-    if (taskbar_position(&edge, &strip)) {
-        if (edge == ABE_BOTTOM || edge == ABE_TOP) {
-            rect->right = strip.right - 4;
-            rect->left = rect->right - size;
-            rect->top = (strip.top + strip.bottom - size) / 2;
-        } else {
-            rect->bottom = strip.bottom - 4;
-            rect->top = rect->bottom - size;
-            rect->left = (strip.left + strip.right - size) / 2;
-        }
-    } else {
-        POINT origin = {0, 0};
-        MONITORINFO info = {sizeof(info)};
-        if (!GetMonitorInfoW(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), &info))
-            return FALSE;
-        rect->right = info.rcWork.right - 4;
-        rect->left = rect->right - size;
-        rect->bottom = info.rcWork.bottom - 4;
-        rect->top = rect->bottom - size;
-    }
-    rect->bottom = rect->top + size;
-    rect->right = rect->left + size;
     return TRUE;
 }
 
