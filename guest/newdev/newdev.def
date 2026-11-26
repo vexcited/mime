@@ -1,3 +1,5 @@
 LIBRARY newdev.dll
 EXPORTS
     DiUninstallDevice @8
+    UpdateDriverForPlugAndPlayDevicesA @21
+    UpdateDriverForPlugAndPlayDevicesW @22
