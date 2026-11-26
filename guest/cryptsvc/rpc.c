@@ -194,23 +194,36 @@ static DWORD init_roots(handle_t h)
     return error;
 }
 
+typedef DWORD(WINAPI *SRV_PROTECT)(handle_t h, DWORD id, DWORD flags, LPCWSTR in, BYTE *data, DWORD size,
+                                   BYTE **out, DWORD *out_size, void *(WINAPI *alloc)(size_t),
+                                   void(WINAPI *free)(void *));
+
 /*
- * the other functions are not served: crypt32 takes ERROR_CALL_NOT_IMPLEMENTED as a service that has none, and goes
- * on without. the notification of a change of the roots needs no answer, the roots of mime change only by the
- * caller's hand.
+ * like cryptsvc.dll of windows 26300, the functions below 1000 go to crypt32's own server side: the roots of the
+ * machine, the protected roots and the auto update of AuthRoot. a root found in the AuthRoot list is added to the
+ * machine by function 7, and a service without it makes crypt32 write it to the user's roots, which the next look
+ * at that store deletes again, endlessly. the functions above 1000 have no answer: the notification of a change of
+ * the roots, as the roots of mime change only by the caller's hand, and the url cache, which is not here.
  */
 unsigned long WINAPI keysvc_SSCertProtectFunction_s(handle_t h, unsigned long dwFuncId, unsigned long dwFlags,
                                                     unsigned short *pwszIn, byte *pbIn, unsigned long cbIn,
                                                     byte **ppbOut, unsigned long *pcbOut)
 {
+    static SRV_PROTECT srv;
     *ppbOut = nullptr;
     *pcbOut = 0;
-    switch (dwFuncId) {
-    case CERT_PROT_INIT_ROOTS:
+    if (dwFuncId == CERT_PROT_INIT_ROOTS)
         return init_roots(h);
-    case CERT_PROT_REGISTER_NOTIFICATION:
+    if (dwFuncId == CERT_PROT_REGISTER_NOTIFICATION)
         return ERROR_SUCCESS;
-    default:
+    if (dwFuncId >= 1000)
         return ERROR_CALL_NOT_IMPLEMENTED;
+    if (!srv) {
+        HMODULE crypt32 = LoadLibraryW(L"crypt32.dll");
+        srv = crypt32 ? (SRV_PROTECT)GetProcAddress(crypt32, "I_CertSrvProtectFunction") : nullptr;
+        if (!srv)
+            return GetLastError();
     }
+    return srv(h, dwFuncId, dwFlags, (LPCWSTR)pwszIn, pbIn, cbIn, ppbOut, (DWORD *)pcbOut, MIDL_user_allocate,
+               MIDL_user_free);
 }
