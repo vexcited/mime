@@ -28,6 +28,7 @@
 
 /* the indexes of apfnDispatch. */
 enum {
+    FI_COPYDATA = 0,
     FI_DWORD = 2,
     FI_NCDESTROY = 3,
     FI_DWORDOPTINLPMSG = 4,
@@ -77,6 +78,7 @@ enum {
     SFN_INLPCOMPAREITEMSTRUCT = 12,
     SFN_INOUTLPWINDOWPOS = 13,
     SFN_INLPWINDOWPOS = 14,
+    SFN_COPYDATA = 16,
     SFN_INOUTSTYLECHANGE = 19,
     SFN_INOUTNCCALCSIZE = 20,
     SFN_DWORDOPTINLPMSG = 21,
@@ -561,6 +563,39 @@ static LRESULT call_outstring(WND *w, ULONG64 pwnd, UINT msg, WPARAM wparam, PWS
     return result;
 }
 
+/*
+ * SfnCOPYDATA: whether there is a COPYDATASTRUCT, then the structure with its data captured, as __fnCOPYDATA of
+ * user32 reads them. data is what MsgCapture holds: the structure, whose lpData is not 0 when the bytes follow it.
+ */
+static LRESULT call_copydata(WND *w, ULONG64 pwnd, UINT msg, WPARAM wparam, PUCHAR data, ULONG size, ULONG64 xparam,
+                             ULONG64 xpfn)
+{
+    enum { PRESENT = 64, COPY = 72, DATA = 88, XPARAM = 96, XPFN = 104, HEAD = 112 };
+    COPYDATASTRUCT cd = {};
+    BOOLEAN present = data && size >= sizeof(cd);
+    if (present)
+        memcpy(&cd, data, sizeof(cd));
+    BOOLEAN pointer = present && cd.lpData;
+    ULONG bytes = pointer && cd.cbData <= size - sizeof(cd) ? cd.cbData : 0;
+    CAPTURE c;
+    if (!capture_begin(&c, HEAD, pointer, bytes))
+        return 0;
+    PUCHAR m = c.Message;
+    head_of((MSG_HEAD *)(m + 40), pwnd, msg, wparam);
+    *(PULONG)(m + PRESENT) = present;
+    *(PULONG64)(m + COPY) = cd.dwData;
+    *(PULONG)(m + COPY + 8) = cd.cbData;
+    *(PULONG64)(m + XPARAM) = xparam;
+    *(PULONG64)(m + XPFN) = xpfn;
+    LRESULT result = 0;
+    CALLBACK_RESULT r;
+    if ((!pointer || capture_put(&c, DATA, data + sizeof(cd), bytes)) &&
+        NT_SUCCESS(call_client(w, FI_COPYDATA, m, c.Length, &r)))
+        result = (LRESULT)r.Result;
+    capture_end(&c);
+    return result;
+}
+
 /* SfnINOUTNCCALCSIZE: a rectangle, or three with the position of the window after them. */
 static LRESULT call_nccalcsize(WND *w, ULONG64 pwnd, UINT msg, WPARAM wparam, PUCHAR data, ULONG size,
                                ULONG64 xparam, ULONG64 xpfn)
@@ -664,6 +699,10 @@ LRESULT ClientCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARA
         CALLBACK_RESULT r;
         return NT_SUCCESS(call_client(w, FI_GETTEXTLENGTHS, &m, sizeof(m), &r)) ? (LRESULT)r.Result : 0;
     }
+    case SFN_COPYDATA:
+        if (value && lparam)
+            return unsupported(msg, kind);
+        return call_copydata(w, pwnd, msg, wparam, data, size, xparam, xpfn);
     case SFN_INOUTNCCALCSIZE:
         if (!data)
             return unsupported(msg, kind);
