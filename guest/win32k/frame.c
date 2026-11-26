@@ -47,16 +47,20 @@ void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m)
     BOOLEAN thick = (style & WS_THICKFRAME) != 0;
     BOOLEAN dlg = (style & WS_DLGFRAME) || (ex_style & WS_EX_DLGMODALFRAME);
     if (is_top_frame(style) && (caption || thick || dlg || (style & WS_BORDER))) {
-        /* any caption window gets the sizing border and the padded border, sizable or not. */
+        /*
+         * any caption window gets the sizing border and the padded border, sizable or not, a thick frame alone one pixel
+         * less, the border it has not. only those have an invisible band out of the frame the dwm shows. measured on
+         * windows 11 26100, as AdjustWindowRectEx of user32 has it.
+         */
         if (caption)
             m->Border = MetricsGet(SM_CXFRAME, dpi) + MetricsGet(SM_CXPADDEDBORDER, dpi);
         else if (thick)
-            m->Border = MetricsGet(SM_CXFRAME, dpi);
+            m->Border = MetricsGet(SM_CXFRAME, dpi) + MetricsGet(SM_CXPADDEDBORDER, dpi) - ((style & WS_BORDER) ? 0 : 1);
         else if (dlg)
             m->Border = MetricsGet(SM_CXDLGFRAME, dpi);
         else
             m->Border = 1;
-        m->VisibleInset = m->Border > 1 ? m->Border - 1 : 0;
+        m->VisibleInset = (caption || thick) && m->Border > 1 ? m->Border - 1 : 0;
         m->Caption = caption ? MetricsGet((ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION, dpi) : 0;
         m->Top = m->Border + m->Caption;
         /* the dwm makes the buttons of a tool window square, 21/22 of its caption. */
@@ -1310,14 +1314,6 @@ void FrameBleed(WND *w)
         ULONG *row = (ULONG *)(s->Bits + (SIZE_T)y * s->Stride);
         row[left] = row[left + 1];
         row[right] = row[right - 1];
-    }
-    /* a window without a caption has no title bar to keep, so its top frame takes the client too. */
-    if (!FrameHasCaption(w->Style, w->ExStyle) && vis.top + m.Top < s->Height) {
-        ULONG *src = (ULONG *)(s->Bits + (SIZE_T)(vis.top + m.Top) * s->Stride);
-        for (LONG y = vis.top; y < vis.top + m.Top; y++) {
-            ULONG *row = (ULONG *)(s->Bits + (SIZE_T)y * s->Stride);
-            memcpy(row + left, src + left, (SIZE_T)(right - left + 1) * sizeof(ULONG));
-        }
     }
 }
 

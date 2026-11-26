@@ -78,11 +78,14 @@ static BOOL visible_frame(HWND hwnd, RECT *r)
     if (style & WS_CHILD)
         return TRUE;
     UINT dpi = GetDpiForWindow(hwnd);
+    /* the frames of win32k: a thick frame alone is a pixel thinner, and only sizing frames have an invisible band. */
     int border = 0;
-    if ((style & WS_CAPTION) == WS_CAPTION)
+    BOOL caption = (style & WS_CAPTION) == WS_CAPTION, thick = (style & WS_THICKFRAME) != 0;
+    if (caption)
         border = GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-    else if (style & WS_THICKFRAME)
-        border = GetSystemMetricsForDpi(SM_CXFRAME, dpi);
+    else if (thick)
+        border = GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) -
+                 ((style & WS_BORDER) ? 0 : 1);
     else if ((style & WS_DLGFRAME) || (ex_style & WS_EX_DLGMODALFRAME))
         border = GetSystemMetricsForDpi(SM_CXDLGFRAME, dpi);
     if (style & WS_MAXIMIZE) {
@@ -95,7 +98,7 @@ static BOOL visible_frame(HWND hwnd, RECT *r)
     if (GetClientRect(hwnd, &client) && ClientToScreen(hwnd, &origin) && origin.x == r->left && origin.y == r->top &&
         client.right == r->right - r->left && client.bottom == r->bottom - r->top)
         return TRUE;
-    int inset = border > 1 ? border - 1 : 0;
+    int inset = (caption || thick) && border > 1 ? border - 1 : 0;
     r->left += inset;
     r->right -= inset;
     r->bottom -= inset;
