@@ -648,6 +648,8 @@ typedef struct PLAN {
  * collect visible window regions from top to bottom, excluding areas hidden by opaque windows. covered is their
  * combined coverage. skipping occluded pixels avoids drawing them again on every frame.
  */
+static BOOLEAN shadow_reach(WND *w, RECT *reach);
+
 static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
 {
     WND *list[PLAN_MAX];
@@ -656,15 +658,19 @@ static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
         list[count++] = w;
     for (ULONG i = 0; i < count; i++) {
         WND *w = list[i];
-        RECT r, cover, window;
+        RECT r, cover, window, reach;
         shown_rect(w, &window);
-        if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE) || !RectIntersect(&r, area, &window))
+        if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE))
             continue;
+        /* a window whose shadow falls in the area is planned for its shadow alone. */
+        BOOLEAN shadow = shadow_reach(w, &reach) && RectIntersect(&reach, &reach, area);
+        if (!RectIntersect(&r, area, &window))
+            r = (RECT){0, 0, 0, 0};
         PLAN *plan = &plans[planned];
         RgnInit(&plan->Visible);
         RgnSetRect(&plan->Visible, &r);
         RgnCombine(&plan->Visible, &plan->Visible, covered, RGN_DIFF);
-        if (RgnIsEmpty(&plan->Visible)) {
+        if (RgnIsEmpty(&plan->Visible) && !shadow) {
             RgnFree(&plan->Visible);
             continue;
         }
@@ -1004,6 +1010,14 @@ static const SHADOW *shadow_of(WND *w, RECT *frame, RECT *reach, LONG *scale)
     reach->top -= top * *scale / (96 * 16) + 1;
     reach->bottom += bottom * *scale / (96 * 16) + 1;
     return s;
+}
+
+/* the rectangle the shadow of a window may darken, screen pixels. */
+static BOOLEAN shadow_reach(WND *w, RECT *reach)
+{
+    RECT frame;
+    LONG scale;
+    return shadow_of(w, &frame, reach, &scale) != nullptr;
 }
 
 /* where the centre of pixel p falls in the image of the shadow, sixteenths: stretched along the edge, as is out of it. */
