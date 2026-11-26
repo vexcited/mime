@@ -2,6 +2,14 @@
 ; the host join AuthRoot at each boot, see guest/ntos/cm/certs.c.
 
 [HKLM\SOFTWARE\Microsoft\SystemCertificates\{CA,Disallowed,ROOT}\Certificates]
+
+; the descriptor of windows 11 26300: cryptographic services, S-1-5-80-2427296..., writes the roots of automatic root
+; update here.
+[HKLM\SOFTWARE\Microsoft\SystemCertificates\AuthRoot]
+#security O:SYG:SYD:AI(A;;KA;;;S-1-5-80-242729624-280608522-2219052887-3187409060-2225943459)(A;OICIIO;GA;;;S-1-5-80-242729624-280608522-2219052887-3187409060-2225943459)(A;ID;KR;;;BU)(A;CIIOID;GR;;;BU)(A;ID;KA;;;BA)(A;CIIOID;GA;;;BA)(A;ID;KA;;;SY)(A;CIIOID;GA;;;SY)(A;CIIOID;GA;;;CO)(A;ID;KR;;;AC)(A;CIIOID;GR;;;AC)(A;ID;KR;;;S-1-15-3-1024-1065365936-1281604716-3511738428-1654721687-432734479-3232135806-4053264122-3456934681)(A;CIIOID;GR;;;S-1-15-3-1024-1065365936-1281604716-3511738428-1654721687-432734479-3232135806-4053264122-3456934681)
+
+[HKLM\SOFTWARE\Microsoft\SystemCertificates\AuthRoot\{Certificates,CRLs,CTLs}]
+
 [HKLM\SOFTWARE\Microsoft\EnterpriseCertificates\{CA,Disallowed}]
 [HKLM\SOFTWARE\Microsoft\EnterpriseCertificates\Root\Certificates]
 [HKLM\SOFTWARE\Policies\Microsoft\SystemCertificates\Root\Certificates]
