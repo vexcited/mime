@@ -183,7 +183,7 @@ static NTSTATUS enum_adapters(UINT *user_count, KMT_ADAPTERINFO *user_list, UINT
             infos[count++] = (KMT_ADAPTERINFO){handle_of(i), {list[i].Luid, 0},
                                                sources && (list[i].Type & ADAPTER_DISPLAY) ? 1 : 0, FALSE};
         }
-        if (W32Min(room, KMT_SESSION_ADAPTERS) < count)
+        if ((room < KMT_SESSION_ADAPTERS ? room : KMT_SESSION_ADAPTERS) < count)
             return STATUS_BUFFER_TOO_SMALL;
         if (!NT_SUCCESS(MimeCopyToUser(user_list, infos, count * sizeof(KMT_ADAPTERINFO))))
             return STATUS_ACCESS_VIOLATION;
