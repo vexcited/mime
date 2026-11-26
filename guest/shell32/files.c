@@ -378,3 +378,54 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoA(LPCSTR path, DWORD attributes, SHFILEIN
     }
     return result;
 }
+
+/* ------------------------------------------------------------------ recycle bin */
+
+/*
+ * deleting never recycles here, see fileop.c, so the bin is empty. measured on windows 11: emptying an empty bin is
+ * E_UNEXPECTED whatever the flags, a root on no drive E_FAIL, and a query of a structure of another size E_INVALIDARG.
+ */
+SHSTDAPI HRESULT WINAPI SHEmptyRecycleBinW(HWND owner, LPCWSTR root, DWORD flags)
+{
+    if (root && root[0] && root[1] == L':') {
+        WCHAR drive[4] = {root[0], L':', L'\\', 0};
+        if (GetDriveTypeW(drive) == DRIVE_NO_ROOT_DIR)
+            return E_FAIL;
+    }
+    return E_UNEXPECTED;
+}
+
+/* shellapi.h packs it to a byte on x86. */
+#ifndef _WIN64
+#pragma pack(push, 1)
+#endif
+typedef struct _SHQUERYRBINFO {
+    DWORD cbSize;
+    __int64 i64Size;
+    __int64 i64NumItems;
+} SHQUERYRBINFO;
+#ifndef _WIN64
+#pragma pack(pop)
+#endif
+
+SHSTDAPI HRESULT WINAPI SHQueryRecycleBinW(LPCWSTR root, SHQUERYRBINFO *info)
+{
+    if (!info || info->cbSize != sizeof(*info))
+        return E_INVALIDARG;
+    info->i64Size = 0;
+    info->i64NumItems = 0;
+    return S_OK;
+}
+
+SHSTDAPI HRESULT WINAPI SHQueryRecycleBinA(LPCSTR root, SHQUERYRBINFO *info)
+{
+    return SHQueryRecycleBinW(nullptr, info);
+}
+
+SHSTDAPI HRESULT WINAPI SHEmptyRecycleBinA(HWND owner, LPCSTR root, DWORD flags)
+{
+    WCHAR wide[4] = {};
+    if (root && root[0] && root[1] == ':')
+        MultiByteToWideChar(CP_ACP, 0, root, 2, wide, 2);
+    return SHEmptyRecycleBinW(owner, wide[0] ? wide : nullptr, flags);
+}

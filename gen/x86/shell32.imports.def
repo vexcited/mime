@@ -65,6 +65,10 @@ EXPORTS
     SHDefExtractIconW@24 @6
     SHDoDragDrop@20 @88
     SHFileOperationA@4
+    SHEmptyRecycleBinA@12
+    SHEmptyRecycleBinW@12
+    SHQueryRecycleBinA@8
+    SHQueryRecycleBinW@8
     SHFileOperationW@4
     SHGetDataFromIDListW@20 @492
     SHGetDesktopFolder@4
