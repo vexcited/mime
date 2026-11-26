@@ -395,11 +395,24 @@ static void frame_free(void *ctx, void *p)
 
 static const MimeAllocator g_frame_alloc = {frame_alloc, frame_free, nullptr};
 
-/* the classes of the style the frame and the menus read, light and dark. */
-enum { CLASS_WINDOW, CLASS_WINDOW_DARK, CLASS_MENU, CLASS_MENU_DARK, CLASS_SCROLLBAR, CLASS_COUNT };
-/* the dark classes are named DarkMode::Window and DarkMode::Menu, the part before :: being the app. */
-static const char *const g_class_apps[CLASS_COUNT] = {nullptr, "DarkMode", nullptr, "DarkMode", nullptr};
-static const char *const g_class_names[CLASS_COUNT] = {"Window", "Window", "Menu", "Menu", "ScrollBar"};
+/*
+ * the classes of the style the frame and the menus read, light and dark. Window holds the frame uxtheme draws around
+ * a child window with a caption, DWMWindow the caption buttons the dwm draws on a top level one.
+ */
+enum {
+    CLASS_WINDOW,
+    CLASS_WINDOW_DARK,
+    CLASS_DWM,
+    CLASS_DWM_DARK,
+    CLASS_MENU,
+    CLASS_MENU_DARK,
+    CLASS_SCROLLBAR,
+    CLASS_COUNT
+};
+/* the dark classes are named DarkMode::DWMWindow and DarkMode::Menu, the part before :: being the app. */
+static const char *const g_class_apps[CLASS_COUNT] = {nullptr, "DarkMode", nullptr, "DarkMode", nullptr, "DarkMode", nullptr};
+static const char *const g_class_names[CLASS_COUNT] = {"Window", "Window", "DWMWindow", "DWMWindow",
+                                                       "Menu",   "Menu",   "ScrollBar"};
 
 /* the coverage of a glyph image, to be tinted when drawn, and the color the image has itself. */
 typedef struct GLYPH_MASK {
@@ -469,6 +482,10 @@ static BOOLEAN load_theme(void)
     /* a style without dark classes shows the light ones. */
     if (g_theme.Class[CLASS_WINDOW_DARK] < 0)
         g_theme.Class[CLASS_WINDOW_DARK] = g_theme.Class[CLASS_WINDOW];
+    if (g_theme.Class[CLASS_DWM] < 0)
+        g_theme.Class[CLASS_DWM] = g_theme.Class[CLASS_WINDOW];
+    if (g_theme.Class[CLASS_DWM_DARK] < 0)
+        g_theme.Class[CLASS_DWM_DARK] = g_theme.Class[CLASS_DWM];
     if (g_theme.Class[CLASS_MENU_DARK] < 0)
         g_theme.Class[CLASS_MENU_DARK] = g_theme.Class[CLASS_MENU];
     g_theme.Ready = g_theme.Class[CLASS_WINDOW] >= 0;
@@ -488,8 +505,8 @@ static BOOLEAN theme_color(int which, int part, int state, int prop, COLORREF *o
 
 BOOLEAN FrameThemeColor(BOOLEAN menu, BOOLEAN dark, int part, int state, int prop, COLORREF *out)
 {
-    return theme_color(menu ? (dark ? CLASS_MENU_DARK : CLASS_MENU) : (dark ? CLASS_WINDOW_DARK : CLASS_WINDOW), part,
-                       state, prop, out);
+    return theme_color(menu ? (dark ? CLASS_MENU_DARK : CLASS_MENU) : (dark ? CLASS_DWM_DARK : CLASS_DWM), part, state,
+                       prop, out);
 }
 
 static void draw_glyph(SURFACE *s, const REGION *clip, const GLYPH_MASK *mask, const RECT *button, ULONG pixel);
@@ -553,7 +570,7 @@ static const GLYPH_MASK *class_glyph(int which, int part, int state, UINT dpi)
 
 static const GLYPH_MASK *glyph_mask(BOOLEAN dark, int part, int state, UINT dpi)
 {
-    return class_glyph(dark ? CLASS_WINDOW_DARK : CLASS_WINDOW, part, state, dpi);
+    return class_glyph(dark ? CLASS_DWM_DARK : CLASS_DWM, part, state, dpi);
 }
 
 /* the color at the middle of the background image of a part, which a part of one color is filled with. */
