@@ -63,17 +63,22 @@ void ScreenVisibleRegion(REGION *out)
 
 BOOLEAN ScreenIsSurface(const SURFACE *s) { return s && (s == g_screen || (s->Flags & SURF_VSCREEN)); }
 
-/* src over dst, both premultiplied. */
+/*
+ * src over dst, both premultiplied, as the dwm blends: dst scaled by 255 - alpha over 255, rounded, then src added and
+ * saturated, so a pixel of alpha 0 with a color lightens what is under it.
+ */
 static inline ULONG over(ULONG s, ULONG d)
 {
     ULONG a = 255 - (s >> 24);
-    if (a == 0)
+    if (a == 0 || !d)
         return s;
-    if (a == 255)
-        return d;
-    ULONG rb = ((d & 0xFF00FF) * a + 0x800080) >> 8 & 0xFF00FF;
-    ULONG g = ((d & 0xFF00) * a + 0x8000) >> 8 & 0xFF00;
-    return s + rb + g;
+    ULONG out = 0;
+    for (ULONG shift = 0; shift < 32; shift += 8) {
+        ULONG t = (d >> shift & 0xFF) * a + 128;
+        ULONG c = (s >> shift & 0xFF) + ((t + (t >> 8)) >> 8);
+        out |= (c > 255 ? 255 : c) << shift;
+    }
+    return out;
 }
 
 /* counts guest-visible screen changes: presents, configuration changes, window creation and destruction. */
@@ -110,7 +115,7 @@ static BOOLEAN presents_through_host(WND *w)
  * absent; read pixels into g_pixels only when requested.
  */
 static BOOLEAN read_presented(WND *top, WND *source, BOOLEAN pixels, ULONG *width, ULONG *height, RECT *client,
-                             ULONG64 *serial)
+                             ULONG64 *serial, ULONG *flags)
 {
     if (!g_readback && !(g_readback = MmAllocateContiguousPages(4096)))
         return FALSE;
@@ -156,6 +161,7 @@ static BOOLEAN read_presented(WND *top, WND *source, BOOLEAN pixels, ULONG *widt
         *height = r->height;
         *client = (RECT){r->client.left, r->client.top, r->client.right, r->client.bottom};
         *serial = r->serial;
+        *flags = r->flags;
         return TRUE;
     }
     return FALSE;
@@ -168,7 +174,8 @@ static ULONG64 tree_serial(WND *top, WND *w, ULONG64 mix)
         ULONG width, height;
         RECT client;
         ULONG64 serial;
-        if (read_presented(top, w, FALSE, &width, &height, &client, &serial))
+        ULONG flags;
+        if (read_presented(top, w, FALSE, &width, &height, &client, &serial, &flags))
             mix = (mix ^ (serial + (ULONG64)(ULONG_PTR)WndHandle(w) * 0x9E3779B97F4A7C15ull)) * 0xFF51AFD7ED558CCDull;
     }
     for (WND *c = w->FirstChild; c; c = c->Next)
@@ -223,10 +230,11 @@ static LONG placed(LONG size, const PLACE *place)
     return (LONG)(((LONG64)size * place->Num + place->Den - 1) / place->Den);
 }
 
-/* a layered or shaped window shows what is under it; the frame the dwm extends into a client area does not. */
+/* a layered or shaped window shows what is under it, and so does one the dwm composes by its alpha, see FrameCompose. */
 static BOOLEAN see_through(const WND *w)
 {
-    return w->Shape || (w->LayerFlags & (LWA_ALPHA | LWA_COLORKEY | MIME_LAYER_UPDATE));
+    return w->Shape || (w->LayerFlags & (LWA_ALPHA | LWA_COLORKEY | MIME_LAYER_UPDATE)) ||
+           (w->Surface && !(w->Surface->Flags & SURF_DEVICE));
 }
 
 /* the physical screen rectangle a window shows in, without the invisible resize border, as the host draws it. */
@@ -391,10 +399,11 @@ static ULONG under_pixel(const UNDER *under, LONG x, LONG y)
 
 /*
  * stretch the host image as it appears on screen. through the alpha and the key of a layered window it is made over the
- * pixels under the window, not over the window's own, which the image replaces.
+ * pixels under the window, not over the window's own, which the image replaces. an image of a swapchain that composes
+ * with alpha is made over the window, which holds the fill of blur behind under it.
  */
 static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT *rect, const RECT *c, ULONG width,
-                              ULONG height, const LAYERFX *fx, const UNDER *under)
+                              ULONG height, const LAYERFX *fx, const UNDER *under, BOOLEAN alpha)
 {
     RECT r;
     if (!RectIntersect(&r, rect, c))
@@ -403,17 +412,17 @@ static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT 
     for (LONG y = r.top; y < r.bottom; y++) {
         const ULONG *src = (const ULONG *)(g_pixels + (SIZE_T)((y - c->top) * (LONG)height / ch) * width * 4);
         ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride);
-        /* the host made the pixels opaque. */
-        if (!under && (ULONG)cw == width) {
+        if (!under && !alpha && (ULONG)cw == width) {
             memcpy(dst + (r.left - shift.x), src + (r.left - c->left), (SIZE_T)(r.right - r.left) * 4);
             continue;
         }
         for (LONG x = r.left; x < r.right; x++) {
             ULONG pixel = src[(ULONG)cw == width ? x - c->left : (x - c->left) * (LONG)width / cw];
             if (!under) {
-                dst[x - shift.x] = pixel;
+                dst[x - shift.x] = alpha ? over(pixel, dst[x - shift.x]) : pixel;
                 continue;
             }
+            pixel |= 0xFF000000;
             ULONG behind = under_pixel(under, x, y);
             dst[x - shift.x] = fx->Keyed && (pixel & 0xFFFFFF) == fx->Key ? behind
                                : fx->Alpha == 255                         ? pixel
@@ -458,10 +467,11 @@ static void compose_layer(const COMPOSE *cx, WND *window)
     ULONG width, height;
     RECT client;
     ULONG64 serial;
-    if (!RgnIsEmpty(&shown) && read_presented(top, window, TRUE, &width, &height, &client, &serial))
+    ULONG flags;
+    if (!RgnIsEmpty(&shown) && read_presented(top, window, TRUE, &width, &height, &client, &serial, &flags))
         for (ULONG i = 0; i < shown.Count; i++)
             compose_presented(cx->Bits, cx->Stride, cx->Shift, &shown.Rects[i], &c, width, height, cx->Effects,
-                              cx->Under);
+                              cx->Under, (flags & MIME_READBACK_ALPHA) != 0);
     RgnFree(&shown);
 }
 

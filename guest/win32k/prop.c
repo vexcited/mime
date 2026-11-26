@@ -1,6 +1,10 @@
 /* window properties use atom keys. user32 interns string keys as global atoms. */
 #include "win32k.h"
 
+/* frame.c keeps the regions of DwmEnableBlurBehindWindow beside the windows. */
+void FrameSetBlurRegion(WND *w, const REGION *region);
+void FrameForgetBlurRegion(WND *w);
+
 static WND_PROP *find_prop(WND *w, ATOM atom)
 {
     for (ULONG i = 0; i < w->PropCount; i++)
@@ -11,6 +15,7 @@ static WND_PROP *find_prop(WND *w, ATOM atom)
 
 void PropFreeWindow(WND *w)
 {
+    FrameForgetBlurRegion(w);
     W32Free(w->Props);
     w->Props = nullptr;
     w->PropCount = 0;
@@ -43,8 +48,16 @@ static void prop_changed(WND *w, ATOM atom)
         if (w->Thread)
             QueueWake(w->Thread, QS_PAINT);
     }
+    /* dwmapi hands over the region of blur behind, which the program may delete as soon as the call returns. */
+    if (atom == PropAtom(L"DwmBlurRegion")) {
+        HANDLE handle = PropGetData(w, atom);
+        GDI_REGION *r = handle ? (GDI_REGION *)GdiLookup(handle, GDI_TYPE_REGION) : nullptr;
+        FrameSetBlurRegion(w, r ? &r->Region : nullptr);
+    }
     /* the frame under the client area changed: the whole window is composed again. */
-    if ((atom == PropAtom(L"DwmMarginsLR") || atom == PropAtom(L"DwmMarginsTB")) && w->Surface) {
+    if ((atom == PropAtom(L"DwmMarginsLR") || atom == PropAtom(L"DwmMarginsTB") ||
+         atom == PropAtom(L"DwmBlurBehind") || atom == PropAtom(L"DwmBlurRegion")) &&
+        w->Surface) {
         FrameSurfaceAlpha(w);
         RECT all = {0, 0, w->Surface->Width, w->Surface->Height};
         SurfaceMarkDirty(w->Surface, &all);

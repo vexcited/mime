@@ -1048,49 +1048,163 @@ BOOLEAN FrameDwmButtons(WND *w)
 }
 
 /*
- * what the dwm composes for a window that extended its frame: the caption color under the pixels of the extended part
- * and the caption buttons over them. dst holds the window's pixels in area, window relative.
+ * DwmEnableBlurBehindWindow: dwmapi keeps whether it is on in DwmBlurBehind, and win32k copies the region of
+ * DwmBlurRegion as it is set, client relative, since the program may delete its own at once.
+ */
+typedef struct BLUR_REGION {
+    struct BLUR_REGION *Next;
+    WND *Window;
+    REGION Region;
+} BLUR_REGION;
+
+static BLUR_REGION *g_blur_regions;
+
+static BOOLEAN blur_behind(WND *w)
+{
+    return PropGetData(w, PropAtom(L"DwmBlurBehind")) != nullptr;
+}
+
+static BLUR_REGION **blur_region(WND *w)
+{
+    BLUR_REGION **link = &g_blur_regions;
+    while (*link && (*link)->Window != w)
+        link = &(*link)->Next;
+    return link;
+}
+
+void FrameForgetBlurRegion(WND *w)
+{
+    BLUR_REGION **link = blur_region(w), *b = *link;
+    if (!b)
+        return;
+    *link = b->Next;
+    RgnFree(&b->Region);
+    W32Free(b);
+}
+
+void FrameSetBlurRegion(WND *w, const REGION *region)
+{
+    FrameForgetBlurRegion(w);
+    BLUR_REGION *b = region ? W32Alloc(sizeof(BLUR_REGION)) : nullptr;
+    if (!b)
+        return;
+    b->Window = w;
+    RgnInit(&b->Region);
+    RgnCopy(&b->Region, region);
+    b->Next = g_blur_regions;
+    g_blur_regions = b;
+}
+
+/* a frame of its own that the dwm draws under extended glass: a thick frame or a caption, measured on windows 11. */
+static BOOLEAN dwm_frame(DWORD style)
+{
+    return (style & WS_THICKFRAME) || (style & WS_CAPTION) == WS_CAPTION;
+}
+
+/* a premultiplied color under the pixels of a region. gdi leaves its colors at alpha 0, so the sum is held to white. */
+static void fill_under(SURFACE *dst, const REGION *region, ULONG color)
+{
+    for (ULONG i = 0; i < region->Count; i++) {
+        const RECT *r = &region->Rects[i];
+        for (LONG y = r->top; y < r->bottom; y++) {
+            ULONG *row = (ULONG *)(dst->Bits + (LONG_PTR)y * dst->Stride);
+            for (LONG x = r->left; x < r->right; x++) {
+                ULONG s = row[x], a = 255 - (s >> 24), out = 0;
+                if (!a)
+                    continue;
+                for (int shift = 0; shift < 32; shift += 8) {
+                    ULONG c = ((s >> shift) & 0xFF) + (((color >> shift) & 0xFF) * a + 127) / 255;
+                    out |= (c > 255 ? 255 : c) << shift;
+                }
+                row[x] = out;
+            }
+        }
+    }
+}
+
+/* whether the window is composed by the alpha of its pixels: it extended its frame or asked for blur behind. */
+BOOLEAN FrameComposesAlpha(WND *w)
+{
+    REGION ext;
+    if (FrameExtension(w, &ext)) {
+        RgnFree(&ext);
+        return TRUE;
+    }
+    return is_top_frame(w->Style) && blur_behind(w);
+}
+
+/*
+ * what the dwm of windows 11 composes under a window that extended its frame or asked for blur behind, measured with
+ * blur.c of scratch/pr17 in the research repository. dst holds the window's pixels in area, window relative.
+ *
+ * - out of the client area the window is opaque, whatever alpha gdi left there.
+ * - the extended part shows the caption color of a window with a thick frame or a caption, and what is behind the
+ *   window otherwise, or when the whole client area is glass and blur is on.
+ * - without blur the rest of the client area is opaque. with it, the client area inside the margins and the blur
+ *   region, the whole of it without one, has a fill under it: the caption color when the frame is extended, else a
+ *   dark tint of a quarter, the backdrop going to 192/255 of itself plus 2. the rest shows what is behind.
+ *
+ * the caption buttons go over the extended part.
  */
 void FrameCompose(WND *w, SURFACE *dst, const RECT *area)
 {
     REGION ext;
-    if (!FrameExtension(w, &ext))
+    BOOLEAN extended = FrameExtension(w, &ext), blur = is_top_frame(w->Style) && blur_behind(w);
+    if (!extended && !blur)
         return;
+    LONG margins[4] = {};
+    BOOLEAN with_margins = frame_margins(w, margins);
+    BOOLEAN sheet = with_margins && (margins[0] < 0 || margins[1] < 0 || margins[2] < 0 || margins[3] < 0);
     FRAME_COLORS colors;
     frame_colors(w, &colors);
     ULONG frame = ColorToPixel(colors.Caption) | 0xFF000000u;
-    RgnCombineRect(&ext, &ext, area, RGN_AND);
-    /* the rest of the window is opaque whatever alpha gdi left there. */
-    REGION rest;
-    RgnInit(&rest);
-    RgnSetRect(&rest, area);
-    RgnCombine(&rest, &rest, &ext, RGN_DIFF);
-    for (ULONG i = 0; i < rest.Count; i++) {
-        const RECT *r = &rest.Rects[i];
+    RECT client = w->ClientRect;
+    RectOffset(&client, -w->WindowRect.left, -w->WindowRect.top);
+    REGION opaque, fill;
+    RgnInit(&opaque);
+    RgnInit(&fill);
+    RgnSetRect(&opaque, area);
+    if (blur) {
+        RgnCombineRect(&opaque, &opaque, &client, RGN_DIFF);
+        RECT inner = client;
+        if (sheet) {
+            inner = (RECT){};
+        } else if (with_margins) {
+            inner.left += margins[0];
+            inner.right -= margins[1];
+            inner.top += margins[2];
+            inner.bottom -= margins[3];
+        }
+        if (!RectEmpty(&inner)) {
+            RgnSetRect(&fill, &inner);
+            BLUR_REGION *b = *blur_region(w);
+            if (b) {
+                REGION shape;
+                RgnInit(&shape);
+                RgnCopy(&shape, &b->Region);
+                RgnOffset(&shape, client.left, client.top);
+                RgnCombine(&fill, &fill, &shape, RGN_AND);
+                RgnFree(&shape);
+            }
+            RgnCombineRect(&fill, &fill, area, RGN_AND);
+        }
+    } else {
+        RgnCombine(&opaque, &opaque, &ext, RGN_DIFF);
+    }
+    for (ULONG i = 0; i < opaque.Count; i++) {
+        const RECT *r = &opaque.Rects[i];
         for (LONG y = r->top; y < r->bottom; y++) {
             ULONG *row = (ULONG *)(dst->Bits + (LONG_PTR)y * dst->Stride);
             for (LONG x = r->left; x < r->right; x++)
                 row[x] |= 0xFF000000u;
         }
     }
-    RgnFree(&rest);
-    for (ULONG i = 0; i < ext.Count; i++) {
-        const RECT *r = &ext.Rects[i];
-        for (LONG y = r->top; y < r->bottom; y++) {
-            ULONG *row = (ULONG *)(dst->Bits + (LONG_PTR)y * dst->Stride);
-            for (LONG x = r->left; x < r->right; x++) {
-                ULONG s = row[x], a = 255 - (s >> 24);
-                if (!a)
-                    continue;
-                /* gdi leaves its colors at alpha 0, so the sum is held to white. */
-                ULONG out = 0xFF000000u;
-                for (int shift = 0; shift < 24; shift += 8) {
-                    ULONG c = ((s >> shift) & 0xFF) + (((frame >> shift) & 0xFF) * a + 127) / 255;
-                    out |= (c > 255 ? 255 : c) << shift;
-                }
-                row[x] = out;
-            }
-        }
+    RgnFree(&opaque);
+    fill_under(dst, &fill, with_margins ? frame : 0x3F020202u);
+    RgnFree(&fill);
+    if (extended && dwm_frame(w->Style) && !(sheet && blur)) {
+        RgnCombineRect(&ext, &ext, area, RGN_AND);
+        fill_under(dst, &ext, frame);
     }
     RgnFree(&ext);
     if (!FrameDwmButtons(w))
@@ -1107,20 +1221,34 @@ void FrameCompose(WND *w, SURFACE *dst, const RECT *area)
 }
 
 /*
- * gdi leaves alpha 0 in a window that extended its frame, as windows' redirection surfaces have it, so the black a
- * program paints there shows the frame. other windows take what gdi draws as opaque.
+ * gdi leaves alpha 0 in a window that extended its frame or asked for blur behind, as windows' redirection surfaces
+ * have it, so the black a program paints there shows what is under it. other windows take what gdi draws as opaque.
+ * the surface of an opaque window holds alpha 255, which the host needs. when the dwm starts composing it by alpha, what
+ * gdi drew and what was never painted gets the alpha 0 of windows, where a redirection surface starts cleared and a
+ * swap chain of the bitblt model writes its own alpha. an opaque 32-bit image drawn before is lost that way, windows
+ * keeps it opaque, until the program paints again. when the dwm stops, it takes every pixel as opaque again.
  */
 void FrameSurfaceAlpha(WND *w)
 {
-    if (!w->Surface)
+    SURFACE *s = w->Surface;
+    if (!s)
         return;
-    REGION ext;
-    if (FrameExtension(w, &ext)) {
-        RgnFree(&ext);
-        w->Surface->Flags &= ~SURF_DEVICE;
-    } else {
-        w->Surface->Flags |= SURF_DEVICE;
+    BOOLEAN device = !FrameComposesAlpha(w);
+    if (device == ((s->Flags & SURF_DEVICE) != 0))
+        return;
+    if (device)
+        s->Flags |= SURF_DEVICE;
+    else
+        s->Flags &= ~SURF_DEVICE;
+    if (s->Bpp != 32 || (w->LayerFlags & MIME_LAYER_UPDATE))
+        return;
+    for (LONG y = 0; y < s->Height; y++) {
+        ULONG *row = (ULONG *)(s->Bits + (LONG_PTR)y * s->Stride);
+        for (LONG x = 0; x < s->Width; x++)
+            row[x] = device ? row[x] | 0xFF000000u : (row[x] >> 24) == 0xFF ? row[x] & 0xFFFFFF : row[x];
     }
+    RECT all = {0, 0, s->Width, s->Height};
+    SurfaceMarkDirty(s, &all);
 }
 
 /* the caption buttons the dwm shows over the client area changed state. */

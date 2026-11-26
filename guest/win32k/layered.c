@@ -16,14 +16,8 @@ static inline ULONG premultiply(ULONG p, ULONG a)
     return (pa << 24) | (r << 16) | (g << 8) | b;
 }
 
-static BOOLEAN extended_frame(WND *w)
-{
-    REGION ext;
-    if (!FrameExtension(w, &ext))
-        return FALSE;
-    RgnFree(&ext);
-    return TRUE;
-}
+/* frame.c tells which windows the dwm composes by their alpha. */
+BOOLEAN FrameComposesAlpha(WND *w);
 
 static BOOLEAN needs_compose(WND *w)
 {
@@ -31,7 +25,7 @@ static BOOLEAN needs_compose(WND *w)
         return TRUE;
     if ((w->LayerFlags & (LWA_ALPHA | LWA_COLORKEY)) && !(w->LayerFlags & MIME_LAYER_UPDATE))
         return TRUE;
-    return !(w->LayerFlags & MIME_LAYER_UPDATE) && extended_frame(w);
+    return !(w->LayerFlags & MIME_LAYER_UPDATE) && FrameComposesAlpha(w);
 }
 
 static void redraw_all(WND *w)
