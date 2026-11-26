@@ -243,11 +243,24 @@ static NTSTATUS remove_from(IO_COMPLETION *port, FILE_IO_COMPLETION_INFORMATION 
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     ULONG n = 0;
     *removed = 0;
+    /*
+     * a wait packet cancelled between the semaphore and the queue leaves the waiter without one, and windows never
+     * wakes a waiter of a queue for nothing: it waits again, up to the same deadline.
+     */
+    LARGE_INTEGER deadline;
+    if (timeout && timeout->QuadPart < 0) {
+        deadline.QuadPart = (LONGLONG)(KeBootFiletime + KiQueryInterruptTime()) - timeout->QuadPart;
+        timeout = &deadline;
+    }
     NTSTATUS status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
     while (status == STATUS_SUCCESS) {
         ULONG64 values[4];
-        if (!IopRemoveCompletionPacket(port, values))
-            break;
+        if (!IopRemoveCompletionPacket(port, values)) {
+            if (n)
+                break;
+            status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
+            continue;
+        }
         out[n].KeyContext = (PVOID)(ULONG_PTR)values[0];
         out[n].ApcContext = (PVOID)(ULONG_PTR)values[1];
         out[n].IoStatusBlock.Pointer = (PVOID)(ULONG_PTR)values[2];

@@ -540,7 +540,15 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
             status = STATUS_ALERTED;
         } else if (kind == FAST_REMOVE && status == STATUS_SUCCESS) {
             ULONG64 values[4];
-            if (IopRemoveCompletionPacket(objects[0], values)) {
+            /* a packet cancelled after the wait leaves none: the thread waits again, to the same deadline. */
+            if (timeout && timeout->QuadPart < 0) {
+                time.QuadPart = (LONGLONG)(KeBootFiletime + KiQueryInterruptTime()) - timeout->QuadPart;
+                timeout = &time;
+            }
+            while (status == STATUS_SUCCESS && !IopRemoveCompletionPacket(objects[0], values))
+                status = KiWaitObjects(count, waits, wait_type, UserRequest, UserMode, alertable, timeout,
+                                       count > THREAD_WAIT_OBJECTS ? blocks : nullptr);
+            if (status == STATUS_SUCCESS) {
                 outputs[0] = (FAST_OUTPUT){(PVOID)a1, values[0], sizeof(ULONG64)};
                 outputs[1] = (FAST_OUTPUT){(PVOID)a2, values[1], sizeof(ULONG64)};
                 outputs[2] = (FAST_OUTPUT){(PVOID)a3, values[2], sizeof(ULONG64)};
