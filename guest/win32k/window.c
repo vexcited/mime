@@ -3246,14 +3246,19 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
         if (!alive(w))
             return old;
         if (is_style) {
-            DWORD visible = w->Style & WS_VISIBLE;
-            w->Style = (ss.styleNew & ~WS_VISIBLE) | visible;
+            /*
+             * like xxxSetWindowStyle, WS_VISIBLE is only the bit: no show, position or activation messages. frame
+             * procedures clear it around DefWindowProc to keep the caption from being drawn.
+             */
+            BOOLEAN shown = !(w->Style & WS_VISIBLE) && (ss.styleNew & WS_VISIBLE);
+            w->Style = ss.styleNew;
             /* restoring the application frame ends its fullscreen host space. */
             if ((w->Flags & WNDF_APP_FULLSCREEN) &&
                 ((w->Style & WS_CAPTION) == WS_CAPTION || (w->Style & WS_THICKFRAME)))
                 w->Flags &= ~(WNDF_FULLSCREEN | WNDF_APP_FULLSCREEN);
-            if ((ss.styleNew & WS_VISIBLE) != visible)
-                WndShow(w, (ss.styleNew & WS_VISIBLE) ? SW_SHOWNA : SW_HIDE);
+            /* a top level window shown this way is composed as one shown by ShowWindow. */
+            if (shown && WndIsTopLevel(w) && WndIsVisible(w) && !(w->Style & WS_MINIMIZE))
+                WndEnsureSurface(w);
         } else {
             w->ExStyle = (ss.styleNew & 0x7FFFFFFFu) | (w->ExStyle & 0x80000000u);
             LayerStyleChanged(w);
