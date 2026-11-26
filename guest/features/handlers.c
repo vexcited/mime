@@ -439,8 +439,7 @@ uint32_t HandlerAvailable(const FEATURE_DEF *feature)
         /* The package has the files of the x64 processor only. */
         return MACHINE_ARCH == FEATURE_ARCH_X64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
     case FEATURE_HANDLER_VCRUNTIME:
-        /* Only an arm64 machine runs x64 programs with the system dlls of SysX64. */
-        return MACHINE_ARCH == FEATURE_ARCH_ARM64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
+        return ERROR_SUCCESS;
     case FEATURE_HANDLER_CATALOGS:
         /* The catalogs are those of the amd64 packages. */
         return MACHINE_ARCH == FEATURE_ARCH_X64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;

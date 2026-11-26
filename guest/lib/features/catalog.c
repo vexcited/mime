@@ -93,8 +93,9 @@ static const FEATURE_DEF g_catalog[] = {
         .Version = "Latest",
         .Vendor = "Microsoft Corporation",
         /*
-         * The redistributable of the latest runtime, which holds the arm64x runtime and the x64 one. Windows on arm
-         * installs the first, mime runs x64 programs with x64 system dlls and takes the second out of it.
+         * The redistributable of the latest runtime, which holds the x64 runtime and the arm64x one. Windows has
+         * neither, the installers of programs bring it. Mime takes the x64 one out of it on both machines, as it runs
+         * x64 programs with x64 system dlls on arm64 too.
          */
         .Url = {[FEATURE_ARCH_X64] = "https://aka.ms/vc14/vc_redist.x64.exe"},
         .Signer = "Microsoft Corporation",

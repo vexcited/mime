@@ -1,9 +1,9 @@
 /*
  * The x64 Visual C++ runtime for the x64 programs. Microsoft's redistributable is a Burn bundle: an x86 program whose
  * .wixburn section locates two cabinets, the one of the bootstrapper with the manifest, and the attached one with the
- * packages. On arm64 it installs only the arm64x runtime into System32. Mime runs x64 programs with x64 system dlls
- * from SysX64, so the files of the x64 packages are taken out of the bundle and written there, as their own installer
- * would write them into System32 on x64 Windows.
+ * packages. The files of the x64 packages are taken out of the bundle and written where their own installer writes
+ * them on x64 Windows, System32. On arm64 the redistributable installs only the arm64x runtime into System32, and Mime
+ * runs x64 programs with x64 system dlls from SysX64, so they go there.
  */
 #include "featurep.h"
 #include "../lib/cabinet/cabinet.h"
@@ -56,7 +56,8 @@ static void cab_release(void *memory)
 
 static void folder(RUN *run, WCHAR *path, SIZE_T chars)
 {
-    _snwprintf(path, chars, L"%lsWindows\\SysX64", run->Root);
+    _snwprintf(path, chars, MACHINE_ARCH == FEATURE_ARCH_ARM64 ? L"%lsWindows\\SysX64" : L"%lsWindows\\System32",
+               run->Root);
     path[chars - 1] = 0;
 }
 
@@ -449,6 +450,9 @@ uint32_t VcRuntimeRemove(RUN *run)
         if (find == INVALID_HANDLE_VALUE)
             continue;
         do {
+            /* the runtime of the .NET Framework has its own copies in System32, named after it. */
+            if (wcsstr(data.cFileName, L"_clr"))
+                continue;
             _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\%ls", directory, data.cFileName);
             if (!DeleteFileW(path) && GetLastError() != ERROR_FILE_NOT_FOUND)
                 error = GetLastError();
