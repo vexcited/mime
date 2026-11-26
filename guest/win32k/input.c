@@ -322,12 +322,27 @@ void InputCursorThreadGone(W32THREAD *t)
     queue_mouse_refresh();
 }
 
+static BOOLEAN mouse_button_held(void)
+{
+    return ((InputAsyncKeys[VK_LBUTTON] | InputAsyncKeys[VK_RBUTTON] | InputAsyncKeys[VK_MBUTTON] |
+             InputAsyncKeys[VK_XBUTTON1] | InputAsyncKeys[VK_XBUTTON2]) & 0x80) != 0;
+}
+
+/*
+ * the capture of the foreground thread takes the mouse, but a move over a window of another queue with no button held
+ * goes to that window, as on windows, where a capture reaches past its own queue only while a button is down.
+ */
 static W32THREAD *mouse_target_thread(const MimeInputEvent *ev)
 {
-    if (InputForeground && InputForeground->Thread && InputForeground->Thread->Capture)
-        return InputForeground->Thread;
     WND *w = WndLookup((HWND)(ULONG_PTR)ev->window_id);
-    return w ? w->Thread : nullptr;
+    W32THREAD *under = w ? w->Thread : nullptr;
+    W32THREAD *fg = InputForeground ? InputForeground->Thread : nullptr;
+    if (fg && fg->Capture) {
+        if (ev->type != MIME_INPUT_MOUSE_MOVE || !under || mouse_button_held() ||
+            W32InputOwner(under) == W32InputOwner(fg))
+            return fg;
+    }
+    return under;
 }
 
 /*
