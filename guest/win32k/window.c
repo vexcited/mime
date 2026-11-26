@@ -226,10 +226,17 @@ static void link_after(WND *parent, WND *w, WND *above)
 }
 
 /* places w below `after` in its parent, honoring the topmost band of top level windows. */
+/* the shell window of the desktop, SetShellWindow: always at the bottom of the top level windows. */
+WND *WndShell;
+
 static void link_window(WND *parent, WND *w, HWND after)
 {
     WND *above = nullptr;
     BOOLEAN topmost_band = parent == g_desktop;
+    if (topmost_band && w == WndShell)
+        after = HWND_BOTTOM;
+    else if (topmost_band && WndShell && after == WndHandle(WndShell))
+        after = HWND_BOTTOM;
     if (after == HWND_BOTTOM) {
         above = parent->LastChild;
         if (topmost_band && !(w->ExStyle & WS_EX_TOPMOST))
@@ -254,6 +261,9 @@ static void link_window(WND *parent, WND *w, HWND after)
     }
     if (above == w)
         above = w->Prev;
+    /* nothing goes under the shell window. */
+    if (topmost_band && WndShell && w != WndShell && above == WndShell)
+        above = WndShell->Prev == w ? w->Prev : WndShell->Prev;
     link_after(parent, w, above);
 }
 
@@ -765,7 +775,7 @@ static void border_taken(WND *w)
 /* top level windows render into a surface the size of their window rectangle. */
 void WndEnsureSurface(WND *w)
 {
-    if (!WndIsTopLevel(w) || w->Parent == nullptr || (w->ExStyle & 0x80000000u))
+    if (!WndIsTopLevel(w) || w->Parent == nullptr || (w->ExStyle & 0x80000000u) || w == WndShell)
         return;
     LONG width = w->WindowRect.right - w->WindowRect.left;
     LONG height = w->WindowRect.bottom - w->WindowRect.top;
@@ -2256,6 +2266,8 @@ static void free_window(WND *w)
     }
     if (InputForeground == w)
         InputSetForeground(nullptr);
+    if (WndShell == w)
+        WndShell = nullptr;
     MenuWindowDestroyed(w);
     ScrollWindowDestroyed(w);
     ClipboardWindowDestroyed(w);
@@ -4351,6 +4363,48 @@ HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
     }
     UserLeave();
     return found;
+}
+
+/*
+ * SetShellWindow and SetShellWindowEx, as NtUserSetShellWindowEx and RegisterShell of win32kfull 26300 do them: a window
+ * of the calling process becomes the shell window of the desktop if there is none, top level, without an owner and not
+ * topmost, and goes to the bottom for good. GetShellWindow of user32 reads it from the desktop information, see
+ * deskheap.c. the desktop is what the machine shows, so the shell window has no surface and no window of the host.
+ * measured on windows.
+ */
+BOOL NTAPI NtUserSetShellWindowEx(HWND hwnd, HWND list_view)
+{
+    (void)list_view;
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    W32THREAD *t = W32GetThread();
+    ULONG error = 0;
+    if (!w)
+        error = ERROR_INVALID_WINDOW_HANDLE;
+    else if (w == g_desktop || is_message_window(w) || !t || !w->Thread || w->Thread->Process != t->Process)
+        error = ERROR_ACCESS_DENIED;
+    else if (WndShell && alive(WndShell))
+        error = ERROR_ACCESS_DENIED;
+    else if (!WndIsTopLevel(w) || w->Owner || (w->ExStyle & WS_EX_TOPMOST))
+        error = ERROR_INVALID_PARAMETER;
+    if (!error) {
+        WndShell = w;
+        if (w->Flags & WNDF_HOST_WINDOW) {
+            HostWindowDestroy(w);
+            w->Flags &= ~WNDF_HOST_WINDOW;
+        }
+        if (w->Surface) {
+            PaintRetireSurface(w->Surface);
+            w->Surface = nullptr;
+        }
+        WndSetPos(w, (WND *)HWND_BOTTOM, 0, 0, 0, 0,
+                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
+        DeskTouch();
+    }
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return !error;
 }
 
 HWND NTAPI NtUserSetActiveWindow(HWND hwnd)

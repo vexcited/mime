@@ -1074,6 +1074,7 @@ WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
 void WndSendActivateApp(W32THREAD *t, BOOLEAN active, HANDLE other);
 extern BOOLEAN WndActivatedByHost;
+extern struct WND *WndShell;
 void WndSetFocus(WND *w);
 void WndCenterOnOwner(WND *w);
 UINT WndGetDpi(WND *w);

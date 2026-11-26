@@ -30,6 +30,7 @@ void NtDxgkIsFeatureEnabled(void);
 void NtGdiDdDDIOpenAdapterFromLuid(void);
 void NtGdiDdDDIOpenAdapterFromDeviceName(void);
 void NtGdiDdDDIEnumAdapters2(void);
+void NtUserSetShellWindowEx(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2810,5 +2811,10 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtGdiDdDDIEnumAdapters2 & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIEnumAdapters2, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtGdiDdDDIEnumAdapters2 has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetShellWindowEx
+    table[MIME_SVC_NtUserSetShellWindowEx & 0xFFF] = (SERVICE){(void *)NtUserSetShellWindowEx, STACK_ARGS(2), 2, 0};
+#else
+#warning "NtUserSetShellWindowEx has no syscall number"
 #endif
 }

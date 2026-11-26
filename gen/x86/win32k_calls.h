@@ -228,6 +228,10 @@
     case MIME_SVC_NtUserSetActiveWindow:
         v[0] = (LONG64)(LONG)a[0];
         return MxCallService(number, v);
+    case MIME_SVC_NtUserSetShellWindowEx:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = (LONG64)(LONG)a[1];
+        return MxCallService(number, v);
     case MIME_SVC_NtUserGetForegroundWindow:
         return MxCallService(number, v);
     case MIME_SVC_NtUserSetCapture:
