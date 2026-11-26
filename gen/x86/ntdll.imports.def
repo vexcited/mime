@@ -175,6 +175,7 @@ EXPORTS
     NtQueryIoCompletion@20
     NtQueryKey@20
     NtQueryLicenseValue@20
+    NtQueryMutant@20
     NtQueryObject@20
     NtQueryPerformanceCounter@8
     NtQuerySection@20
@@ -315,6 +316,7 @@ EXPORTS
     RtlCreateHeap@24
     RtlCreateProcessParameters@40
     RtlCreateProcessParametersEx@44
+    RtlCreateQueryDebugBuffer@8
     RtlCreateSecurityDescriptor@8
     RtlCreateServiceSid@12
     RtlCreateUnicodeString@8
@@ -336,6 +338,7 @@ EXPORTS
     RtlDestroyHeap@4
     RtlDeNormalizeProcessParams@4
     RtlDestroyProcessParameters@4
+    RtlDestroyQueryDebugBuffer@4
     RtlDetermineDosPathNameType_U@4
     RtlDllShutdownInProgress@0
     RtlDoesFileExists_U@4
@@ -513,6 +516,7 @@ EXPORTS
     RtlQueryPackageIdentityEx@28
     RtlQueryPerformanceCounter@4
     RtlQueryPerformanceFrequency@4
+    RtlQueryProcessDebugInformation@12
     RtlQuerySecurityObject@20
     RtlQueryWnfStateData@24
     RtlQueryWnfStateDataWithExplicitScope@28

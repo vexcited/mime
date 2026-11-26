@@ -358,4 +358,9 @@ NTSYSAPI NTSTATUS NTAPI RtlUnsubscribeWnfStateChangeNotification(PVOID subscript
 NTSYSAPI NTSTATUS NTAPI RtlUnsubscribeWnfNotificationWaitForCompletion(PVOID subscription);
 NTSYSAPI BOOLEAN NTAPI RtlEqualWnfChangeStamps(WNF_CHANGE_STAMP first, WNF_CHANGE_STAMP second);
 
+/* the buffer of a process debug query, left opaque. */
+NTSYSAPI PVOID NTAPI RtlCreateQueryDebugBuffer(ULONG maximum_commit, BOOLEAN event_pair);
+NTSYSAPI NTSTATUS NTAPI RtlQueryProcessDebugInformation(HANDLE process_id, ULONG flags, PVOID buffer);
+NTSYSAPI NTSTATUS NTAPI RtlDestroyQueryDebugBuffer(PVOID buffer);
+
 #endif
