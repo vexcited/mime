@@ -699,7 +699,12 @@ void PspExitThread(NTSTATUS status)
             RemoveEntryList(first);
     }
 
-    if (!process->SystemProcess)
+    /*
+     * like PspExitThread of ntoskrnl 26300, the stacks and teb stay while the process is ended: its other threads
+     * may still run and reach them, the thread pool keeps its workers in a list on their stacks, and the address
+     * space goes with the process.
+     */
+    if (!process->SystemProcess && !process->Terminating)
         release_user_memory(process, thread);
 
     /* as on windows the thread stays in the list of its process until its object goes. */
