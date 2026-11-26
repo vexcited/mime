@@ -278,6 +278,7 @@ void NtYieldExecution(void);
 void NtCompareObjects(void);
 void NtGetNextProcess(void);
 void NtGetNextThread(void);
+void NtQueryMutant(void);
 
 void KiInitializeSystemServices(void)
 {
@@ -1094,5 +1095,8 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtGetNextThread
     KiRegisterService(MIME_SVC_NtGetNextThread, (void *)NtGetNextThread, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtQueryMutant
+    KiRegisterService(MIME_SVC_NtQueryMutant, (void *)NtQueryMutant, STACK_ARGS(5));
 #endif
 }

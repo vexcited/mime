@@ -423,6 +423,50 @@ NTSTATUS NTAPI NtQueryEvent(HANDLE handle, ULONG klass, PVOID info, ULONG length
     return query_basic(handle, ExEventType, klass, info, length, returned);
 }
 
+/*
+ * as windows 11 26300 answers it: class 0 is the count, whether the caller owns the mutant and whether it was abandoned,
+ * in 8 bytes, class 1 the client id of its owner, none when free, in 16. each class takes that length only.
+ */
+NTSTATUS NTAPI NtQueryMutant(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    if (klass > 1)
+        return STATUS_INVALID_INFO_CLASS;
+    if (length != (klass ? sizeof(CLIENT_ID) : 8))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    NTSTATUS status = KiProbeQueryBuffer(info, length, sizeof(ULONG), TRUE);
+    if (NT_SUCCESS(status))
+        status = KiProbeReturnLength(returned);
+    if (!NT_SUCCESS(status))
+        return status;
+    PKMUTANT mutant;
+    status = ObReferenceHandleFor(handle, MUTANT_QUERY_STATE, ExMutantType, KeGetPreviousMode(), &mutant);
+    if (!NT_SUCCESS(status))
+        return status;
+    union {
+        struct {
+            LONG CurrentCount;
+            BOOLEAN OwnedByCaller;
+            BOOLEAN AbandonedState;
+        } basic;
+        CLIENT_ID owner;
+    } out = {};
+    ULONG64 s = KiAcquireDispatcherLock();
+    PKTHREAD owner = mutant->OwnerThread;
+    if (klass && owner) {
+        out.owner = ((PETHREAD)owner)->Cid;
+    } else if (!klass) {
+        out.basic.CurrentCount = mutant->Header.SignalState;
+        out.basic.OwnedByCaller = owner == KiCurrentThread();
+        out.basic.AbandonedState = mutant->Abandoned & 1;
+    }
+    KiReleaseDispatcherLock(s);
+    ObDereferenceObject(mutant);
+    status = KiCopyToUser(info, &out, length);
+    if (NT_SUCCESS(status) && returned)
+        status = KiCopyToUser(returned, &length, sizeof(length));
+    return status;
+}
+
 NTSTATUS NTAPI NtCreateTimer(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, TIMER_TYPE type)
 {
     return create_named(ExTimerType, sizeof(ETIMER), handle, access, attributes, nullptr, init_timer, type, 0);

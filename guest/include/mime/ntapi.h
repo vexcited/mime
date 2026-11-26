@@ -156,6 +156,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtReadFileScatter(HANDLE handle, HANDLE event, PIO_A
 NTSYSCALLAPI NTSTATUS NTAPI NtWriteFileGather(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, PVOID segments, ULONG length, PLARGE_INTEGER offset, PULONG key);
 NTSYSCALLAPI NTSTATUS NTAPI NtReadVirtualMemory(HANDLE process_handle, PVOID base, PVOID buffer, SIZE_T size, PSIZE_T read);
 NTSYSCALLAPI NTSTATUS NTAPI NtReleaseMutant(HANDLE handle, PLONG previous);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryMutant(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySemaphore(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryEvent(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
