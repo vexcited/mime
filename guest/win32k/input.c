@@ -1387,6 +1387,18 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         break;
     case MIME_INPUT_WINDOW_FOCUS:
         if (ev->x) {
+            WND *pending = WndHostPending;
+            WndHostFocus = w;
+            WndHostPending = nullptr;
+            /*
+             * the host focused this window before it handled the program's request for the one active now, as kwin does
+             * with the first window a program maps: windows keeps the program's choice, and the host is asked once
+             * more. measured on windows.
+             */
+            if (pending && pending != w && pending == InputForeground && WndIsVisible(pending)) {
+                WndUpdateHostConfig(pending, TRUE);
+                break;
+            }
             if (InputForeground != w && !(w->Style & WS_DISABLED)) {
                 WndActivatedByHost = TRUE;
                 WndActivate(w, TRUE);
@@ -1401,7 +1413,12 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
                         break;
                     }
             }
-        } else if (InputForeground == w) {
+        } else {
+            if (WndHostFocus == w)
+                WndHostFocus = nullptr;
+            WndHostPending = nullptr;
+        }
+        if (!ev->x && InputForeground == w) {
             UserReference(&w->Header);
             InputSetForeground(nullptr);
             t->Active = nullptr;

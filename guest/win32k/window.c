@@ -2016,6 +2016,11 @@ void WndCenterOnOwner(WND *w)
 
 /* the host already focused and raised this window; do not ask it to raise again. */
 BOOLEAN WndActivatedByHost;
+/*
+ * the window the host last said it focused, and one the program activated since that the host has not focused yet: a
+ * focus the host gives a window before it handled the request for the next one must not take the activation back.
+ */
+WND *WndHostFocus, *WndHostPending;
 
 /*
  * WM_ACTIVATEAPP goes to every top level window of the thread that loses the activation and of the one that gets it,
@@ -2076,6 +2081,7 @@ void WndActivate(WND *w, BOOLEAN click)
         zorder_top_level(w, HWND_TOP);
     }
     WndUpdateHostConfig(w, !WndActivatedByHost);
+    WndHostPending = WndActivatedByHost || WndHostFocus == w ? nullptr : w;
     if (!old || old->Thread != w->Thread)
         WndSendActivateApp(w->Thread, TRUE, old && old->Thread ? old->Thread->Tid : nullptr);
     MsgSendEvent(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
@@ -2266,6 +2272,10 @@ static void free_window(WND *w)
     }
     if (InputForeground == w)
         InputSetForeground(nullptr);
+    if (WndHostFocus == w)
+        WndHostFocus = nullptr;
+    if (WndHostPending == w)
+        WndHostPending = nullptr;
     if (WndShell == w)
         WndShell = nullptr;
     MenuWindowDestroyed(w);
