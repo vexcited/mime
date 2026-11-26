@@ -965,25 +965,62 @@ static void device_extensions(MvkCall *call)
     mvk_reply_end(call);
 }
 
-/* imports guest RAM into the device, then binds requested queues from family, index and id triples. */
 /*
- * all buffers allow imported host memory handles so they can bind guest RAM. the driver function is shared by
- * connections.
+ * all buffers allow imported host memory handles so they can bind guest RAM. the wrapper only sees the device, and each
+ * device keeps the driver function of its own driver: with two gpus, one driver's function on the other's device
+ * crashes. connections that adopt a device share its entry, which goes with the device.
  */
-static PFN_vkCreateBuffer g_create_buffer;
+#define IMPORT_DEVICES 256
+
+static pthread_mutex_t g_import_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+    VkDevice device;
+    PFN_vkCreateBuffer create;
+} g_import_devices[IMPORT_DEVICES];
+
+static bool import_device_add(VkDevice device, PFN_vkCreateBuffer create)
+{
+    bool added = false;
+    pthread_mutex_lock(&g_import_lock);
+    for (int i = 0; i < IMPORT_DEVICES && !added; i++)
+        if (!g_import_devices[i].device) {
+            g_import_devices[i].device = device;
+            g_import_devices[i].create = create;
+            added = true;
+        }
+    pthread_mutex_unlock(&g_import_lock);
+    return added;
+}
+
+static void import_device_forget(VkDevice device)
+{
+    pthread_mutex_lock(&g_import_lock);
+    for (int i = 0; device && i < IMPORT_DEVICES; i++)
+        if (g_import_devices[i].device == device)
+            g_import_devices[i].device = VK_NULL_HANDLE;
+    pthread_mutex_unlock(&g_import_lock);
+}
 
 static VKAPI_ATTR VkResult VKAPI_CALL create_importable_buffer(VkDevice device, const VkBufferCreateInfo *info,
                                                                const VkAllocationCallbacks *allocator,
                                                                VkBuffer *buffer)
 {
+    PFN_vkCreateBuffer create = nullptr;
+    pthread_mutex_lock(&g_import_lock);
+    for (int i = 0; i < IMPORT_DEVICES && !create; i++)
+        if (g_import_devices[i].device == device)
+            create = g_import_devices[i].create;
+    pthread_mutex_unlock(&g_import_lock);
+    if (!create)
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
     for (const VkBaseInStructure *s = info->pNext; s; s = s->pNext)
         if (s->sType == VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO)
-            return g_create_buffer(device, info, allocator, buffer);
+            return create(device, info, allocator, buffer);
     VkExternalMemoryBufferCreateInfo external = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO, info->pNext,
                                                  VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
     VkBufferCreateInfo copy = *info;
     copy.pNext = &external;
-    return g_create_buffer(device, &copy, allocator, buffer);
+    return create(device, &copy, allocator, buffer);
 }
 
 /*
@@ -1138,10 +1175,8 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
             mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, c->device);
             mvk_budget_hook(c);
-            if (c->host_import && c->fn.vkCreateBuffer) {
-                g_create_buffer = c->fn.vkCreateBuffer;
+            if (c->host_import && c->fn.vkCreateBuffer && import_device_add(c->device, c->fn.vkCreateBuffer))
                 c->fn.vkCreateBuffer = create_importable_buffer;
-            }
             mvk_share_device_created(c);
             if (video)
                 mvk_video_device_created(c, gdpa, unified, independent, video_codecs);
@@ -1333,6 +1368,7 @@ static void shell_destroy(MvkConnection *s)
     mvk_video_close(s);
     mime_gpu_teardown_enter();
     mvk_budget_forget(s->device);
+    import_device_forget(s->device);
     s->fn.vkDestroyDevice(s->device, nullptr);
     mime_gpu_teardown_leave();
     free(s);
@@ -1720,6 +1756,7 @@ static void destroy_device(MvkCall *call)
     mvk_video_close(c);
     destroy_leftovers(c);
     mvk_budget_forget(c->device);
+    import_device_forget(c->device);
     c->fn.vkDestroyDevice(c->device, nullptr);
     bind(c, id, 0);
     c->device = VK_NULL_HANDLE;
@@ -3444,6 +3481,7 @@ void mime_vk_close(uint64_t index)
         destroy_leftovers(c);
         mime_gpu_teardown_enter();
         mvk_budget_forget(c->device);
+        import_device_forget(c->device);
         c->fn.vkDestroyDevice(c->device, nullptr);
         mime_gpu_teardown_leave();
     }
