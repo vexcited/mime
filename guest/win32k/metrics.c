@@ -225,9 +225,8 @@ static int cursor_size(UINT dpi)
 
 /*
  * a metric at a dpi, with screen sizes in the pixels of an awareness. the ones that depend on the dpi follow
- * ScaleSystemMetricForDPIWithoutCache of win32kfull 26300, and the caption buttons ThemeGetSystemMetricsForDpi of
- * uxtheme, which on windows answers for every themed program: the width is the height in the ratio of the buttons
- * of the theme, 36 to 22, and a small button is square.
+ * ScaleSystemMetricForDPIWithoutCache of win32kfull 26300. the caption buttons are the square ones of windows without
+ * a theme: the api hook of uxtheme widens them for the programs it themes, see FrameThemedButtonWidth.
  */
 int MetricsGetFor(int index, UINT dpi, ULONG awareness)
 {
@@ -300,7 +299,6 @@ int MetricsGetFor(int index, UINT dpi, ULONG awareness)
     case SM_CYMINTRACK:
         return 2 * (frame + padded) + scale(22, dpi) + 1;
     case SM_CXSIZE:
-        return W32MulDiv(scale(22, dpi), 36, 22);
     case SM_CYSIZE:
     case SM_CXSMSIZE:
     case SM_CYSMSIZE:
@@ -364,7 +362,7 @@ static void fill_nonclient(NONCLIENTMETRICSW *m, UINT dpi)
     m->iBorderWidth = 1;
     m->iScrollWidth = scale(17, dpi);
     m->iScrollHeight = scale(17, dpi);
-    m->iCaptionWidth = W32MulDiv(scale(22, dpi), 36, 22);
+    m->iCaptionWidth = scale(22, dpi);
     m->iCaptionHeight = scale(22, dpi);
     m->lfCaptionFont = W32CaptionFontForDpi(dpi);
     m->iSmCaptionWidth = scale(22, dpi);

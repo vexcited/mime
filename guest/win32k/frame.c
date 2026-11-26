@@ -34,6 +34,15 @@ static LONG scale(LONG v, UINT dpi)
 
 /* ------------------------------------------------------------------ metrics */
 
+/*
+ * ThemeGetSystemMetricsForDpi of uxtheme 26300: a themed program sees SM_CXSIZE as the height of a caption button in
+ * the ratio of the buttons of the style, 36 to 22. a small button stays square.
+ */
+LONG FrameThemedButtonWidth(UINT dpi)
+{
+    return W32MulDiv(MetricsGet(SM_CYSIZE, dpi), 36, 22);
+}
+
 BOOLEAN FrameHasCaption(DWORD style, DWORD ex_style)
 {
     (void)ex_style;
@@ -95,7 +104,7 @@ void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m)
     m->Top = m->Border + m->Caption;
     /* _GetNcBtnMetrics of uxtheme: the size of the caption buttons less an edge on each side. */
     LONG edge = MetricsGet(SM_CXEDGE, dpi);
-    m->ButtonWidth = MetricsGet(tool ? SM_CXSMSIZE : SM_CXSIZE, dpi) - 2 * edge;
+    m->ButtonWidth = (tool ? MetricsGet(SM_CXSMSIZE, dpi) : FrameThemedButtonWidth(dpi)) - 2 * edge;
     m->ButtonHeight = MetricsGet(tool ? SM_CYSMSIZE : SM_CYSIZE, dpi) - 2 * edge;
 }
 

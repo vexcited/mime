@@ -1139,6 +1139,7 @@ typedef struct FRAME_METRICS {
 } FRAME_METRICS;
 
 BOOLEAN FrameHasCaption(DWORD style, DWORD ex_style);
+LONG FrameThemedButtonWidth(UINT dpi);
 void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m);
 void FrameAdjustRect(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
 void FrameClientFromWindow(RECT *r, DWORD style, DWORD ex_style, UINT dpi);
