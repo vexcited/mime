@@ -1847,6 +1847,15 @@ void WndShow(WND *w, int cmd)
             WndShowOwned(w, SW_PARENTCLOSING);
             if (!alive(w))
                 goto done;
+            /* a window that goes to an icon gives its focus to its parent, or to none. */
+            W32THREAD *self = W32GetThread();
+            for (WND *f = self ? WndLookup(self->Focus) : nullptr; f; f = f->Parent)
+                if (f == w) {
+                    WndSetFocus(WndIsTopLevel(w) ? nullptr : w->Parent);
+                    break;
+                }
+            if (!alive(w))
+                goto done;
             WndEnsureSurface(w);
             if (old_state & WS_MAXIMIZE)
                 w->Flags |= WNDF_RESTORETOMAX;
@@ -1920,6 +1929,12 @@ void WndShow(WND *w, int cmd)
         deactivate_minimized(w);
     else if (show && !noactivate && WndIsTopLevel(w))
         WndActivate(w, FALSE);
+    /* xxxMinMaximizeEx: a window restored from an icon takes the focus, and a top level one is told it is active. */
+    if (restored && !noactivate && alive(w)) {
+        WndSetFocus(w);
+        if (alive(w) && !(w->Style & WS_CHILD))
+            MsgSend(w, WM_ACTIVATE, WA_ACTIVE, 0);
+    }
 done:
     UserDereference(&w->Header);
 }
@@ -2057,6 +2072,12 @@ void WndActivate(WND *w, BOOLEAN click)
     MsgSendEvent(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
     MsgSendEvent(w, WM_ACTIVATE, MAKEWPARAM(click ? WA_CLICKACTIVE : WA_ACTIVE, (w->Style & WS_MINIMIZE) != 0),
                  (LPARAM)WndHandle(old));
+    /* an icon that becomes active takes no focus, and a focus left in another window goes. */
+    if (alive(w) && (w->Style & WS_MINIMIZE) && w->Thread && w->Thread == W32GetThread()) {
+        WND *focus = WndLookup(w->Thread->Focus);
+        if (focus && WndTopLevel(focus) != w)
+            WndSetFocus(nullptr);
+    }
 done:
     UserDereference(&w->Header);
 }
