@@ -169,7 +169,8 @@ typedef struct MvkTarget {
 } MvkTarget;
 /* source 0 is the one presenter of a window that shows one image. */
 bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
-                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial);
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial,
+                      uint32_t *flags);
 void mvk_wsi_close(MvkConnection *c);
 /* the connection's instance made a surface of a host window. */
 void mvk_instance_presented(MvkConnection *c);

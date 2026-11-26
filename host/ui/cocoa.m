@@ -2887,10 +2887,11 @@ static void screens_changed(void)
 
 /* vkwsi.c keeps the last image each presenter showed. */
 bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
-                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial);
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial,
+                      uint32_t *flags);
 
 bool mime_ui_window_readback(MimeWinReadback *r, void *pixels)
 {
     return mvk_wsi_readback(r->window_id, r->source, pixels, r->capacity_width, r->capacity_height, r->stride, &r->width,
-                            &r->height, &r->client, &r->serial);
+                            &r->height, &r->client, &r->serial, &r->flags);
 }

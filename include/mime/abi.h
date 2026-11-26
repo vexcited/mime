@@ -1370,21 +1370,24 @@ typedef struct MimeWinPresent {
 } MimeWinPresent;
 
 /*
- * reads the last image a window of the guest presented into BGRA rows at pixels_phys if capacity permits, forcing
- * opaque alpha. window_id is the top level window and source the window that presented. returns width, height,
- * window-relative client rectangle and image serial. MIME_HC_STATUS_NOT_FOUND means no presented image.
+ * reads the last image a window of the guest presented into BGRA rows at pixels_phys if capacity permits. the alpha is
+ * forced opaque unless the swapchain composes with it, which flags tells. window_id is the top level window and source
+ * the window that presented. returns width, height, window-relative client rectangle and image serial.
+ * MIME_HC_STATUS_NOT_FOUND means no presented image.
  */
 typedef struct MimeWinReadback {
     uint32_t window_id;
     uint32_t source; /* the window that presented, one image is kept for each. */
     uint32_t capacity_width, capacity_height;
     uint32_t stride;
-    uint32_t pad;
+    uint32_t flags; /* MIME_READBACK_*, set by the host. */
     uint64_t pixels_phys;
     uint32_t width, height;
     MimeRect client;
     uint64_t serial; /* counts the images the window presented, so a capture can tell whether it changed. */
 } MimeWinReadback;
+
+#define MIME_READBACK_ALPHA 0x1u /* the pixels are premultiplied and show what is behind the window. */
 
 #define MIME_LAYER_HIDDEN_MAX 16
 

@@ -2880,14 +2880,15 @@ void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s)
 
 /* ------------------------------------------------------------------ readback. */
 
-/* rows of 32 bit pixels with the alpha forced to opaque, which is what the guest composes them as. */
-static void copy_opaque(void *pixels, uint32_t stride, const uint8_t *from, uint32_t width, uint32_t height)
+/* rows of 32 bit pixels, the alpha forced to opaque unless the swapchain composes with it. */
+static void copy_rows(void *pixels, uint32_t stride, const uint8_t *from, uint32_t width, uint32_t height, bool alpha)
 {
+    uint32_t opaque = alpha ? 0 : 0xFF000000u;
     for (uint32_t y = 0; y < height; y++) {
         uint32_t *to = (uint32_t *)((uint8_t *)pixels + (size_t)y * stride);
         const uint32_t *in = (const uint32_t *)(from + (size_t)y * width * 4);
         for (uint32_t x = 0; x < width; x++)
-            to[x] = in[x] | 0xFF000000u;
+            to[x] = in[x] | opaque;
     }
 }
 
@@ -2982,7 +2983,8 @@ static void copy_last(MvkConnection *c, Presenter *p, VkCommandBuffer cmd)
  * client rectangle, or false if the window has no image.
  */
 bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
-                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial)
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial,
+                      uint32_t *flags)
 {
     /* where a window has one presenter, the image is the last one presented and the window it was made for is the one asked. */
     bool layers = mime_ui_vk_layers();
@@ -3026,6 +3028,9 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
     *height = p->last_extent.height;
     *client = p->last_client;
     *serial = p->last_serial;
+    /* what the program asked for, which the surface of the host may not offer. */
+    bool alpha = p->premultiplied_wanted;
+    *flags = alpha ? MIME_READBACK_ALPHA : 0;
     if (!pixels || p->last_extent.width > capacity_width || p->last_extent.height > capacity_height) {
         ok = true;
         goto out;
@@ -3033,7 +3038,7 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
     VkDeviceSize size = (VkDeviceSize)p->last_extent.width * p->last_extent.height * 4;
     /* reuse cached readback for an unchanged image, avoiding GPU work. */
     if (p->readback_serial == p->last_serial && p->readback_size >= size) {
-        copy_opaque(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height);
+        copy_rows(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height, alpha);
         ok = true;
         goto out;
     }
@@ -3076,7 +3081,7 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
                                          VK_WHOLE_SIZE};
             c->fn.vkInvalidateMappedMemoryRanges(c->device, 1, &range);
         }
-        copy_opaque(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height);
+        copy_rows(pixels, stride, p->readback_map, p->last_extent.width, p->last_extent.height, alpha);
         p->readback_serial = p->last_serial;
         ok = true;
     }
