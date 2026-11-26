@@ -71,3 +71,4 @@ EXPORTS
     SetThemeAppProperties=_SetThemeAppProperties@4
     SetWindowTheme=_SetWindowTheme@12
     SetWindowThemeAttribute=_SetWindowThemeAttribute@16
+    ThemeInitApiHook=_ThemeInitApiHook@8
