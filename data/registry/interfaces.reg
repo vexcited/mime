@@ -1,6 +1,5 @@
-; the interfaces of the windows image 26300 whose proxies and stubs genuine files serve: combase, oleaut32,
-; WinTypes, propsys and wininet, with the proxy classes of those files. made by scratch/dlls/com/mkifreg.py of
-; the research repository from the SOFTWARE hive of the image.
+; the interfaces of the windows image 26300 whose proxies and stubs genuine files serve: combase, oleaut32, WinTypes,
+; propsys and wininet, with the proxy classes of those files. made from the SOFTWARE hive of the image.
 
 [HKCR\Interface\{00000001-0000-0000-C000-000000000046}]
 @="IClassFactory"

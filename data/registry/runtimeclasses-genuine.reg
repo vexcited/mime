@@ -1,5 +1,5 @@
-; the windows runtime classes of the image 26300 that genuine files of the manifest serve, made by
-; scratch/dlls/com/mkwinrt.py of the research repository from the SOFTWARE hive of the image.
+; the windows runtime classes of the image 26300 that genuine files of the manifest serve, made from the SOFTWARE hive
+; of the image.
 
 ; combase.dll
 [HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Foundation.ActivationContext]

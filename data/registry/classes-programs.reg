@@ -1,6 +1,5 @@
 ; the file types of programs and shortcuts, with every key below them, as the SOFTWARE hive of the pinned image has
-; them. genuine windows.storage runs a program through the open verb of its type. made by
-; scratch/dlls/shellexec/mktypes.sh of the research repository.
+; them. genuine windows.storage runs a program through the open verb of its type.
 
 [HKCR\.bat]
 @="batfile"
