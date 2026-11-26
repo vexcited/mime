@@ -293,6 +293,8 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
     smb_dword(&b, 0);
     smb_byte(&b, 0); /* no height in units */
     smb_byte(&b, 0); /* power cords not reported */
+    smb_byte(&b, 0); /* no contained elements */
+    smb_byte(&b, 0); /* of no record length */
     smb_end(&b);
 
     /* type 4, the processor. */
@@ -324,15 +326,17 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
 
 
     /* types 16 and 17, the memory array and its devices, what a physical memory reader walks. */
-    ULONG64 ram_mb = HalBootInfo->ram_size >> 20;
+    ULONG64 ram_mb = HalBootInfo->ram_size >> 20, ram_kb = HalBootInfo->ram_size >> 10;
     smb_begin(&b, 16, 0x0010);
     smb_byte(&b, 0x03); /* system board */
     smb_byte(&b, 0x03); /* system memory */
     smb_byte(&b, 0x03); /* no error correction */
-    smb_dword(&b, ram_mb > 0xFFFFFFFFu ? 0xFFFFFFFFu : (ULONG)ram_mb); /* maximum capacity, keeper bytes */
+    /* the maximum capacity in KiB, 0x80000000 when it takes the extended field in bytes. */
+    BOOLEAN extended = ram_kb >= 0x80000000ull;
+    smb_dword(&b, extended ? 0x80000000u : (ULONG)ram_kb);
     smb_word(&b, 0xFFFE); /* no error information handle */
     smb_word(&b, 1);      /* one device for the installed memory */
-    smb_qword(&b, 0);     /* no extended maximum capacity */
+    smb_qword(&b, extended ? HalBootInfo->ram_size : 0);
     smb_end(&b);
 
     for (ULONG slot = 0; slot < 1; slot++) {
@@ -342,13 +346,12 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
         smb_word(&b, 0xFFFE); /* no error information handle */
         smb_word(&b, 64);     /* total width */
         smb_word(&b, 64);     /* data width */
-        USHORT encoded = device_mb > 0x7FFF ? 0x7FFF : (USHORT)device_mb;
-        smb_word(&b, encoded);
-        smb_dword(&b, device_mb > 0x7FFF ? (ULONG)device_mb : 0);
+        /* the size in MiB, 0x7FFF from 32 GiB less 1 MiB on, which the extended size then carries. */
+        smb_word(&b, device_mb >= 0x7FFF ? 0x7FFF : (USHORT)device_mb);
         smb_byte(&b, 0x0E); /* row of chips, the memory is soldered */
         smb_byte(&b, 0);    /* no device set */
         smb_byte(&b, smb_string(&b, slot ? "Row 2" : "Row 1"));
-        smb_byte(&b, 0x9A); /* manufactured and populated */
+        smb_byte(&b, 0);    /* no bank locator */
         smb_byte(&b, 0x23); /* LPDDR5 */
         smb_word(&b, 0x2002); /* double data rate */
         smb_word(&b, 6400);   /* MT/s */
@@ -357,12 +360,11 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
         smb_byte(&b, 0); /* no asset tag */
         smb_byte(&b, 0); /* no part number */
         smb_byte(&b, 0); /* unknown rank */
-        smb_qword(&b, 0);
+        smb_dword(&b, device_mb >= 0x7FFF ? (ULONG)device_mb : 0); /* extended size, MiB */
+        smb_word(&b, 6400); /* configured speed, MT/s */
+        smb_word(&b, 0);    /* minimum, maximum and configured voltages unknown */
         smb_word(&b, 0);
         smb_word(&b, 0);
-        smb_word(&b, 0);
-        smb_word(&b, 6400);
-        smb_word(&b, 6400);
         smb_end(&b);
     }
 
@@ -379,6 +381,7 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
     smb_byte(&b, 2);        /* major spec version */
     smb_byte(&b, 0);        /* minor */
     smb_dword(&b, 1);       /* firmware version 1.0 */
+    smb_dword(&b, 0);       /* no second firmware version */
     smb_byte(&b, smb_string(&b, "Firmware TPM"));
     smb_qword(&b, 0x06); /* enabled and active */
     smb_dword(&b, 0);    /* no oem data */
@@ -600,7 +603,7 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
 #ifdef __aarch64__
     UCHAR table[2048];
     ULONG table_size = smb_build(table, sizeof(table));
-    ULONG data_size = sizeof(RAW_SMBIOS_DATA) - 1 + table_size;
+    ULONG data_size = offsetof(RAW_SMBIOS_DATA, SMBIOSTableData) + table_size;
 #else
     const MimeFirmware *firmware = host_firmware();
     if (!firmware || !firmware->smbios_length)
