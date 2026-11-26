@@ -930,6 +930,7 @@ static LRESULT CALLBACK edit_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
     return DefSubclassProc(hwnd, msg, wparam, lparam);
 }
 
+/* the box exists when TVN_BEGINLABELEDIT is sent, so the parent can change its text, and goes away when refused. */
 static HWND edit_label(TREEVIEW *tv, NODE *n)
 {
     if (!n)
@@ -941,6 +942,23 @@ static HWND edit_label(TREEVIEW *tv, NODE *n)
     ensure_visible(tv, n);
     WCHAR text[260];
     item_text(tv, n, text, 260);
+    ROW_RECTS r;
+    if (!row_rects(tv, n, &r))
+        return nullptr;
+    RECT client;
+    GetClientRect(tv->Hwnd, &client);
+    int width = r.Label.right - r.Label.left + 4 * GetSystemMetrics(SM_CXEDGE) + 24;
+    if (r.Label.left + width > client.right)
+        width = client.right - r.Label.left;
+    HWND edit = CreateWindowExW(0, L"Edit", text, WS_CHILD | WS_BORDER | ES_AUTOHSCROLL | ES_LEFT, r.Label.left,
+                                r.Row.top, width > 20 ? width : 20, r.Row.bottom - r.Row.top, tv->Hwnd, nullptr,
+                                (HINSTANCE)GetWindowLongPtrW(tv->Hwnd, GWLP_HINSTANCE), nullptr);
+    if (!edit)
+        return nullptr;
+    SendMessageW(edit, WM_SETFONT, (WPARAM)tree_font(tv), FALSE);
+    tv->Edit = edit;
+    tv->Editing = n;
+    tv->EditEnding = TRUE;
     LRESULT refused;
     if (tv->Notify.Unicode) {
         NMTVDISPINFOW nm = {};
@@ -963,26 +981,17 @@ static HWND edit_label(TREEVIEW *tv, NODE *n)
         nm.item.cchTextMax = sizeof(ansi);
         refused = CcNotify(&tv->Notify, TVN_BEGINLABELEDITW, &nm.hdr);
     }
-    if (refused || n->Magic != TREE_MAGIC)
+    tv->EditEnding = FALSE;
+    if (refused || tv->Editing != n || tv->Edit != edit) {
+        if (tv->Edit == edit) {
+            tv->Edit = nullptr;
+            tv->Editing = nullptr;
+        }
+        DestroyWindow(edit);
         return nullptr;
-    ROW_RECTS r;
-    if (!row_rects(tv, n, &r))
-        return nullptr;
-    RECT client;
-    GetClientRect(tv->Hwnd, &client);
-    int width = r.Label.right - r.Label.left + 4 * GetSystemMetrics(SM_CXEDGE) + 24;
-    if (r.Label.left + width > client.right)
-        width = client.right - r.Label.left;
-    HWND edit = CreateWindowExW(0, L"Edit", text, WS_CHILD | WS_BORDER | ES_AUTOHSCROLL | ES_LEFT, r.Label.left,
-                                r.Row.top, width > 20 ? width : 20, r.Row.bottom - r.Row.top, tv->Hwnd, nullptr,
-                                (HINSTANCE)GetWindowLongPtrW(tv->Hwnd, GWLP_HINSTANCE), nullptr);
-    if (!edit)
-        return nullptr;
-    SendMessageW(edit, WM_SETFONT, (WPARAM)tree_font(tv), FALSE);
+    }
     SendMessageW(edit, EM_SETSEL, 0, -1);
     SetWindowSubclass(edit, edit_proc, 0, (DWORD_PTR)tv);
-    tv->Edit = edit;
-    tv->Editing = n;
     ShowWindow(edit, SW_SHOW);
     SetFocus(edit);
     return edit;
