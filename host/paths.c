@@ -110,14 +110,27 @@ bool mime_paths_ensure(const MimePaths *paths)
     return true;
 }
 
+/* the rest of path below root, or null when it is not below it. */
+static const char *below(const char *path, const char *root)
+{
+    size_t n = strlen(root);
+    return n && !strncmp(path, root, n) && (path[n] == '/' || !path[n]) ? path + n : nullptr;
+}
+
 void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, size_t size)
 {
-    size_t c_len = strlen(paths->drive_c);
-    const char *rest;
+    const char *rest = below(host, paths->drive_c);
     char drive;
-    if (strncmp(host, paths->drive_c, c_len) == 0 && (host[c_len] == '/' || host[c_len] == 0)) {
+    /* the callers resolve links in what they map, so a drive_c that is a link is also known by its target. */
+    if (!rest) {
+        char *target = realpath(paths->drive_c, nullptr);
+        if (target) {
+            rest = below(host, target);
+            free(target);
+        }
+    }
+    if (rest) {
         drive = 'C';
-        rest = host + c_len;
     } else {
         drive = 'Z';
         rest = host;
