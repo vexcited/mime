@@ -671,6 +671,9 @@ typedef struct KI_CACHE {
 } KI_CACHE;
 ULONG KiQueryCaches(KI_CACHE *caches, ULONG room);
 ULONG KiProcessorSmtBits(void); /* the low bits of the apic id that number the threads of a core. */
+/* SystemKernelVaShadowInformation and the two words of SystemSpeculationControlInformation for this processor. */
+ULONG KiKernelVaShadowFlags(void);
+void KiSpeculationControlFlags(ULONG flags[2]);
 
 /* user memory access with recovery from faults. */
 /* a copy made while another is under way, by the fault the other took, gives the other its recovery back. */

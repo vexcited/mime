@@ -318,6 +318,103 @@ static ULONG deterministic_caches(ULONG leaf, KI_CACHE *caches, ULONG room)
     return n;
 }
 
+/*
+ * what the processor tells of the speculation flaws, in the terms both classes below use: the control bits of leaf
+ * 7, amd's names for the same in leaf 0x80000008, and the capability register of an intel processor.
+ */
+typedef struct {
+    BOOLEAN Amd, Ibrs, Ibpb, Stibp, Ssbd, SsbNo, Smep, MdClear, L1dFlush, Tsx;
+    ULONG64 Capabilities;
+} KI_SPECULATION;
+
+static KI_SPECULATION speculation(void)
+{
+    const ULONG *l7 = g_leaf7;
+    ULONG regs[4] = {};
+    if (g_max_ext >= 0x80000008)
+        KiCpuid(0x80000008, 0, regs);
+    ULONG amd = regs[1];
+    KI_SPECULATION s = {
+        .Amd = !strcmp(g_vendor, "AuthenticAMD"),
+        .Ibrs = bit(l7, 3, 26) || (amd >> 14 & 1),
+        .Ibpb = bit(l7, 3, 26) || (amd >> 12 & 1),
+        .Stibp = bit(l7, 3, 27) || (amd >> 15 & 1),
+        .Ssbd = bit(l7, 3, 31) || (amd >> 24 & 3),
+        .Smep = bit(l7, 1, 7),
+        .MdClear = bit(l7, 3, 10),
+        .L1dFlush = bit(l7, 3, 28),
+        .Tsx = bit(l7, 1, 11) && !bit(l7, 3, 11), /* rtm that does not always abort */
+        .Capabilities = bit(l7, 3, 29) ? KiReadMsr(0x10A) : 0,
+    };
+    s.SsbNo = (s.Capabilities >> 4 & 1) || (amd >> 26 & 1);
+    return s;
+}
+
+/*
+ * SystemKernelVaShadowInformation. the shadow is required, and told as on, for an intel processor that does not
+ * enumerate RDCL_NO; the kernel always knows whether it is required and always has the l1tf mitigation.
+ */
+ULONG KiKernelVaShadowFlags(void)
+{
+    KI_SPECULATION s = speculation();
+    ULONG flags = 1u << 5 | 1u << 13; /* KvaShadowRequiredAvailable, L1TerminalFaultMitigationPresent */
+    if (s.L1dFlush)
+        flags |= 1u << 12; /* L1DataCacheFlushSupported */
+    if (!s.Amd && !(s.Capabilities & 1)) {
+        flags |= 1u << 0 | 1u << 4; /* KvaShadowEnabled, KvaShadowRequired */
+        if (bit(g_leaf1, 2, 17))
+            flags |= 1u << 2; /* KvaShadowPcid */
+        if (bit(g_leaf7, 1, 10))
+            flags |= 1u << 3; /* KvaShadowInvpcid */
+    }
+    return flags;
+}
+
+/*
+ * SystemSpeculationControlInformation, with the defaults of a windows 11 client where a bit is a choice of the
+ * system. the named bits follow the processor. measured on an intel machine with enhanced ibrs and on the amd
+ * reference machine, which this reproduces bit for bit but for the three bits of a hypervisor's l1tf status.
+ */
+void KiSpeculationControlFlags(ULONG flags[2])
+{
+    KI_SPECULATION s = speculation();
+    ULONG64 c = s.Capabilities;
+    BOOLEAN enhanced = (c >> 1 & 1) != 0; /* IBRS_ALL */
+    ULONG first = 1u << 15 | 1u << 23 | 1u << 26 | 1u << 29; /* import optimization; the three states windows reports */
+    first |= s.Ibpb ? 1u << 0 | 1u << 4 : 1u << 2;          /* BpbEnabled, SpecCmdEnumerated, or no hardware support */
+    if (s.Ibrs)
+        first |= 1u << 3 | 1u << 5;                          /* SpecCtrlEnumerated, IbrsPresent */
+    if (s.Stibp)
+        first |= 1u << 6;
+    if (s.Smep)
+        first |= 1u << 7;
+    if (s.Ssbd)
+        first |= 1u << 8 | 1u << 9;                          /* SpeculativeStoreBypassDisable available, supported */
+    if (!s.SsbNo)
+        first |= 1u << 12;                                   /* and required */
+    first |= enhanced ? 1u << 16 : 1u << 14;                 /* EnhancedIbrs, else the retpoline */
+    if (c >> 5 & 1)
+        first |= 1u << 24;                                   /* MdsHardwareProtected: MDS_NO */
+    if (s.MdClear && !s.Amd && (!(c >> 5 & 1) || (c >> 17 & 1)))
+        first |= 1u << 25;                                   /* MbClearEnabled: mds, or the buffers of FB_CLEAR */
+    if (!s.Tsx)
+        first |= 3u << 27;                                   /* TsxCtrlStatus: no transactions to control */
+    if (s.Amd || (c >> 8 & 1))
+        first |= 1u << 30;                                   /* TaaHardwareImmune: TAA_NO */
+    ULONG second = 1u << 4 | 1u << 10 | 1u << 11 | 1u << 20; /* what windows always reports */
+    second |= (ULONG)(c >> 13 & 7);                          /* SBDR_SSDP_NO, FBSDP_NO, PSDP_NO */
+    if (c >> 17 & 1)
+        second |= 1u << 3;                                   /* FbClearEnabled */
+    if (c & 1)
+        second |= 1u << 12;                                  /* RdclHardwareProtected: RDCL_NO */
+    second |= s.Amd ? 1u << 8 | 1u << 21 : 1u << 6 | 2u << 8; /* branch confusion and divide by zero, or bhb by policy */
+    /* the bits no public header names: the ones both machines set, then the ones of each maker. */
+    second |= 1u << 13 | 1u << 15 | 1u << 17 | 1u << 22 | 1u << 24 | 1u << 25;
+    second |= s.Amd ? 1u << 18 | 1u << 26 : 1u << 19 | 1u << 27;
+    flags[0] = first;
+    flags[1] = second;
+}
+
 /* the thread level of leaf 0xB: how many low bits of the apic id tell the threads of one core apart. */
 ULONG KiProcessorSmtBits(void)
 {

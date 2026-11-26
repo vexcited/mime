@@ -199,6 +199,18 @@ ULONG KiProcessorSmtBits(void)
     return 0;
 }
 
+/* the words of the reference machine. */
+ULONG KiKernelVaShadowFlags(void)
+{
+    return 0x2020;
+}
+
+void KiSpeculationControlFlags(ULONG flags[2])
+{
+    flags[0] = 0x7C80D3F9;
+    flags[1] = 0x0776AD10;
+}
+
 /* two l1 caches for each core and an l2 for the package. */
 ULONG KiQueryCaches(KI_CACHE *caches, ULONG room)
 {

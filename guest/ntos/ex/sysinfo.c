@@ -1593,21 +1593,25 @@ static BOOLEAN query_small_block(ULONG klass, PVOID info, ULONG length, PULONG r
         size = 0x18;
         break;
     case 192: /* SystemFlushInformation: the three flush methods, and the cache line clflush works on. */
-        b.Longs[0] = 7;
+        {
+            /* clflush always, clflushopt and clwb as leaf 7 tells them. */
+            ULONG regs[4];
+            KiCpuid(7, 0, regs);
+            b.Longs[0] = 1 | (regs[1] >> 23 & 1) << 1 | (regs[1] >> 24 & 1) << 2;
+        }
         b.Longs[1] = 64;
         size = 0x20;
         break;
-    case 196: /* SystemKernelVaShadowInformation: not required on this processor, and known not to be. */
-        b.Longs[0] = 0x2020;
+    case 196: /* SystemKernelVaShadowInformation */
+        b.Longs[0] = KiKernelVaShadowFlags();
         size = 4;
         break;
     case 197: /* SystemHypervisorSharedPageInformation: where the page is, nowhere without the hypervisor. */
         b.Quads[0] = MmHypervisorSharedPageVa();
         size = 8;
         break;
-    case 201: /* SystemSpeculationControlInformation: the mitigations of the reference processor. */
-        b.Longs[0] = 0x7C80D3F9;
-        b.Longs[1] = 0x0776AD10;
+    case 201: /* SystemSpeculationControlInformation */
+        KiSpeculationControlFlags(b.Longs);
         size = 8;
         break;
     case 206: /* a set dword and a zero one on the reference machine. */
