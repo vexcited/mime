@@ -1,5 +1,10 @@
 LIBRARY dbghelp.dll
 EXPORTS
+    EnumerateLoadedModules=_EnumerateLoadedModules@12
+    EnumerateLoadedModules64=_EnumerateLoadedModules64@12
+    EnumerateLoadedModulesEx=_EnumerateLoadedModulesEx@12
+    EnumerateLoadedModulesExW=_EnumerateLoadedModulesExW@12
+    EnumerateLoadedModulesW64=_EnumerateLoadedModulesW64@12
     ImageDirectoryEntryToData=imagehlp.ImageDirectoryEntryToData
     ImageDirectoryEntryToDataEx=imagehlp.ImageDirectoryEntryToDataEx
     ImageNtHeader=imagehlp.ImageNtHeader

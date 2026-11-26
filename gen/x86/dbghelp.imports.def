@@ -1,5 +1,10 @@
 LIBRARY dbghelp.dll
 EXPORTS
+    EnumerateLoadedModules@12
+    EnumerateLoadedModules64@12
+    EnumerateLoadedModulesEx@12
+    EnumerateLoadedModulesExW@12
+    EnumerateLoadedModulesW64@12
     MiniDumpWriteDump@28
     StackWalk64@36
     SymCleanup@4

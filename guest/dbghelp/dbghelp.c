@@ -1265,6 +1265,114 @@ DBGHELP BOOL WINAPI SymEnumerateModules64(HANDLE process, PSYM_ENUMMODULES_CALLB
     return TRUE;
 }
 
+typedef BOOL(CALLBACK *PENUMLOADED_MODULES_CALLBACK64)(PCSTR name, DWORD64 base, ULONG size, PVOID context);
+typedef BOOL(CALLBACK *PENUMLOADED_MODULES_CALLBACKW64)(PCWSTR name, DWORD64 base, ULONG size, PVOID context);
+typedef BOOL(CALLBACK *PENUMLOADED_MODULES_CALLBACK)(PCSTR name, ULONG base, ULONG size, PVOID context);
+
+typedef struct LOADED_MODULE {
+    DWORD64 Base;
+    ULONG Size;
+    WCHAR Name[MAX_PATH];
+} LOADED_MODULE;
+
+enum { LOADED_WIDE, LOADED_ANSI, LOADED_ANSI32 };
+
+/*
+ * the modules of any process, each with the full name its loader keeps, as windows 11 gives them. the list is taken
+ * before the first callback, which may load and free modules. a process that cannot be asked fails with the status in
+ * the last error, and a missing callback with the access violation of calling it, both measured.
+ */
+static BOOL enumerate_loaded(HANDLE process, PVOID callback, ULONG kind, PVOID context)
+{
+    PROCESS_BASIC_INFORMATION basic;
+    NTSTATUS status = NtQueryInformationProcess(process, ProcessBasicInformation, &basic, sizeof(basic), nullptr);
+    if (!NT_SUCCESS(status)) {
+        SetLastError((DWORD)status);
+        return FALSE;
+    }
+    if (!callback) {
+        SetLastError((DWORD)STATUS_ACCESS_VIOLATION);
+        return FALSE;
+    }
+    HMODULE *handles = nullptr;
+    DWORD capacity = 0, needed = 0;
+    for (;;) {
+        if (!K32EnumProcessModules(process, handles, capacity, &needed)) {
+            HeapFree(GetProcessHeap(), 0, handles);
+            return FALSE;
+        }
+        if (needed <= capacity)
+            break;
+        HeapFree(GetProcessHeap(), 0, handles);
+        capacity = needed + 16 * sizeof(HMODULE);
+        if (!(handles = HeapAlloc(GetProcessHeap(), 0, capacity))) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+    }
+    DWORD count = needed / sizeof(HMODULE), kept = 0;
+    LOADED_MODULE *list = HeapAlloc(GetProcessHeap(), 0, (count ? count : 1) * sizeof(*list));
+    if (!list) {
+        HeapFree(GetProcessHeap(), 0, handles);
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    for (DWORD i = 0; i < count; i++) {
+        MODULEINFO info;
+        LOADED_MODULE *m = &list[kept];
+        if (!K32GetModuleInformation(process, handles[i], &info, sizeof(info)) ||
+            !K32GetModuleFileNameExW(process, handles[i], m->Name, RTL_NUMBER_OF(m->Name)))
+            continue;
+        m->Base = (DWORD64)(ULONG_PTR)info.lpBaseOfDll;
+        m->Size = info.SizeOfImage;
+        kept++;
+    }
+    HeapFree(GetProcessHeap(), 0, handles);
+    for (DWORD i = 0; i < kept; i++) {
+        BOOL more;
+        if (kind == LOADED_WIDE) {
+            more = ((PENUMLOADED_MODULES_CALLBACKW64)callback)(list[i].Name, list[i].Base, list[i].Size, context);
+        } else {
+            char name[MAX_PATH * 2];
+            if (!WideCharToMultiByte(CP_ACP, 0, list[i].Name, -1, name, sizeof(name), nullptr, nullptr))
+                continue;
+            if (kind == LOADED_ANSI)
+                more = ((PENUMLOADED_MODULES_CALLBACK64)callback)(name, list[i].Base, list[i].Size, context);
+            else
+                more = ((PENUMLOADED_MODULES_CALLBACK)callback)(name, (ULONG)list[i].Base, list[i].Size, context);
+        }
+        if (!more)
+            break;
+    }
+    HeapFree(GetProcessHeap(), 0, list);
+    return TRUE;
+}
+
+DBGHELP BOOL WINAPI EnumerateLoadedModulesExW(HANDLE process, PENUMLOADED_MODULES_CALLBACKW64 callback, PVOID context)
+{
+    return enumerate_loaded(process, (PVOID)callback, LOADED_WIDE, context);
+}
+
+DBGHELP BOOL WINAPI EnumerateLoadedModulesW64(HANDLE process, PENUMLOADED_MODULES_CALLBACKW64 callback, PVOID context)
+{
+    return enumerate_loaded(process, (PVOID)callback, LOADED_WIDE, context);
+}
+
+DBGHELP BOOL WINAPI EnumerateLoadedModulesEx(HANDLE process, PENUMLOADED_MODULES_CALLBACK64 callback, PVOID context)
+{
+    return enumerate_loaded(process, (PVOID)callback, LOADED_ANSI, context);
+}
+
+DBGHELP BOOL WINAPI EnumerateLoadedModules64(HANDLE process, PENUMLOADED_MODULES_CALLBACK64 callback, PVOID context)
+{
+    return enumerate_loaded(process, (PVOID)callback, LOADED_ANSI, context);
+}
+
+DBGHELP BOOL WINAPI EnumerateLoadedModules(HANDLE process, PENUMLOADED_MODULES_CALLBACK callback, PVOID context)
+{
+    return enumerate_loaded(process, (PVOID)callback, LOADED_ANSI32, context);
+}
+
 /* nothing is read ahead, so loading a module is only learning where it is. */
 DBGHELP DWORD64 WINAPI SymLoadModule64(HANDLE process, HANDLE file, PCSTR image, PCSTR module, DWORD64 base, DWORD size)
 {
