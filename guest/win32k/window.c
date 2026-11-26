@@ -1541,6 +1541,13 @@ void WndShow(WND *w, int cmd)
         break;
     }
     BOOLEAN state_changed = old_state != new_state;
+    /*
+     * xxxShowWindowEx: a window that is already shown is left as it is and does not become active, by SW_SHOW
+     * whatever its state, and by the commands that restore when it is neither an icon nor maximized.
+     */
+    if (was_visible && (cmd == SW_SHOW || (!old_state && (cmd == SW_SHOWNORMAL || cmd == SW_RESTORE ||
+                                                          cmd == SW_SHOWNOACTIVATE))))
+        goto done;
     if (state_changed && (HookCbt(w, HCBT_MINMAX, (WPARAM)WndHandle(w), cmd, 0) || !alive(w)))
         goto done;
     if (state_changed && (old_state & WS_MINIMIZE)) {
