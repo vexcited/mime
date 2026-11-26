@@ -158,8 +158,8 @@ static ULONG handle_list32(ULONG number, const ULONG *a)
     for (ULONG i = 0; out && i < count && i < max; i++) {
         if (props) {
             const PROPLISTITEM *p = (const PROPLISTITEM *)list + i;
-            out[2 * i] = p->Atom;
-            out[2 * i + 1] = (ULONG)(ULONG_PTR)p->Data;
+            out[2 * i] = (ULONG)(ULONG_PTR)p->Data;
+            out[2 * i + 1] = p->Atom;
         } else {
             out[i] = (ULONG)(ULONG_PTR)((HWND *)list)[i];
         }

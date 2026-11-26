@@ -547,9 +547,10 @@ typedef struct MIME_CLIPBOARD_DATA {
 
 /* ------------------------------------------------------------------ window properties */
 
+/* PROPSET of user32, the data before the atom. */
 typedef struct PROPLISTITEM {
-    ATOM Atom;
     HANDLE Data;
+    ATOM Atom;
 } PROPLISTITEM;
 
 /* ------------------------------------------------------------------ user services */
