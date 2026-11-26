@@ -3607,13 +3607,15 @@ static bool gpu_list_load(const MimePaths *paths, MimeBootGpu *gpus, uint32_t ma
 
 /*
  * the gpus as the last start found them, kept so a boot does not wait for the driver; the warm up refreshes the list
- * for the next one. only the first start asks vulkan before the guest boots.
+ * for the next one. only the first start asks vulkan before the guest boots, and a start after one that found no gpu:
+ * a driver that failed once, as between an update of its libraries and the reboot, would cost one more boot without it.
  */
 uint32_t mime_vk_gpus(const MimePaths *paths, MimeBootGpu *gpus, uint32_t max)
 {
     uint32_t count = 0;
-    if (gpu_list_load(paths, gpus, max, &count))
+    if (gpu_list_load(paths, gpus, max, &count) && count)
         return count;
+    count = 0;
     MvkConnection probe = {};
     if (!load_library(&probe))
         return 0;
