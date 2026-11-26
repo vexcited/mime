@@ -484,16 +484,6 @@ BOOLEAN FrameThemeColor(BOOLEAN menu, BOOLEAN dark, int part, int state, int pro
                        state, prop, out);
 }
 
-/* the 1 pixel border of the window as the compositor draws it, 0xAARRGGBB. */
-BOOLEAN FrameBorderColor(BOOLEAN dark, BOOLEAN active, ULONG *argb)
-{
-    COLORREF c;
-    if (!FrameThemeColor(FALSE, dark, WP_FRAMELEFT, active ? 1 : 2, MIME_TMT_BORDERCOLOR, &c))
-        return FALSE;
-    *argb = 0xFF000000u | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF);
-    return TRUE;
-}
-
 static void draw_glyph(SURFACE *s, const REGION *clip, const GLYPH_MASK *mask, const RECT *button, ULONG pixel);
 
 /* the pixels of an image of the style, b, g, r and a with the colors multiplied by the alpha. */
@@ -627,13 +617,16 @@ BOOLEAN FrameDrawScrollPart(SURFACE *s, const REGION *clip, const RECT *r, int p
 
 /* ------------------------------------------------------------------ painting */
 
-/* what the frame draws when the style has no value. */
-#define CAPTION_COLOR RGB(0xFF, 0xFF, 0xFF)
+/*
+ * what the frame draws when the style has no value: the caption of windows 11, measured on windows 11 26100. the text
+ * of an inactive window is 40% of the active one over the caption.
+ */
+#define CAPTION_COLOR RGB(0xF3, 0xF3, 0xF3)
 #define CAPTION_DARK RGB(0x20, 0x20, 0x20)
 #define TEXT_ACTIVE RGB(0x00, 0x00, 0x00)
 #define TEXT_ACTIVE_DARK RGB(0xFF, 0xFF, 0xFF)
-#define TEXT_INACTIVE RGB(0x99, 0x99, 0x99)
-#define TEXT_INACTIVE_DARK RGB(0x9A, 0x9A, 0x9A)
+#define TEXT_INACTIVE RGB(0x91, 0x91, 0x91)
+#define TEXT_INACTIVE_DARK RGB(0x79, 0x79, 0x79)
 
 /* dwm color attributes are stored as the value plus one, so zero means unset. */
 static BOOLEAN dwm_color(WND *w, PCWSTR name, ULONG *out)
@@ -681,7 +674,6 @@ static BOOLEAN background_color(WND *w, ULONG *out)
 static void frame_colors(WND *w, FRAME_COLORS *c)
 {
     BOOLEAN dark = dark_frame(w);
-    COLORREF v;
     if (MetricsHighContrast()) {
         /* the caption and its buttons are drawn in the colors of the system. */
         c->Caption = c->Border = MetricsSysColor(COLOR_ACTIVECAPTION);
@@ -689,16 +681,11 @@ static void frame_colors(WND *w, FRAME_COLORS *c)
         c->TextInactive = MetricsSysColor(COLOR_INACTIVECAPTIONTEXT);
         return;
     }
-    c->Caption = FrameThemeColor(FALSE, dark, WP_CAPTION, 1, MIME_TMT_FILLCOLOR, &v) ? v
-                 : dark                                                              ? CAPTION_DARK
-                                                                                     : CAPTION_COLOR;
+    /* the dwm of windows 11 draws the caption in its own colors, not the ones of the style. */
+    c->Caption = dark ? CAPTION_DARK : CAPTION_COLOR;
     c->Border = c->Caption;
-    c->TextActive = FrameThemeColor(FALSE, dark, WP_CAPTION, 1, MIME_TMT_TEXTCOLOR, &v) ? v
-                    : dark                                                              ? TEXT_ACTIVE_DARK
-                                                                                        : TEXT_ACTIVE;
-    c->TextInactive = FrameThemeColor(FALSE, dark, WP_CAPTION, 2, MIME_TMT_TEXTCOLOR, &v) ? v
-                      : dark                                                              ? TEXT_INACTIVE_DARK
-                                                                                          : TEXT_INACTIVE;
+    c->TextActive = dark ? TEXT_ACTIVE_DARK : TEXT_ACTIVE;
+    c->TextInactive = dark ? TEXT_INACTIVE_DARK : TEXT_INACTIVE;
     ULONG custom;
     BOOLEAN caption_set = dwm_color(w, L"DwmCaptionColor", &custom);
     if (caption_set)
@@ -1157,7 +1144,10 @@ void FrameCompose(WND *w, SURFACE *dst, const RECT *area)
     BOOLEAN sheet = with_margins && (margins[0] < 0 || margins[1] < 0 || margins[2] < 0 || margins[3] < 0);
     FRAME_COLORS colors;
     frame_colors(w, &colors);
-    ULONG frame = ColorToPixel(colors.Caption) | 0xFF000000u;
+    /* glass is white in light mode, where the caption is a grey. measured on windows 11 26100. */
+    ULONG custom;
+    BOOLEAN white = !dark_frame(w) && !dwm_color(w, L"DwmCaptionColor", &custom);
+    ULONG frame = (white ? 0xFFFFFFu : ColorToPixel(colors.Caption)) | 0xFF000000u;
     RECT client = w->ClientRect;
     RectOffset(&client, -w->WindowRect.left, -w->WindowRect.top);
     REGION opaque, fill;

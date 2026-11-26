@@ -586,6 +586,9 @@ static BOOLEAN window_covers(WND *w, RECT *out)
     if (!s || see_through(w) || has_holes(s))
         return FALSE;
     shown_rect(w, &window);
+    /* the line of the border lies over what is behind the window, which stays to be composed. */
+    if ((HostBorderColor(w) >> 24) && !(w->Flags & WNDF_FULLSCREEN))
+        window = (RECT){window.left + 1, window.top + 1, window.right - 1, window.bottom - 1};
     PLACE place = place_on_screen(w);
     RECT own = {place.Origin.x, place.Origin.y, place.Origin.x + placed(s->Width, &place),
                 place.Origin.y + placed(s->Height, &place)};
@@ -836,17 +839,58 @@ void ScreenComposeFor(const SURFACE *s, const RECT *area)
 
 /* compose area in surface coordinates before a read; output alpha is 0xFF. */
 /* the 1 pixel border of the visible frame, which the host draws over the window. */
-static void draw_border(SURFACE *screen, const REGION *vis, WND *w)
+/* the pixels of the screen the line of the border of a window will lie on, one row or column per edge. */
+typedef struct RING {
+    RECT Frame; /* surface pixels. */
+    ULONG *Under;
+} RING;
+
+static ULONG *ring_pixel(RING *ring, LONG x, LONG y)
+{
+    const RECT *f = &ring->Frame;
+    LONG width = f->right - f->left, height = f->bottom - f->top;
+    if (y == f->top)
+        return ring->Under + (x - f->left);
+    if (y == f->bottom - 1)
+        return ring->Under + width + (x - f->left);
+    if (x == f->left)
+        return ring->Under + 2 * width + (y - f->top);
+    return ring->Under + 2 * width + height + (y - f->top);
+}
+
+/*
+ * windows 11 draws the line over what is behind the window and its shadow, not over the window: what is there before
+ * the window is composed is kept for draw_border.
+ */
+static void keep_ring(SURFACE *screen, WND *w, RING *ring)
+{
+    ring->Under = nullptr;
+    if (!(HostBorderColor(w) >> 24) || (w->Flags & WNDF_FULLSCREEN))
+        return;
+    shown_rect(w, &ring->Frame);
+    RectOffset(&ring->Frame, -g_screen_origin.x, -g_screen_origin.y);
+    const RECT *f = &ring->Frame;
+    LONG width = f->right - f->left, height = f->bottom - f->top;
+    if (width <= 0 || height <= 0 || !(ring->Under = W32Alloc((SIZE_T)(width + height) * 2 * sizeof(ULONG))))
+        return;
+    for (LONG y = f->top; y < f->bottom; y++)
+        for (LONG x = f->left; x < f->right; x += (y == f->top || y == f->bottom - 1) ? 1 : width - 1) {
+            if (x >= 0 && y >= 0 && x < screen->Width && y < screen->Height)
+                *ring_pixel(ring, x, y) = ((const ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride))[x];
+            if (width == 1)
+                break;
+        }
+}
+
+static void draw_border(SURFACE *screen, const REGION *vis, WND *w, RING *ring)
 {
     ULONG color = HostBorderColor(w);
     ULONG a = color >> 24;
-    if (!a || (w->Flags & WNDF_FULLSCREEN))
+    if (!a || (w->Flags & WNDF_FULLSCREEN) || !ring->Under)
         return;
     ULONG pixel = (a << 24) | ((((color >> 16) & 0xFF) * a / 255) << 16) | ((((color >> 8) & 0xFF) * a / 255) << 8) |
                   ((color & 0xFF) * a / 255);
-    RECT r;
-    shown_rect(w, &r);
-    RectOffset(&r, -g_screen_origin.x, -g_screen_origin.y);
+    RECT r = ring->Frame;
     RECT edges[4] = {{r.left, r.top, r.right, r.top + 1},
                      {r.left, r.bottom - 1, r.right, r.bottom},
                      {r.left, r.top + 1, r.left + 1, r.bottom - 1},
@@ -864,11 +908,166 @@ static void draw_border(SURFACE *screen, const REGION *vis, WND *w)
             for (LONG y = part.Rects[i].top; y < part.Rects[i].bottom; y++) {
                 ULONG *row = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
                 for (LONG x = part.Rects[i].left; x < part.Rects[i].right; x++)
-                    row[x] = over(pixel, row[x]);
+                    row[x] = over(pixel, *ring_pixel(ring, x, y));
             }
         RgnFree(&part);
     }
     RgnFree(&clip);
+}
+
+/* the normal distribution from 0 to 6 in steps of 1/32, out of 65535. */
+static const USHORT g_normal[193] = {
+    32768, 33584, 34400, 35215, 36027, 36836, 37641, 38441, 39236, 40025, 40807, 41581,
+    42347, 43104, 43851, 44588, 45315, 46030, 46734, 47425, 48104, 48769, 49421, 50059,
+    50683, 51292, 51887, 52467, 53032, 53581, 54115, 54634, 55138, 55625, 56098, 56555,
+    56996, 57422, 57834, 58230, 58611, 58978, 59330, 59669, 59993, 60304, 60601, 60885,
+    61157, 61416, 61663, 61898, 62122, 62335, 62537, 62728, 62910, 63082, 63244, 63398,
+    63543, 63680, 63809, 63930, 64044, 64151, 64252, 64346, 64434, 64517, 64594, 64667,
+    64734, 64797, 64855, 64909, 64960, 65007, 65050, 65091, 65128, 65163, 65194, 65224,
+    65251, 65276, 65299, 65320, 65340, 65358, 65374, 65389, 65403, 65415, 65427, 65437,
+    65447, 65455, 65463, 65470, 65477, 65483, 65488, 65493, 65497, 65501, 65505, 65508,
+    65511, 65513, 65516, 65518, 65520, 65521, 65523, 65524, 65526, 65527, 65528, 65528,
+    65529, 65530, 65530, 65531, 65532, 65532, 65532, 65533, 65533, 65533, 65533, 65534,
+    65534, 65534, 65534, 65534, 65534, 65534, 65534, 65535, 65535, 65535, 65535, 65535,
+    65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535,
+    65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535,
+    65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535,
+    65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535,
+    65535
+};
+
+/* the normal distribution at num / den, out of 65535. */
+static ULONG normal(LONG num, LONG den)
+{
+    LONG64 z = (LONG64)num * 1024 / den;
+    BOOLEAN negative = z < 0;
+    if (negative)
+        z = -z;
+    ULONG value = 65535;
+    if (z < 192 * 32) {
+        ULONG i = (ULONG)(z >> 5), frac = (ULONG)(z & 31);
+        value = (g_normal[i] * (32 - frac) + g_normal[i + 1] * frac) / 32;
+    }
+    return negative ? 65535 - value : value;
+}
+
+/*
+ * the shadow windows 11 draws under a window with a thick frame or a caption, measured on windows 11 26100 at 96 dpi.
+ * the dwm makes it once as an image: two blurred shadows of a box of 64 pixels, the one lower and wider than the
+ * other, and stretches the image along each edge of the window as a nine grid, so the shadow keeps its width out of
+ * the frame and follows the length of the window along it. a layer is its alpha out of 65536, its blur and how much
+ * lower than the box it falls, the box grows by Inset on each side, both in sixteenths of a pixel. darker for the
+ * active window and in dark mode, the layers go one over the other.
+ */
+typedef struct SHADOW_LAYER {
+    LONG Alpha, Sigma, Down;
+} SHADOW_LAYER;
+
+typedef struct SHADOW {
+    LONG Inset;
+    SHADOW_LAYER Layers[2];
+} SHADOW;
+
+#define SHADOW_BOX (64 * 16)
+
+/* light and dark, inactive and active. */
+static const SHADOW g_shadow[2][2] = {
+    {{-31, {{11076, 314, 517}, {7864, 106, 39}}}, {-32, {{13107, 217, 42}, {15991, 312, 523}}}},
+    {{-27, {{22020, 318, 516}, {19857, 103, 36}}}, {-31, {{31654, 214, 36}, {33030, 315, 513}}}},
+};
+
+static BOOLEAN has_shadow(const WND *w)
+{
+    return ((w->Style & WS_THICKFRAME) || (w->Style & WS_CAPTION) == WS_CAPTION) && !(w->Style & (WS_MAXIMIZE | WS_CHILD)) &&
+           !(w->Flags & WNDF_FULLSCREEN) && (w->Flags & WNDF_HOST_WINDOW);
+}
+
+/* the frame the window shows and the rectangle its shadow may darken, at the dpi of the window. */
+static const SHADOW *shadow_of(WND *w, RECT *frame, RECT *reach, LONG *scale)
+{
+    if (!has_shadow(w))
+        return nullptr;
+    BOOLEAN dark = PropGetData(w, PropAtom(L"DwmDarkMode")) != nullptr;
+    const SHADOW *s = &g_shadow[dark][(w->Flags & WNDF_ACTIVE_FRAME) != 0];
+    *scale = (LONG)WndFrameDpi(w);
+    shown_rect(w, frame);
+    LONG side = 0, top = 0, bottom = 0;
+    for (ULONG k = 0; k < 2; k++) {
+        LONG far = 4 * s->Layers[k].Sigma - s->Inset;
+        side = W32Max(side, far);
+        top = W32Max(top, far - s->Layers[k].Down);
+        bottom = W32Max(bottom, far + s->Layers[k].Down);
+    }
+    *reach = *frame;
+    reach->left -= side * *scale / (96 * 16) + 1;
+    reach->right += side * *scale / (96 * 16) + 1;
+    reach->top -= top * *scale / (96 * 16) + 1;
+    reach->bottom += bottom * *scale / (96 * 16) + 1;
+    return s;
+}
+
+/* where the centre of pixel p falls in the image of the shadow, sixteenths: stretched along the edge, as is out of it. */
+static LONG shadow_source(LONG p, LONG lo, LONG hi, LONG box, LONG scale)
+{
+    LONG c = 16 * p + 8;
+    if (c < 16 * lo)
+        return (c - 16 * lo) * 96 / scale;
+    if (c >= 16 * hi)
+        return SHADOW_BOX + (c - 16 * hi) * 96 / scale;
+    return (LONG)((LONG64)(c - 16 * lo) * box / (16 * (hi - lo)));
+}
+
+/* the share of a blurred span from a to b at p, all in sixteenths, out of 65535. */
+static ULONG span_cover(LONG p, LONG a, LONG b, LONG sigma)
+{
+    LONG c = (LONG)normal(p - a, sigma) - (LONG)normal(p - b, sigma);
+    return c < 0 ? 0 : (ULONG)c;
+}
+
+/* darkens what is under the window outside its frame, in area, canvas pixels starting at shift. */
+static void draw_shadow(PUCHAR bits, LONG stride, POINT shift, const RECT *area, WND *w)
+{
+    RECT frame, reach, r;
+    LONG scale;
+    const SHADOW *s = shadow_of(w, &frame, &reach, &scale);
+    if (!s || !RectIntersect(&r, &reach, area) || frame.right <= frame.left || frame.bottom <= frame.top)
+        return;
+    LONG width = r.right - r.left, height = r.bottom - r.top;
+    ULONG *cover = W32Alloc((SIZE_T)(width + height) * 2 * sizeof(ULONG));
+    if (!cover)
+        return;
+    for (ULONG k = 0; k < 2; k++) {
+        const SHADOW_LAYER *l = &s->Layers[k];
+        ULONG *xs = cover + (SIZE_T)k * (width + height), *ys = xs + width;
+        for (LONG x = 0; x < width; x++)
+            xs[x] = span_cover(shadow_source(r.left + x, frame.left, frame.right, SHADOW_BOX, scale), s->Inset,
+                               SHADOW_BOX - s->Inset, l->Sigma);
+        for (LONG y = 0; y < height; y++)
+            ys[y] = span_cover(shadow_source(r.top + y, frame.top, frame.bottom, SHADOW_BOX, scale), s->Inset + l->Down,
+                               SHADOW_BOX - s->Inset + l->Down, l->Sigma);
+    }
+    /* the line of the border lies over the shadow, out of what the window draws. */
+    RECT inner = frame;
+    if (HostBorderColor(w) >> 24)
+        inner = (RECT){frame.left + 1, frame.top + 1, frame.right - 1, frame.bottom - 1};
+    for (LONG y = r.top; y < r.bottom; y++) {
+        ULONG *row = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (r.left - shift.x);
+        for (LONG x = r.left; x < r.right; x++, row++) {
+            if (x >= inner.left && x < inner.right && y >= inner.top && y < inner.bottom)
+                continue;
+            ULONG keep = 65536;
+            for (ULONG k = 0; k < 2; k++) {
+                const ULONG *xs = cover + (SIZE_T)k * (width + height), *ys = xs + width;
+                ULONG64 a = (ULONG64)s->Layers[k].Alpha * xs[x - r.left] / 65535 * ys[y - r.top] / 65535;
+                keep = (ULONG)((ULONG64)keep * (65536 - a) >> 16);
+            }
+            ULONG p = *row;
+            ULONG b = ((p & 0xFF) * keep + 32768) >> 16, g = ((p >> 8 & 0xFF) * keep + 32768) >> 16;
+            ULONG rr = ((p >> 16 & 0xFF) * keep + 32768) >> 16;
+            *row = (p & 0xFF000000u) | rr << 16 | g << 8 | b;
+        }
+    }
+    W32Free(cover);
 }
 
 void ScreenCompose(const RECT *area)
@@ -905,8 +1104,14 @@ void ScreenCompose(const RECT *area)
      * a window that does not cover, a layered one, blends with what is under it, so the desktop is painted again under
      * it each time and is not kept: the blend would stay on the screen after the window and add up.
      */
-    for (ULONG i = 0; i < planned; i++)
+    for (ULONG i = 0; i < planned; i++) {
         RgnCombine(&touched, &touched, &plans[i].Visible, RGN_OR);
+        /* a shadow darkens the desktop under it, which is painted again each time as under a layered window. */
+        RECT frame, reach;
+        LONG scale;
+        if (shadow_of(plans[i].Window, &frame, &reach, &scale) && RectIntersect(&reach, &reach, &screen_area))
+            RgnCombineRect(&touched, &touched, &reach, RGN_OR);
+    }
     RgnOffset(&touched, -g_screen_origin.x, -g_screen_origin.y);
     RgnCombine(&fresh, &bare, &g_kept, RGN_DIFF);
     RgnCombine(&below, &bare, &touched, RGN_AND);
@@ -938,9 +1143,13 @@ void ScreenCompose(const RECT *area)
     }
     while (planned--) {
         PLACE place = place_on_screen(plans[planned].Window);
+        draw_shadow(screen->Bits, screen->Stride, g_screen_origin, &screen_area, plans[planned].Window);
+        RING ring;
+        keep_ring(screen, plans[planned].Window, &ring);
         compose_window(screen->Bits, screen->Stride, g_screen_origin, &plans[planned].Visible, plans[planned].Window,
                        &place, TRUE);
-        draw_border(screen, &plans[planned].Visible, plans[planned].Window);
+        draw_border(screen, &plans[planned].Visible, plans[planned].Window, &ring);
+        W32Free(ring.Under);
         RgnFree(&plans[planned].Visible);
     }
     W32Free(plans);

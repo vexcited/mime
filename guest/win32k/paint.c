@@ -165,16 +165,16 @@ ULONG HostBorderColor(WND *w)
     FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     if (!m.Border || (w->Style & WS_MAXIMIZE) || FrameClientOnly(w))
         return 0;
-    BOOLEAN dark = PropGetData(w, PropAtom(L"DwmDarkMode")) != nullptr;
-    ULONG color, themed;
+    ULONG color;
     COLORREF frame = MetricsSysColor(COLOR_WINDOWFRAME);
+    /*
+     * windows 11 draws the line over what is behind the window, the same grey at 40% for an active or an inactive
+     * window, light or dark, whatever the style holds: 0x2f over black. measured on windows 11 26100.
+     */
     if (MetricsHighContrast())
         color = 0xFF000000u | ((frame & 0xFF) << 16) | (frame & 0xFF00) | ((frame >> 16) & 0xFF);
-    else if (FrameBorderColor(dark, (w->Flags & WNDF_ACTIVE_FRAME) != 0, &themed))
-        color = themed;
     else
-        color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
-                     : ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u);
+        color = 0x66767676u;
     ULONG_PTR v = (ULONG_PTR)PropGetData(w, PropAtom(L"DwmBorderColor"));
     if (v) {
         ULONG custom = (ULONG)(v - 1);

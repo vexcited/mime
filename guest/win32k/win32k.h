@@ -1157,7 +1157,6 @@ BOOLEAN MetricsHighContrast(void);
 void WndSystemChanged(BOOLEAN theme);
 /* a color of the Window or Menu class of the visual style, light or dark. */
 BOOLEAN FrameThemeColor(BOOLEAN menu, BOOLEAN dark, int part, int state, int prop, COLORREF *out);
-BOOLEAN FrameBorderColor(BOOLEAN dark, BOOLEAN active, ULONG *argb);
 void FrameDrawText(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x, LONG baseline, PCWSTR text, ULONG count,
                    LONG max_right, ULONG pixel);
 void FrameBleed(WND *w);
