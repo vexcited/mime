@@ -154,6 +154,108 @@ void KiCaptureDebugStatus(PKTHREAD thread)
 }
 
 /*
+ * a load of ss holds a data breakpoint it hits back, with the single step, until the instruction after it is done,
+ * and the processor then reports both. when that instruction is a cpuid the hypervisor runs it and raises the step
+ * itself: kvm reports the step alone and the breakpoint the processor held is lost. it is put back here, from the
+ * instructions before the trap. measured with tfprobe of the research repository: behind a mov to ss a nop or an
+ * rdtsc gives both bits, a cpuid the step only.
+ */
+void KiRestoreHeldBreakpoint(PKTHREAD thread, PKTRAP_FRAME frame)
+{
+    enum { WINDOW = 16 };
+    ULONG64 dr7 = thread->UserDr7;
+    UCHAR code[WINDOW] = {};
+    if (!(thread->UserDr6 & 0x4000) || !(dr7 & DR7_ACTIVE) || frame->Rip < 0x10000 + WINDOW)
+        return;
+    /* the bytes before the trap may start at the first of a page. */
+    int have = WINDOW;
+    while (have >= 4 && !NT_SUCCESS(KiCopyFromUser(code + WINDOW - have, (PVOID)(frame->Rip - have), have)))
+        have--;
+    if (have < 4 || code[WINDOW - 2] != 0x0F || code[WINDOW - 1] != 0xA2)
+        return;
+    /* the mov to ss from memory that ends where the cpuid starts, whatever its prefixes and its address form. */
+    const ULONG64 registers[16] = {frame->Rax, frame->Rcx, frame->Rdx, frame->Rbx, frame->Rsp, frame->Rbp,
+                                   frame->Rsi, frame->Rdi, frame->R8,  frame->R9,  frame->R10, frame->R11,
+                                   frame->R12, frame->R13, frame->R14, frame->R15};
+    BOOLEAN found = FALSE, known = FALSE;
+    ULONG64 address = 0;
+    for (int start = WINDOW - 4; start >= WINDOW - have && !found; start--) {
+        int at = start;
+        UCHAR rex = 0;
+        BOOLEAN based = FALSE;
+        while (at < WINDOW - 2 && (code[at] == 0x66 || code[at] == 0x2E || code[at] == 0x36 || code[at] == 0x3E ||
+                                   code[at] == 0x26 || code[at] == 0x64 || code[at] == 0x65)) {
+            based |= code[at] == 0x64 || code[at] == 0x65;
+            at++;
+        }
+        if (at < WINDOW - 2 && (code[at] & 0xF0) == 0x40)
+            rex = code[at++];
+        if (at + 2 > WINDOW - 2 || code[at] != 0x8E)
+            continue;
+        UCHAR modrm = code[at + 1], mod = modrm >> 6, rm = modrm & 7;
+        if (mod == 3 || (modrm >> 3 & 7) != 2)
+            continue;
+        at += 2;
+        /* cpuid wrote over rax, rbx, rcx and rdx: an address made of one of them is not known any more. */
+        BOOLEAN clobbered = based;
+        ULONG64 ea = 0;
+        int base = -1, index = -1, scale = 0;
+        if (rm == 4) {
+            if (at >= WINDOW - 2)
+                continue;
+            UCHAR sib = code[at++];
+            scale = sib >> 6;
+            index = (sib >> 3 & 7) | (rex & 2 ? 8 : 0);
+            if (index == 4)
+                index = -1;
+            base = (sib & 7) | (rex & 1 ? 8 : 0);
+            if ((sib & 7) == 5 && mod == 0)
+                base = -1;
+        } else if (rm == 5 && mod == 0) {
+            base = -2; /* relative to the instruction after, the cpuid. */
+        } else {
+            base = rm | (rex & 1 ? 8 : 0);
+        }
+        int displacement = mod == 1 ? 1 : mod == 2 || base < 0 ? 4 : 0;
+        if (at + displacement != WINDOW - 2)
+            continue;
+        if (displacement == 1)
+            ea = (ULONG64)(LONG64)(CHAR)code[at];
+        else if (displacement == 4)
+            ea = (ULONG64)(LONG64)(LONG)(code[at] | code[at + 1] << 8 | code[at + 2] << 16 | (ULONG)code[at + 3] << 24);
+        if (base == -2)
+            ea += frame->Rip - 2;
+        else if (base >= 0)
+            ea += registers[base], clobbered |= base < 4;
+        if (index >= 0)
+            ea += registers[index] << scale, clobbered |= index < 4;
+        found = TRUE;
+        known = !clobbered;
+        address = ea;
+    }
+    if (!found)
+        return;
+    for (int n = 0; n < 4; n++) {
+        static const ULONG64 sizes[4] = {1, 2, 8, 4};
+        if (!(dr7 >> (n * 2) & 3) || (dr7 >> (16 + n * 4) & 3) != 3)
+            continue;
+        ULONG64 size = sizes[dr7 >> (18 + n * 4) & 3], watched = thread->UserDr[n] & ~(size - 1);
+        BOOLEAN hit = FALSE;
+        if (known) {
+            hit = address < watched + size && watched < address + 2;
+        } else {
+            /* the address is gone: the breakpoint was hit when the selector ss now holds is read under it. */
+            for (ULONG64 from = watched ? watched - 1 : 0; from < watched + size && !hit; from++) {
+                USHORT word;
+                hit = NT_SUCCESS(KiCopyFromUser(&word, (PVOID)from, sizeof(word))) && word == (USHORT)frame->Ss;
+            }
+        }
+        if (hit)
+            thread->UserDr6 |= 1ull << n;
+    }
+}
+
+/*
  * a service that returns with the trap flag in its frame, set before the syscall or by a context set meanwhile.
  * measured on windows 11 26300: the single step is raised at the address the service returns to, before any
  * instruction there runs, with the flag off in its context and the step bit in dr6. a return of the processor

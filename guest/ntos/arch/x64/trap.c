@@ -325,6 +325,8 @@ static void user_exception(PKTRAP_FRAME frame)
     }
     EXCEPTION_RECORD record;
     KiCaptureDebugStatus(thread);
+    if (frame->Vector == 1)
+        KiRestoreHeldBreakpoint(thread, frame);
     build_record(frame, &record);
     /* a fast fail ends the process at once, no handler of the program sees it. */
     if (frame->Vector == 0x29) {

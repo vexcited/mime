@@ -1059,6 +1059,8 @@ NTSTATUS MiFreeVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type)
 NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG protect, PULONG old);
 NTSTATUS MmPatchUserCode(PVOID address, UCHAR value);
 void KiCaptureDebugStatus(PKTHREAD thread);
+struct _KTRAP_FRAME;
+void KiRestoreHeldBreakpoint(PKTHREAD thread, struct _KTRAP_FRAME *frame);
 BOOLEAN KiServiceSingleStep(PKTHREAD thread, PKTRAP_FRAME frame, PEXCEPTION_RECORD record);
 NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info);
 BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode);
