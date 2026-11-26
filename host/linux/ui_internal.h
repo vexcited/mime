@@ -80,7 +80,8 @@ bool mime_activation_raise(struct wl_display *display, struct wl_surface *surfac
  * thread of its own when an answer is no longer the one given.
  */
 struct wl_output;
-bool mime_color_output(struct wl_display *display, struct wl_output *output, bool *hdr, MimeMonitorColor *color);
+bool mime_color_output(struct wl_display *display, struct wl_output *output, const char *name, bool *hdr,
+                       MimeMonitorColor *color);
 void mime_color_watch(void (*changed)(void));
 void mime_color_forget(void);
 void mime_color_stop(void);

@@ -502,7 +502,7 @@ static void color_changed(void)
 
 static void display_color(struct wl_output *output, Placed *m)
 {
-    mime_color_output(mime_wl_display(), output, &m->hdr, &m->color);
+    mime_color_output(mime_wl_display(), output, m->name, &m->hdr, &m->color);
 }
 
 static void update_display(void)

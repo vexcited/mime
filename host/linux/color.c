@@ -64,6 +64,66 @@ static const struct wl_message info_events[] = {
 };
 static const struct wl_interface info_interface = {"wp_image_description_info_v1", 1, 0, nullptr, 11, info_events};
 
+/* kde_output_device_v2 at version 21, the first with the registry, from plasma-wayland-protocols. */
+static const struct wl_interface device_interface, mode_interface;
+static const struct wl_interface *types_device[] = {&device_interface};
+static const struct wl_interface *types_mode[] = {&mode_interface};
+static const struct wl_message devices_requests[] = {{"stop", "21", no_types}};
+static const struct wl_message devices_events[] = {
+    {"finished", "21", no_types},
+    {"output", "21n", types_device},
+};
+static const struct wl_interface devices_interface = {"kde_output_device_registry_v2", 21, 1, devices_requests, 2,
+                                                      devices_events};
+static const struct wl_message device_requests[] = {{"release", "21", no_types}};
+static const struct wl_message device_events[] = {
+    {"geometry", "iiiiissi", no_types},
+    {"current_mode", "o", types_mode},
+    {"mode", "n", types_mode},
+    {"done", "", no_types},
+    {"scale", "f", no_types},
+    {"edid", "s", no_types},
+    {"enabled", "i", no_types},
+    {"uuid", "s", no_types},
+    {"serial_number", "s", no_types},
+    {"eisa_id", "s", no_types},
+    {"capabilities", "u", no_types},
+    {"overscan", "u", no_types},
+    {"vrr_policy", "u", no_types},
+    {"rgb_range", "u", no_types},
+    {"name", "2s", no_types},
+    {"high_dynamic_range", "3u", no_types},
+    {"sdr_brightness", "3u", no_types},
+    {"wide_color_gamut", "3u", no_types},
+    {"auto_rotate_policy", "4u", no_types},
+    {"icc_profile_path", "5s", no_types},
+    {"brightness_metadata", "6uuu", no_types},
+    {"brightness_overrides", "6iii", no_types},
+    {"sdr_gamut_wideness", "6u", no_types},
+    {"color_profile_source", "7u", no_types},
+    {"brightness", "8u", no_types},
+    {"color_power_tradeoff", "10u", no_types},
+    {"dimming", "11u", no_types},
+    {"replication_source", "13s", no_types},
+    {"ddc_ci_allowed", "14u", no_types},
+    {"max_bits_per_color", "15u", no_types},
+    {"max_bits_per_color_range", "15uu", no_types},
+    {"automatic_max_bits_per_color_limit", "15u", no_types},
+    {"edr_policy", "16u", no_types},
+    {"sharpness", "17u", no_types},
+    {"priority", "18u", no_types},
+    {"auto_brightness", "20u", no_types},
+    {"removed", "21", no_types},
+};
+static const struct wl_interface device_interface = {"kde_output_device_v2", 21, 1, device_requests, 37, device_events};
+static const struct wl_message mode_events[] = {
+    {"size", "ii", no_types}, {"refresh", "i", no_types}, {"preferred", "", no_types},
+    {"removed", "", no_types}, {"flags", "19u", no_types},
+};
+static const struct wl_interface mode_interface = {"kde_output_device_mode_v2", 21, 0, nullptr, 5, mode_events};
+
+#define DEVICE_CAPABILITY_HDR 0x8
+
 enum { TF_ST2084_PQ = 11, TF_HLG = 13 };
 enum { PRIMARIES_SRGB = 1, PRIMARIES_BT2020 = 6, PRIMARIES_DCI_P3 = 8, PRIMARIES_DISPLAY_P3 = 9, PRIMARIES_ADOBE = 10 };
 
@@ -73,11 +133,20 @@ enum { PRIMARIES_SRGB = 1, PRIMARIES_BT2020 = 6, PRIMARIES_DCI_P3 = 8, PRIMARIES
 typedef struct Output {
     struct wl_output *output; /* what tells the outputs apart. */
     struct wl_proxy *proxy;
+    char name[32]; /* the connector, as KWin's devices name it too. */
     uint32_t serial; /* of the last question asked. */
     bool answered;
-    bool hdr;
+    bool hdr; /* the encoding reaches above the white. */
     MimeMonitorColor color;
 } Output;
+
+typedef struct Device {
+    struct wl_proxy *proxy;
+    char name[32];
+    uint32_t capabilities, hdr;
+    bool done;
+    bool shown; /* hdr is on and the output can show it, as of the last done. */
+} Device;
 
 typedef struct Query {
     Output *o;
@@ -101,12 +170,156 @@ static void (*g_changed)(void);
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cond = PTHREAD_COND_INITIALIZER;
 static Output g_outputs[MIME_MAX_MONITORS * 2];
+static struct wl_proxy *g_devices;
+static Device g_device[MIME_MAX_MONITORS * 2];
+
+static void ignore(void *data, struct wl_proxy *proxy)
+{
+}
+
+static void ignore_u(void *data, struct wl_proxy *proxy, uint32_t a)
+{
+}
+
+static void ignore_uu(void *data, struct wl_proxy *proxy, uint32_t a, uint32_t b)
+{
+}
+
+static void ignore_uuu(void *data, struct wl_proxy *proxy, uint32_t a, uint32_t b, uint32_t c)
+{
+}
+
+static void ignore_i(void *data, struct wl_proxy *proxy, int32_t a)
+{
+}
+
+static void ignore_ii(void *data, struct wl_proxy *proxy, int32_t a, int32_t b)
+{
+}
+
+static void ignore_iii(void *data, struct wl_proxy *proxy, int32_t a, int32_t b, int32_t c)
+{
+}
+
+static void ignore_s(void *data, struct wl_proxy *proxy, const char *a)
+{
+}
+
+static void ignore_o(void *data, struct wl_proxy *proxy, struct wl_proxy *a)
+{
+}
+
+static void device_geometry(void *data, struct wl_proxy *proxy, int32_t x, int32_t y, int32_t width_mm,
+                            int32_t height_mm, int32_t subpixel, const char *make, const char *model, int32_t transform)
+{
+}
+
+static void mode_removed(void *data, struct wl_proxy *proxy)
+{
+    wl_proxy_destroy(proxy);
+}
+
+static const void *mode_listener[5] = {(void *)ignore_ii, (void *)ignore_i, (void *)ignore, (void *)mode_removed,
+                                       (void *)ignore_u};
+
+static void device_mode(void *data, struct wl_proxy *proxy, struct wl_proxy *mode)
+{
+    wl_proxy_add_listener(mode, (void (**)(void))mode_listener, nullptr);
+}
+
+static void device_capabilities(void *data, struct wl_proxy *proxy, uint32_t capabilities)
+{
+    pthread_mutex_lock(&g_lock);
+    ((Device *)data)->capabilities = capabilities;
+    pthread_mutex_unlock(&g_lock);
+}
+
+static void device_name(void *data, struct wl_proxy *proxy, const char *name)
+{
+    pthread_mutex_lock(&g_lock);
+    mime_strlcpy(((Device *)data)->name, name, sizeof(((Device *)data)->name));
+    pthread_mutex_unlock(&g_lock);
+}
+
+static void device_hdr(void *data, struct wl_proxy *proxy, uint32_t enabled)
+{
+    pthread_mutex_lock(&g_lock);
+    ((Device *)data)->hdr = enabled;
+    pthread_mutex_unlock(&g_lock);
+}
+
+static void device_done(void *data, struct wl_proxy *proxy)
+{
+    Device *d = data;
+    pthread_mutex_lock(&g_lock);
+    bool shown = d->hdr && (d->capabilities & DEVICE_CAPABILITY_HDR);
+    bool changed = d->done && shown != d->shown;
+    if (!d->done || changed)
+        mime_info("color: kwin runs %s in %s", d->name, shown ? "hdr" : "sdr");
+    d->shown = shown;
+    d->done = true;
+    pthread_mutex_unlock(&g_lock);
+    if (changed && g_changed)
+        g_changed();
+}
+
+static void device_removed(void *data, struct wl_proxy *proxy)
+{
+    Device *d = data;
+    pthread_mutex_lock(&g_lock);
+    memset(d, 0, sizeof(*d));
+    pthread_mutex_unlock(&g_lock);
+    wl_proxy_marshal_flags(proxy, 0, nullptr, wl_proxy_get_version(proxy), WL_MARSHAL_FLAG_DESTROY);
+}
+
+static const void *device_listener[37] = {
+    (void *)device_geometry, (void *)ignore_o,   (void *)device_mode,  (void *)device_done,
+    (void *)ignore_i,        (void *)ignore_s,   (void *)ignore_i,     (void *)ignore_s,
+    (void *)ignore_s,        (void *)ignore_s,   (void *)device_capabilities, (void *)ignore_u,
+    (void *)ignore_u,        (void *)ignore_u,   (void *)device_name,  (void *)device_hdr,
+    (void *)ignore_u,        (void *)ignore_u,   (void *)ignore_u,     (void *)ignore_s,
+    (void *)ignore_uuu,      (void *)ignore_iii, (void *)ignore_u,     (void *)ignore_u,
+    (void *)ignore_u,        (void *)ignore_u,   (void *)ignore_u,     (void *)ignore_s,
+    (void *)ignore_u,        (void *)ignore_u,   (void *)ignore_uu,    (void *)ignore_u,
+    (void *)ignore_u,        (void *)ignore_u,   (void *)ignore_u,     (void *)ignore_u,
+    (void *)device_removed,
+};
+
+static void devices_finished(void *data, struct wl_proxy *proxy)
+{
+    wl_proxy_destroy(proxy);
+    g_devices = nullptr;
+}
+
+static void devices_output(void *data, struct wl_proxy *proxy, struct wl_proxy *device)
+{
+    pthread_mutex_lock(&g_lock);
+    Device *d = nullptr;
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_device) && !d; i++)
+        if (!g_device[i].proxy)
+            d = &g_device[i];
+    if (d)
+        d->proxy = device;
+    pthread_mutex_unlock(&g_lock);
+    if (!d) {
+        wl_proxy_marshal_flags(device, 0, nullptr, wl_proxy_get_version(device), WL_MARSHAL_FLAG_DESTROY);
+        return;
+    }
+    wl_proxy_add_listener(device, (void (**)(void))device_listener, d);
+}
+
+static const void *devices_listener[2] = {(void *)devices_finished, (void *)devices_output};
 
 static void registry_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                             uint32_t version)
 {
-    if (!strcmp(interface, manager_interface.name))
+    if (!strcmp(interface, manager_interface.name)) {
         g_manager = wl_registry_bind(registry, name, &manager_interface, 1);
+    } else if (!strcmp(interface, devices_interface.name) && version >= 21) {
+        g_devices = wl_registry_bind(registry, name, &devices_interface, 21);
+        if (g_devices)
+            wl_proxy_add_listener(g_devices, (void (**)(void))devices_listener, nullptr);
+    }
 }
 
 static void registry_remove(void *data, struct wl_registry *registry, uint32_t name)
@@ -168,13 +381,7 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
         for (int i = 0; i < 8; i++)
             out[i] = primaries[i] > 0 ? (uint32_t)primaries[i] : 0;
     }
-    /*
-     * KWin's encoding reaches above the white only in hdr. on a dimmed internal panel in sdr it puts its edr headroom
-     * in the target luminance alone, and windows shows such a panel in sdr.
-     */
     *hdr = max / reference > 1.05;
-    if (!*hdr)
-        return;
     double peak = max, floor = min;
     if (q->has_target_luminance && q->target_max) {
         peak = q->target_max;
@@ -188,24 +395,47 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
     color->white_nits = ten_thousandths(REFERENCE_NITS);
 }
 
+/*
+ * with the lock held. KWin says whether it runs the output in hdr. its encoding also reaches above the white in sdr,
+ * while a window asks for the edr headroom of a dimmed internal panel, and windows shows such a panel in sdr. the
+ * range decides only for a compositor that says nothing.
+ */
+static void told(const Output *o, bool *hdr, MimeMonitorColor *color)
+{
+    *hdr = o->hdr;
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_device); i++) {
+        const Device *d = &g_device[i];
+        if (d->proxy && d->done && o->name[0] && !strcmp(d->name, o->name))
+            *hdr = d->shown;
+    }
+    *color = o->color;
+    if (!*hdr)
+        color->min_nits = color->max_nits = color->max_frame_nits = color->white_nits = 0;
+}
+
 static void finish(Query *q, bool ok)
 {
     bool changed = false;
     pthread_mutex_lock(&g_lock);
     Output *o = q->o;
     if (o->proxy && o->serial == q->serial) {
-        bool hdr = false;
-        MimeMonitorColor color = {};
+        bool was_hdr = false;
+        MimeMonitorColor was = {};
+        if (o->answered)
+            told(o, &was_hdr, &was);
+        o->hdr = false;
+        memset(&o->color, 0, sizeof(o->color));
         if (ok)
-            answer(q, &hdr, &color);
-        changed = o->answered && (hdr != o->hdr || memcmp(&color, &o->color, sizeof(color)));
+            answer(q, &o->hdr, &o->color);
+        bool hdr;
+        MimeMonitorColor color;
+        told(o, &hdr, &color);
+        changed = o->answered && (hdr != was_hdr || memcmp(&color, &was, sizeof(color)));
         if (!o->answered || changed)
-            mime_info("color: output %p %s, %u to %u nits, %u a frame, primaries %u %u, %u %u, %u %u",
-                      (void *)o->output, hdr ? "hdr" : "sdr", color.min_nits / 10000, color.max_nits / 10000,
+            mime_info("color: output %s %s, %u to %u nits, %u a frame, primaries %u %u, %u %u, %u %u", o->name,
+                      hdr ? "hdr" : "sdr", color.min_nits / 10000, color.max_nits / 10000,
                       color.max_frame_nits / 10000, color.red_x, color.red_y, color.green_x, color.green_y,
                       color.blue_x, color.blue_y);
-        o->hdr = hdr;
-        o->color = color;
         o->answered = true;
         pthread_cond_broadcast(&g_cond);
     }
@@ -382,6 +612,9 @@ static bool bind(struct wl_display *display)
         mime_info("color: the compositor has no color management, every output is sdr");
         return false;
     }
+    /* the devices come once the registry is bound, and each tells its state right away. */
+    if (g_devices)
+        wl_display_roundtrip_queue(display, g_queue);
     g_wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (g_wake < 0 || pthread_create(&g_thread, nullptr, reader, nullptr)) {
         g_manager = nullptr;
@@ -396,7 +629,8 @@ void mime_color_watch(void (*changed)(void))
     g_changed = changed;
 }
 
-bool mime_color_output(struct wl_display *display, struct wl_output *output, bool *hdr, MimeMonitorColor *color)
+bool mime_color_output(struct wl_display *display, struct wl_output *output, const char *name, bool *hdr,
+                       MimeMonitorColor *color)
 {
     *hdr = false;
     memset(color, 0, sizeof(*color));
@@ -422,6 +656,8 @@ bool mime_color_output(struct wl_display *display, struct wl_output *output, boo
             ask(o);
         }
     }
+    if (o)
+        mime_strlcpy(o->name, name ? name : "", sizeof(o->name));
     if (o && !o->answered) {
         struct timespec until;
         clock_gettime(CLOCK_REALTIME, &until);
@@ -435,8 +671,7 @@ bool mime_color_output(struct wl_display *display, struct wl_output *output, boo
     }
     bool known = o && o->answered;
     if (known) {
-        *hdr = o->hdr;
-        *color = o->color;
+        told(o, hdr, color);
     }
     pthread_mutex_unlock(&g_lock);
     return known;
@@ -472,4 +707,5 @@ void mime_color_stop(void)
     pthread_join(g_thread, nullptr);
     g_running = false;
     g_manager = nullptr;
+    g_devices = nullptr;
 }
