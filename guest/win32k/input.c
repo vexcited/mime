@@ -1300,7 +1300,23 @@ static BOOLEAN newer_size_queued(W32THREAD *t, const QUEUED_MESSAGE *from)
 }
 
 /* a host focus event for a window of the thread that is still waiting in its queue. */
-/* a focus the host is about to give a window that was shown without activation, which windows would not activate. */
+/*
+ * a focus the host gives a window that windows would not activate: one shown without activation, or another than the
+ * one the program activated a moment ago, as kwin focuses the windows a program maps in the order it maps them, late.
+ * a click activates its window through the input, so a focus without one so soon is not the user's.
+ */
+#define GUEST_ACTIVATION_MS 500
+
+static BOOLEAN gain_refused(WND *gained)
+{
+    if (gained->ShownInactive)
+        return TRUE;
+    WND *active = InputForeground;
+    return active && gained != active && active == WndGuestActivated && WndIsVisible(active) &&
+           W32TickCount() - WndGuestActivatedTick < GUEST_ACTIVATION_MS;
+}
+
+/* a focus the host is about to give that is refused, see gain_refused. */
 static BOOLEAN refused_gain_queued(W32THREAD *t, const QUEUED_MESSAGE *current)
 {
     for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink) {
@@ -1308,7 +1324,7 @@ static BOOLEAN refused_gain_queued(W32THREAD *t, const QUEUED_MESSAGE *current)
         if (q == current || q->Kind != QM_INPUT || q->Input.type != MIME_INPUT_WINDOW_FOCUS)
             continue;
         WND *w = WndLookup((HWND)(ULONG_PTR)q->Input.window_id);
-        return q->Input.x && w && w->ShownInactive;
+        return q->Input.x && w && gain_refused(w);
     }
     return FALSE;
 }
@@ -1412,11 +1428,8 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
                 WndUpdateHostConfig(pending, TRUE);
                 break;
             }
-            /*
-             * a window shown without activation is not activated by windows, where kwin focuses each window it maps:
-             * the active window asks the host for the focus back. a click activates it as any other.
-             */
-            if (w->ShownInactive) {
+            /* the active window asks the host for the focus back, see gain_refused. */
+            if (gain_refused(w)) {
                 w->ShownInactive = FALSE;
                 if (InputForeground && InputForeground != w && WndIsVisible(InputForeground)) {
                     WndUpdateHostConfig(InputForeground, TRUE);

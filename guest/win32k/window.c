@@ -2071,6 +2071,9 @@ BOOLEAN WndActivatedByHost;
  * focus the host gives a window before it handled the request for the next one must not take the activation back.
  */
 WND *WndHostFocus, *WndHostPending;
+/* the window the program activated last, and when, which a focus the host moves elsewhere at once does not undo. */
+WND *WndGuestActivated;
+ULONG WndGuestActivatedTick;
 
 /*
  * WM_ACTIVATEAPP goes to every top level window of the thread that loses the activation and of the one that gets it,
@@ -2133,6 +2136,10 @@ void WndActivate(WND *w, BOOLEAN click)
     WndUpdateHostConfig(w, !WndActivatedByHost);
     WndHostPending = WndActivatedByHost || WndHostFocus == w ? nullptr : w;
     w->ShownInactive = FALSE;
+    if (!WndActivatedByHost) {
+        WndGuestActivated = w;
+        WndGuestActivatedTick = W32TickCount();
+    }
     if (!old || old->Thread != w->Thread)
         WndSendActivateApp(w->Thread, TRUE, old && old->Thread ? old->Thread->Tid : nullptr);
     MsgSendEvent(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
@@ -2329,6 +2336,8 @@ static void free_window(WND *w)
         WndHostPending = nullptr;
     if (WndShell == w)
         WndShell = nullptr;
+    if (WndGuestActivated == w)
+        WndGuestActivated = nullptr;
     MenuWindowDestroyed(w);
     ScrollWindowDestroyed(w);
     ClipboardWindowDestroyed(w);

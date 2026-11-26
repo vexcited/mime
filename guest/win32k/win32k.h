@@ -1077,6 +1077,8 @@ void WndSendActivateApp(W32THREAD *t, BOOLEAN active, HANDLE other);
 extern BOOLEAN WndActivatedByHost;
 extern struct WND *WndHostFocus, *WndHostPending;
 extern struct WND *WndShell;
+extern struct WND *WndGuestActivated;
+extern ULONG WndGuestActivatedTick;
 void WndSetFocus(WND *w);
 void WndCenterOnOwner(WND *w);
 UINT WndGetDpi(WND *w);
