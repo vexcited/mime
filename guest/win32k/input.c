@@ -1484,3 +1484,25 @@ BOOL NTAPI NtUserGetPointerDevices(UINT *user_count, PVOID user_devices)
     W32SetLastError(error);
     return FALSE;
 }
+
+/*
+ * the input sink of a composition at a point, which the desktop window manager keeps for the islands of XAML and the
+ * core windows. without it no point has one: the outputs are cleared and the answer is 0, with no error.
+ */
+BOOL NTAPI NtUserCompositionInputSinkLuidFromPoint(ULONG kind, POINT *user_point, LUID *user_luid, ULONG64 *user_id,
+                                                    BYTE *user_info)
+{
+    if (kind && kind != 6) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    POINT p;
+    ULONG64 zero = 0;
+    BYTE info[64] = {};
+    if (!NT_SUCCESS(MimeCopyFromUser(&p, user_point, sizeof(p))) ||
+        (user_id && !NT_SUCCESS(MimeCopyToUser(user_id, &zero, sizeof(zero)))) ||
+        (user_info && !NT_SUCCESS(MimeCopyToUser(user_info, info, sizeof(info)))))
+        return FALSE;
+    (void)user_luid;
+    return FALSE;
+}

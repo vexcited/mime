@@ -180,6 +180,20 @@
     case MIME_SVC_NtUserLockWindowUpdate:
         v[0] = (LONG64)(LONG)a[0];
         return MxCallService(number, v);
+    case MIME_SVC_NtUserLogicalToPhysicalDpiPointForWindow:
+    case MIME_SVC_NtUserPhysicalToLogicalDpiPointForWindow:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserTraceLoggingSendMixedModeTelemetry:
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserCompositionInputSinkLuidFromPoint:
+        v[0] = a[0];
+        v[1] = a[1];
+        v[2] = a[2];
+        v[3] = a[3];
+        v[4] = a[4];
+        return MxCallService(number, v);
     case MIME_SVC_NtUserValidateRgn:
         v[0] = (LONG64)(LONG)a[0];
         v[1] = a[1];

@@ -447,6 +447,10 @@ void NtUserBeginDeferWindowPos(void);
 void NtUserDeferWindowPosAndBand(void);
 void NtUserEndDeferWindowPosEx(void);
 void NtUserLockWindowUpdate(void);
+void NtUserLogicalToPhysicalDpiPointForWindow(void);
+void NtUserPhysicalToLogicalDpiPointForWindow(void);
+void NtUserTraceLoggingSendMixedModeTelemetry(void);
+void NtUserCompositionInputSinkLuidFromPoint(void);
 void NtUserWaitForInputIdle(void);
 void NtUserWaitMessage(void);
 void NtGdiGetPublicFontTableChangeCookie(void);
@@ -2660,6 +2664,26 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserLockWindowUpdate & 0xFFF] = (SERVICE){(void *)NtUserLockWindowUpdate, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtUserLockWindowUpdate has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserLogicalToPhysicalDpiPointForWindow
+    table[MIME_SVC_NtUserLogicalToPhysicalDpiPointForWindow & 0xFFF] = (SERVICE){(void *)NtUserLogicalToPhysicalDpiPointForWindow, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserLogicalToPhysicalDpiPointForWindow has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserPhysicalToLogicalDpiPointForWindow
+    table[MIME_SVC_NtUserPhysicalToLogicalDpiPointForWindow & 0xFFF] = (SERVICE){(void *)NtUserPhysicalToLogicalDpiPointForWindow, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserPhysicalToLogicalDpiPointForWindow has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserTraceLoggingSendMixedModeTelemetry
+    table[MIME_SVC_NtUserTraceLoggingSendMixedModeTelemetry & 0xFFF] = (SERVICE){(void *)NtUserTraceLoggingSendMixedModeTelemetry, STACK_ARGS(0), 1, 0};
+#else
+#warning "NtUserTraceLoggingSendMixedModeTelemetry has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserCompositionInputSinkLuidFromPoint
+    table[MIME_SVC_NtUserCompositionInputSinkLuidFromPoint & 0xFFF] = (SERVICE){(void *)NtUserCompositionInputSinkLuidFromPoint, STACK_ARGS(5), 1, 0};
+#else
+#warning "NtUserCompositionInputSinkLuidFromPoint has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserWaitForInputIdle
     table[MIME_SVC_NtUserWaitForInputIdle & 0xFFF] = (SERVICE){(void *)NtUserWaitForInputIdle, STACK_ARGS(3), 1, 0};

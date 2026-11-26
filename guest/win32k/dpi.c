@@ -548,3 +548,45 @@ UINT NTAPI NtUserGetSystemDpiForProcess(HANDLE process)
     }
     return W32SystemDpi();
 }
+
+/*
+ * LogicalToPhysicalDpiPointForWindow and the other way, which the drag loop of ole32 calls: a point of a window the
+ * screen shows scaled, as an unaware window on a monitor of another dpi, between the window's pixels and the screen's.
+ * FALSE leaves the point of a window shown at its own dpi as it is, like a window without a dpi transform in win32kfull.
+ */
+static BOOL dpi_point(HWND hwnd, POINT *user_point, BOOLEAN to_physical)
+{
+    POINT p;
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    WND *top = WndTopLevel(w);
+    BOOL scaled = top && top->Awareness < DPI_AWARE_PER_MONITOR && DpiScaleOf(top->Awareness) != WndMonitorDpi(top);
+    ULONG awareness = top ? top->Awareness : 0;
+    UserLeave();
+    if (!w) {
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (!NT_SUCCESS(MimeCopyFromUser(&p, user_point, sizeof(p))) || !scaled)
+        return FALSE;
+    UserEnter();
+    DpiPointConvert(&p, to_physical ? awareness : DPI_PHYSICAL, to_physical ? DPI_PHYSICAL : awareness);
+    UserLeave();
+    return NT_SUCCESS(MimeCopyToUser(user_point, &p, sizeof(p)));
+}
+
+BOOL NTAPI NtUserLogicalToPhysicalDpiPointForWindow(HWND hwnd, POINT *user_point)
+{
+    return dpi_point(hwnd, user_point, TRUE);
+}
+
+BOOL NTAPI NtUserPhysicalToLogicalDpiPointForWindow(HWND hwnd, POINT *user_point)
+{
+    return dpi_point(hwnd, user_point, FALSE);
+}
+
+/* the event of windows of several awarenesses in one process goes to the telemetry of windows only. */
+BOOL NTAPI NtUserTraceLoggingSendMixedModeTelemetry(void)
+{
+    return TRUE;
+}
