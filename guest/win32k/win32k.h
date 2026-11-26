@@ -722,6 +722,7 @@ typedef struct W32THREAD {
     HCURSOR Cursor;
     struct CURICON *CursorLock; /* the object of Cursor, which stays alive while the thread shows it. */
     LONG CursorShowCount;
+    BOOLEAN CursorNone; /* the thread set no cursor, which hides it. */
     struct W32DESKTOP *Desktop;  /* referenced, winsta.c. */
     HANDLE DesktopHandle;
     HWND TsfSink;          /* text services window for host input methods, ime.c. */

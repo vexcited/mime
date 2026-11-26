@@ -1947,6 +1947,7 @@ void CursorSet(HCURSOR cursor)
     if (t) {
         CURICON *old = t->CursorLock;
         t->Cursor = cursor;
+        t->CursorNone = !cursor;
         t->CursorLock = c;
         if (c)
             c->Header.RefCount++;
@@ -1957,8 +1958,11 @@ void CursorSet(HCURSOR cursor)
         HostSetCursor(MIME_CURSOR_HIDDEN);
         return;
     }
-    if (t && t->CursorShowCount < 0)
+    /* a thread that hid the cursor keeps it hidden, whatever another thread showed since. */
+    if (t && t->CursorShowCount < 0) {
+        HostSetCursor(MIME_CURSOR_HIDDEN);
         return;
+    }
     CURICON *f = shown(c);
     /* a cursor the program made is shown as it is, the system's are the host's own. */
     if (f && !c->System && f->Image) {

@@ -579,7 +579,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     HostReleaseCursor(thread);
     CursorFreeThread(t);
     /* otherwise a thread that hid the pointer leaves it hidden for the next program. */
-    if (InputCursorHidden && (t->CursorShowCount < 0 || !t->Cursor))
+    if (InputCursorHidden && (t->CursorShowCount < 0 || t->CursorNone))
         HostSetCursor(MIME_CURSOR_ARROW);
     WinStaFreeThread(t);
     DeskThreadFreed(t);
