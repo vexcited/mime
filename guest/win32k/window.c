@@ -4346,9 +4346,24 @@ BOOL NTAPI NtUserChangeWindowMessageFilterEx(HWND hwnd, UINT msg, DWORD action, 
     return TRUE;
 }
 
+/* a window of the calling thread that answers HTTRANSPARENT lets the point through to what is under it. */
+static BOOLEAN transparent_to(WND *w, POINT at)
+{
+    if (w->Thread != W32GetThread())
+        return FALSE;
+    UserReference(&w->Header);
+    LONG hit = (LONG)MsgSend(w, WM_NCHITTEST, 0, MAKELPARAM(at.x, at.y));
+    BOOLEAN gone = w->Header.Destroyed;
+    UserDereference(&w->Header);
+    return gone || hit == HTTRANSPARENT;
+}
+
 /*
  * WindowFromPoint, which user32 26300 passes straight through: the point comes by value, both halves in the first
- * argument of a 64-bit caller. the answer is the deepest visible window there, in the units of the caller.
+ * argument of a 64-bit caller. the answer is the deepest visible window there, in the units of the caller. as
+ * xxxDCEWindowHitTestIndirect does, the windows of the calling thread are asked with WM_NCHITTEST, and one that answers
+ * HTTRANSPARENT passes the point to the sibling under it, or to its parent, top level windows included. measured on
+ * windows.
  */
 HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
 {
@@ -4358,18 +4373,30 @@ HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
 #else
     POINT pt = {(LONG)point, (LONG)second};
 #endif
-    UserEnterRead();
+    UserEnter();
     HWND found = nullptr;
     DpiPixelConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
     WND *desktop = WndDesktop();
-    for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
+    for (WND *c = desktop ? desktop->FirstChild : nullptr; c && !found; c = c->Next) {
         POINT at = pt;
         DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
         if (!(c->Style & WS_VISIBLE) || (c->Style & WS_MINIMIZE) || (c->ExStyle & WS_EX_TRANSPARENT) ||
             (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
             continue;
-        found = WndHandle(WndFromPoint(c, at));
-        break;
+        WND *w = WndFromPoint(c, at);
+        while (w && transparent_to(w, at)) {
+            if (w == c || w->Header.Destroyed) {
+                w = nullptr;
+                break;
+            }
+            WND *below = nullptr;
+            for (WND *s = w->Next; s && !below; s = s->Next)
+                if ((s->Style & WS_VISIBLE) && RectContains(&s->WindowRect, at.x, at.y))
+                    below = s;
+            w = below ? WndFromPoint(below, at) : w->Parent;
+        }
+        if (w)
+            found = WndHandle(w);
     }
     UserLeave();
     return found;
