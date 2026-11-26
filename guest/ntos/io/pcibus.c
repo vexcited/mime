@@ -153,14 +153,9 @@ static ULONG config_read(ULONG bus, ULONG devfn, ULONG offset)
     return value;
 }
 
-/*
- * the extended space is only in memory, at the window of the mcfg. the reference tables name a window the host does
- * not serve, so only the host's own firmware has one here, and only where no guest memory is.
- */
+/* the extended space is only in memory, at the window of the mcfg, and only where no guest memory is. */
 static void find_ecam(void)
 {
-    if (!HalBootInfo->firmware_phys)
-        return;
     for (ULONG i = 0; i < KiFirmwareAcpiCount(); i++) {
         ULONG signature, size;
         const UCHAR *table = KiFirmwareAcpi(i, &signature, &size);

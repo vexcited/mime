@@ -262,30 +262,9 @@ void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
     set(key, L"CPU Meta Data", REG_DWORD, &platform, sizeof(platform));
 }
 
-UCHAR KiProcessorSmbiosType(void)
-{
-    /* for the smbios the kernel builds when the firmware's own was not read: the family by the marketing name. */
-    PCSTR name = KiProcessorBrand();
-    if (strstr(name, "i3"))
-        return 0xCE;
-    if (strstr(name, "i5"))
-        return 0xCD;
-    if (strstr(name, "i9"))
-        return 0xCF;
-    if (strstr(name, "i7"))
-        return 0xC6;
-    return 0x6B; /* the zen family */
-}
-
 PCSTR KiProcessorSmbiosManufacturer(void)
 {
     return strcmp(g_vendor, "GenuineIntel") ? "Advanced Micro Devices, Inc." : "Intel(R) Corporation";
-}
-
-/* the signature and feature flags of cpuid leaf 1, as the smbios processor id holds them. */
-ULONG64 KiProcessorSmbiosId(void)
-{
-    return (ULONG64)g_leaf1[3] << 32 | g_leaf1[0];
 }
 
 /* the associativity the l2 and l3 fields of leaf 0x80000006 encode. */

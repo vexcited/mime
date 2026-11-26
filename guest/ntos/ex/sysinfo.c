@@ -6,7 +6,6 @@
 #ifdef __aarch64__
 #include "acpi_tables.h"
 #else
-#include "acpi_tables_x64.h"
 #include "../ps/classref.h"
 #include "sysref.inc"
 #endif
@@ -138,10 +137,12 @@ static NTSTATUS copy_info(PVOID dst, const void *src, ULONG size, ULONG length, 
 
 /* ------------------------------------------------------------------ smbios */
 
+#ifdef __aarch64__
 /*
  * the reference machine's smbios tables, as real firmware presents them: bios,
  * system, board, chassis and processor, with the strings programs read to learn
- * the machine. built in one buffer, served by SystemFirmwareTableInformation.
+ * the machine. built in one buffer, served by SystemFirmwareTableInformation. an
+ * arm64 host has no smbios of its own, an x64 one serves the one it has.
  */
 typedef struct SMB_BUILDER {
     PUCHAR Buffer;
@@ -388,6 +389,7 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
     smb_end(&b);
     return b.Size;
 }
+#endif
 
 /*
  * the raw firmware data of the acpi tables, under the RSDT provider: the
@@ -430,8 +432,24 @@ static void fit_madt(UCHAR *madt, ULONG size)
     madt[9] = (UCHAR)-sum;
 }
 
-/* the host's own firmware, when it could read it: the guest then sees the machine it runs on, not a reference. */
-static const MimeFirmware *runtime_firmware(VOID)
+#ifdef __aarch64__
+/* an arm64 host has no acpi tables of its own, so these are the reference machine's. */
+ULONG KiFirmwareAcpiCount(VOID)
+{
+    return ACPI_TABLE_COUNT;
+}
+
+const UCHAR *KiFirmwareAcpi(ULONG index, PULONG signature, PULONG size)
+{
+    if (index >= ACPI_TABLE_COUNT)
+        return nullptr;
+    *signature = acpi_tables[index].Signature;
+    *size = acpi_tables[index].Size;
+    return acpi_tables[index].Data;
+}
+#else
+/* the firmware of the machine mime runs on. the host read it and starts no machine without it. */
+static const MimeFirmware *host_firmware(VOID)
 {
     static const MimeFirmware *found;
     static BOOLEAN looked;
@@ -448,35 +466,20 @@ static const MimeFirmware *runtime_firmware(VOID)
 
 ULONG KiFirmwareAcpiCount(VOID)
 {
-    const MimeFirmware *firmware = runtime_firmware();
-    return firmware ? firmware->count : ACPI_TABLE_COUNT;
+    const MimeFirmware *firmware = host_firmware();
+    return firmware ? firmware->count : 0;
 }
 
 const UCHAR *KiFirmwareAcpi(ULONG index, PULONG signature, PULONG size)
 {
-    const MimeFirmware *firmware = runtime_firmware();
-    if (firmware) {
-        if (index >= firmware->count)
-            return nullptr;
-        *signature = firmware->tables[index].signature;
-        *size = firmware->tables[index].length;
-        return (const UCHAR *)firmware + firmware->tables[index].offset;
-    }
-    if (index >= ACPI_TABLE_COUNT)
+    const MimeFirmware *firmware = host_firmware();
+    if (!firmware || index >= firmware->count)
         return nullptr;
-    *signature = acpi_tables[index].Signature;
-    *size = acpi_tables[index].Size;
-    return acpi_tables[index].Data;
+    *signature = firmware->tables[index].signature;
+    *size = firmware->tables[index].length;
+    return (const UCHAR *)firmware + firmware->tables[index].offset;
 }
-
-const UCHAR *KiFirmwareSmbios(PULONG size)
-{
-    const MimeFirmware *firmware = runtime_firmware();
-    if (!firmware || !firmware->smbios_length)
-        return nullptr;
-    *size = firmware->smbios_length;
-    return (const UCHAR *)firmware + firmware->smbios_offset;
-}
+#endif
 
 /* what a provider refuses: the length that comes back is the header's. */
 static NTSTATUS firmware_refused(NTSTATUS status, ULONG header_size, PULONG returned)
@@ -553,11 +556,11 @@ static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, S
 }
 
 /*
- * SystemFirmwareTableInformation: the RSMB provider, the raw smbios data, and the ACPI one, the acpi tables. both are
- * the host's own when it could read them, else those of the reference machine. like wdm, a too small buffer gets the
- * required size in TableBufferLength. measured on windows 11 26300 on uefi firmware: no other provider is there, FIRM
- * and RSDT included, and asking one is STATUS_NOT_IMPLEMENTED, as is an action a provider does not know. a table acpi
- * does not have is STATUS_NOT_FOUND.
+ * SystemFirmwareTableInformation: the RSMB provider, the raw smbios data, and the ACPI one, the acpi tables. on x64
+ * both are the host's own, on arm64 those of the reference machine. like wdm, a too small buffer gets the required
+ * size in TableBufferLength. measured on windows 11 26300 on uefi firmware: no other provider is there, FIRM and RSDT
+ * included, and asking one is STATUS_NOT_IMPLEMENTED, as is an action a provider does not know. a table acpi does not
+ * have is STATUS_NOT_FOUND.
  */
 static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
 {
@@ -594,21 +597,16 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
     if (header.Action != SystemFirmwareTable_Get)
         return firmware_refused(STATUS_NOT_IMPLEMENTED, header_size, returned);
 
-    UCHAR stack_table[2048];
-    PUCHAR table = stack_table;
-    ULONG table_size = smb_build(table, sizeof(stack_table));
+#ifdef __aarch64__
+    UCHAR table[2048];
+    ULONG table_size = smb_build(table, sizeof(table));
     ULONG data_size = sizeof(RAW_SMBIOS_DATA) - 1 + table_size;
-    /* the machine's own smbios when the host read it, else the reference one byte for byte. */
-    ULONG raw_size = 0;
-    const UCHAR *raw = KiFirmwareSmbios(&raw_size);
-#ifdef MIME_SMBIOS_RAW
-    if (!raw) {
-        raw = MIME_SMBIOS_RAW;
-        raw_size = MIME_SMBIOS_RAW_SIZE;
-    }
+#else
+    const MimeFirmware *firmware = host_firmware();
+    if (!firmware || !firmware->smbios_length)
+        return firmware_refused(STATUS_NOT_FOUND, header_size, returned);
+    ULONG data_size = firmware->smbios_length;
 #endif
-    if (raw)
-        data_size = raw_size;
     ULONG need = header_size + data_size;
     if (header.TableBufferLength < data_size || length < need) {
         header.TableBufferLength = data_size;
@@ -622,17 +620,17 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
         return STATUS_INSUFFICIENT_RESOURCES;
     header.TableBufferLength = data_size;
     memcpy(out, &header, header_size);
-    if (raw) {
-        memcpy(out + header_size, raw, data_size);
-    } else {
-        RAW_SMBIOS_DATA *built = (RAW_SMBIOS_DATA *)(out + header_size);
-        built->Used20CallingMethod = 1;
-        built->SMBIOSMajorVersion = 3;
-        built->SMBIOSMinorVersion = 4;
-        built->DmiRevision = 0;
-        built->Length = table_size;
-        memcpy(built->SMBIOSTableData, table, table_size);
-    }
+#ifdef __aarch64__
+    RAW_SMBIOS_DATA *built = (RAW_SMBIOS_DATA *)(out + header_size);
+    built->Used20CallingMethod = 1;
+    built->SMBIOSMajorVersion = 3;
+    built->SMBIOSMinorVersion = 4;
+    built->DmiRevision = 0;
+    built->Length = table_size;
+    memcpy(built->SMBIOSTableData, table, table_size);
+#else
+    memcpy(out + header_size, (const UCHAR *)firmware + firmware->smbios_offset, data_size);
+#endif
     status = copy_info(info, out, need, length, returned);
     ExFreePool(out);
     return status;
