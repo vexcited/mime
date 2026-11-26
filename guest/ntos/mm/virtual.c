@@ -31,7 +31,7 @@ void MiSetKuserPage(ULONG64 pa)
     g_kuser_page = pa;
 }
 
-/* the page of the hypervisor every process sees read only, see MIME_HYPERVISOR_SHARED_PAGE. 0 without one. */
+/* the page of the counter every process sees read only, see MIME_HYPERVISOR_SHARED_PAGE. 0 without one. */
 static ULONG64 g_hypervisor_page;
 
 void MiSetHypervisorSharedPage(ULONG64 pa)

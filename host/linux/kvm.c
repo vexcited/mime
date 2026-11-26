@@ -10,6 +10,7 @@
 #include "../camera/camera.h"
 #include "../gpu/gpu.h"
 #include "../identity.h"
+#include "../microcode.h"
 
 #include <errno.h>
 #include <sched.h>
@@ -60,7 +61,7 @@ enum {
 static int g_vcpu_mmap_size;
 static struct kvm_cpuid2 *g_cpuid;
 static uint32_t g_cpuid_room;
-static uint32_t g_kvm_features;
+static bool g_intel;
 static volatile bool g_dump_requested;
 static volatile bool g_profiling;
 static void profile_sample(MimeVcpu *vcpu);
@@ -174,104 +175,6 @@ bool mime_kvm_set_slot(MimeVm *vm, uint32_t slot, uint64_t ipa, uint64_t size, v
     return set_slot(vm, slot, ipa, size, host, readonly);
 }
 
-/*
- * exposes KVM's Hyper-V interface with Microsoft's vendor and version, root-partition privileges for partition
- * creation and CPU management, and root-only hardware features. suppresses KVM-specific CPUID leaves.
- */
-static uint32_t add_hyperv_leaves(MimeVm *vm, struct kvm_cpuid_entry2 *out, uint32_t room)
-{
-    (void)vm;
-    /* the reference machine's own answers, leaf for leaf: max leaf 5, the microsoft vendor, Hv#1, build 26300,
-       and the feature words it reports. */
-    const struct { uint32_t function, eax, ebx, ecx, edx; } leaves[] = {
-        {0x40000000, 0x40000005, 0x7263694D, 0x666F736F, 0x76482074},
-        {0x40000001, 0x31237648, 0x00000000, 0x00000000, 0x00000000},
-        {0x40000002, 0x00003839, 0x000A0000, 0x00000000, 0x00000000},
-        {0x40000003, 0x00000AFF, 0x00000030, 0x00000000, 0x00000108},
-        {0x40000004, 0x00000028, 0x00001FFF, 0x00000000, 0x00000000},
-        {0x40000005, 0xFFFFFFFF, 0x00000040, 0x00000000, 0x00000000},
-        /* beside microsoft's leaves the reference keeps kvm's own a block higher: KVMKVMKVM and its feature word. */
-        {0x40000100, 0x40000101, 0x4B4D564B, 0x564B4D56, 0x0000004D},
-        {0x40000101, g_kvm_features, 0x00000000, 0x00000000, 0x00000000},
-    };
-    uint32_t n = 0;
-    for (uint32_t i = 0; i < sizeof(leaves) / sizeof(leaves[0]) && n < room; i++, n++) {
-        out[n].function = leaves[i].function;
-        out[n].index = 0;
-        out[n].flags = 0;
-        out[n].eax = leaves[i].eax;
-        out[n].ebx = leaves[i].ebx;
-        out[n].ecx = leaves[i].ecx;
-        out[n].edx = leaves[i].edx;
-    }
-    return n;
-}
-
-/*
- * the guest reports the reference machine's processor instead of the host's: its vendor, family, model, stepping
- * and brand string. every feature bit stays the host's, since the guest runs the host's instructions, except the
- * avx512 bits, which the reference model does not have.
- */
-static void spoof_model(struct kvm_cpuid2 *cpuid)
-{
-    const MimeHardwareProfile *profile = mime_hardware_profile();
-    if (!profile || !profile->cpu_vendor || strlen(profile->cpu_vendor) != 12)
-        return;
-    for (uint32_t i = 0; i < cpuid->nent; i++) {
-        struct kvm_cpuid_entry2 *e = &cpuid->entries[i];
-        switch (e->function) {
-        case 0:
-            /* the processor vendor of leaf 0 runs through ebx, edx and ecx, unlike a hypervisor's. */
-            memcpy(&e->ebx, profile->cpu_vendor, 4);
-            memcpy(&e->edx, profile->cpu_vendor + 4, 4);
-            memcpy(&e->ecx, profile->cpu_vendor + 8, 4);
-            break;
-        case 1:
-            /* the low model nibble sits in bits 4-7, the high one in the extended model bits 16-19. a family at or
-               above 0xF is signalled by the base family nibble of 0xF with the rest in the extended family bits, the
-               way a real zen or k10 reports it; the extended model travels with it. */
-            e->eax = (((profile->cpu_family < 0xF ? profile->cpu_family : 0xF) & 0xF) << 8) |
-                     ((profile->cpu_model & 0xF) << 4) | profile->cpu_stepping;
-            if (profile->cpu_family >= 0xF)
-                e->eax |= (profile->cpu_family - 0xF) << 20;
-            if (profile->cpu_family == 6 || profile->cpu_family >= 0xF)
-                e->eax |= (profile->cpu_model >> 4) << 16;
-            break;
-        case 7:
-            if (e->index == 0) {
-                /* avx512 f, dq, ifma, pf, er, cd, bw, vl */
-                e->ebx &= ~((1u << 16) | (1u << 17) | (1u << 21) | (1u << 26) | (1u << 27) | (1u << 28) |
-                            (1u << 30) | (1u << 31));
-                e->ecx &= ~((1u << 1) | (1u << 6) | (1u << 11) | (1u << 12) | (1u << 14) | (1u << 16) |
-                            (1u << 17) | (1u << 21));
-                /* avx512 4vnniw, 4fmaps, vp2intersect, fp16. the speculation controls in bits 26, 27 and 31 stay. */
-                e->edx &= ~((1u << 2) | (1u << 3) | (1u << 8) | (1u << 23));
-            }
-            break;
-        case 0x80000002:
-        case 0x80000003:
-        case 0x80000004: {
-            /* an amd brand fills its 47 characters with spaces before the nul, an intel one ends at its text. */
-            char brand[48] = {};
-            const size_t length = MIME_MIN(strlen(profile->cpu_name), sizeof(brand) - 1);
-            if (!strcmp(profile->cpu_vendor, "AuthenticAMD"))
-                memset(brand, ' ', sizeof(brand) - 1);
-            memcpy(brand, profile->cpu_name, length);
-            const size_t at = (size_t)(e->function - 0x80000002) * 16;
-            memcpy(&e->eax, brand + at, 4);
-            memcpy(&e->ebx, brand + at + 4, 4);
-            memcpy(&e->ecx, brand + at + 8, 4);
-            memcpy(&e->edx, brand + at + 12, 4);
-            break;
-        }
-        default:
-            break;
-        }
-    }
-}
-
-/* a physical machine has no hypervisor: its leaf 1 bit 31 is clear and the 0x40000000 leaves are absent. */
-
 static void set_leaf(uint32_t function, uint32_t index, bool indexed, uint32_t eax, uint32_t ebx, uint32_t ecx,
                      uint32_t edx)
 {
@@ -289,89 +192,25 @@ static void set_leaf(uint32_t function, uint32_t index, bool indexed, uint32_t e
                                    .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx};
 }
 
-/*
- * the reference machine is a qemu guest of this same processor, and qemu rewrites what kvm supports before the guest
- * reads it: one package of single-thread cores, one for each processor, its own cache model in place of the host's,
- * and only the feature bits it has a name for. measured leaf by leaf on the reference with 4 and with 16 processors;
- * the bits it merely passes through stay kvm's.
- */
-static void reference_leaves(uint32_t count)
+static void host_cpuid(uint32_t function, uint32_t index, uint32_t out[4])
 {
-    const uint32_t width = count > 1 ? 32 - (uint32_t)__builtin_clz(count - 1) : 0; /* bits of an apic id */
+    __asm__ volatile("cpuid" : "=a"(out[0]), "=b"(out[1]), "=c"(out[2]), "=d"(out[3]) : "a"(function), "c"(index));
+}
+
+/* kvm leaves the brand string to the machine when it has the leaves; without them the guest would read zeros. */
+static void brand_leaves(void)
+{
     uint32_t host[4];
-    for (uint32_t i = 0; i < g_cpuid->nent; i++) {
-        struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
-        switch (e->function) {
-        case 1:
-            e->ebx = (e->ebx & 0x0000FFFF) | (count > 1 ? count << 16 : 0);
-            e->edx = count > 1 ? e->edx | (1u << 28) : e->edx & ~(1u << 28); /* HTT */
-            break;
-        case 7:
-            if (e->index == 0)
-                e->edx &= ~(1u << 29); /* the capabilities msr is intel's */
-            break;
-        case 0x80000001:
-            e->ebx = 0;             /* no package type or brand id */
-            e->ecx &= ~(1u << 22);  /* no topology extensions, though the leaves that bit announces answer */
-            break;
-        case 0x80000005: /* 64 KiB 2-way L1 caches and 255-entry TLBs */
-            e->eax = e->ebx = 0x01FF01FF;
-            e->ecx = e->edx = 0x40020140;
-            break;
-        case 0x80000006: /* 512 KiB 16-way L2, 16 MiB 16-way L3 */
-            e->eax = 0;
-            e->ebx = 0x42004200;
-            e->ecx = 0x02008140;
-            e->edx = 0x00808140;
-            break;
-        case 0x80000007:
-            /* the host's mca overflow recovery and succor, and no invariant tsc. */
-            __asm__ volatile("cpuid" : "=a"(host[0]), "=b"(host[1]), "=c"(host[2]), "=d"(host[3])
-                             : "a"(0x80000007), "c"(0));
-            e->ebx = host[1] & 3;
-            e->edx = 0;
-            break;
-        case 0x80000008:
-            /* clzero, xsaveerptr, wbnoinvd, ibpb, ibrs, stibp, stibp always on, ssbd, virt ssbd, no ssb, psfd. */
-            e->ebx &= 0x1702D205;
-            e->ecx = width << 12 | (count - 1);
-            break;
-        case 0x8000000A:
-            e->ebx = 0x10; /* address space ids */
-            break;
-        case 0x80000019: /* the 1 GiB TLB, the performance leaf and the encryption leaf are blank */
-        case 0x8000001A:
-        case 0x8000001F:
-            e->eax = e->ebx = e->ecx = e->edx = 0;
-            break;
-        case 0x80000021:
-            e->eax &= 0x78000167;
-            e->ebx = 0;
-            e->ecx &= 0x6;
-            break;
-        default:
-            break;
-        }
+    for (uint32_t leaf = 0x80000002; leaf <= 0x80000004; leaf++) {
+        host_cpuid(leaf, 0, host);
+        set_leaf(leaf, 0, false, host[0], host[1], host[2], host[3]);
     }
-    set_leaf(5, 0, false, 0, 0, 3, 0); /* monitor extensions without monitor */
-    /* a thread level of one thread, a core level of every processor. edx is each processor's own id. */
-    set_leaf(0xB, 0, true, 0, 1, 0x100, 0);
-    set_leaf(0xB, 1, true, width, count, 0x201, 0);
-    set_leaf(0xB, 2, true, 0, 0, 2, 0);
-    /* L1 data, L1 code and L2 each for one core, L3 for the package. */
-    set_leaf(0x8000001D, 0, true, 0x121, 0x0040003F, 0x1FF, 1);
-    set_leaf(0x8000001D, 1, true, 0x122, 0x0040003F, 0x1FF, 1);
-    set_leaf(0x8000001D, 2, true, 0x043, 0x03C0003F, 0x1FF, 0);
-    set_leaf(0x8000001D, 3, true, 0x163 | (count - 1) << 14, 0x03C0003F, 0x3FFF, 2);
-    set_leaf(0x8000001D, 4, true, 0, 0, 0, 0);
-    set_leaf(0x8000001E, 0, false, 0, 0, 0, 0); /* the apic id and the core id, set for each processor */
 }
 
 /*
- * exposes the host CPU features KVM supports, including x2APIC and TSC deadline timers. advertises Hyper-V when
- * supported, otherwise no hypervisor.
+ * the host's processor as kvm runs it for a guest: its vendor, family, model, brand and the features kvm passes. the
+ * leaves kvm empties or fills its own way answer as the host answers them, and no hypervisor is told.
  */
-
 static bool load_cpuid(MimeVm *vm)
 {
     int n = 256;
@@ -391,47 +230,69 @@ static bool load_cpuid(MimeVm *vm)
     g_cpuid_room = (uint32_t)n;
     const MimeHardwareProfile *model = mime_hardware_profile();
     bool intel = !model || !model->cpu_vendor || !strcmp(model->cpu_vendor, "GenuineIntel");
-    /* the reference machine runs under a hypervisor too: hiding it makes vmmcall execute instead of raising the
-       illegal instruction windows raises, which is a tell of its own. */
+    g_intel = intel;
+    uint32_t host[4];
     uint32_t out = 0;
     for (uint32_t i = 0; i < g_cpuid->nent; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
-        if (e->function == 0x40000001)
-            g_kvm_features = e->eax;
+        /* kvm's own leaves go, and with them the hypervisor bit of leaf 1: the host shows neither. */
         if (e->function >= 0x40000000 && e->function < 0x40010000)
             continue;
         /* an intel processor has no amd-only leaves, bits or svm. */
         if (intel && (e->function == 0x8000000A || (e->function >= 0x8000001E && e->function <= 0x80000022)))
             continue;
-        if (intel && e->function == 0x80000000)
-            e->eax = 0x80000008;
-        if (e->function == 1)
-            e->ecx |= (1u << 21) | (1u << 24); /* x2apic, TSC deadline. */
+        if (intel && e->function == 0x80000000) {
+            host_cpuid(0x80000000, 0, host);
+            e->eax = host[0];
+        }
         if (e->function == 1) {
-            /* a multi-thread package keeps HTT set and MONITOR present, as the host processor reports them; kvm's
-               supported set clears both, which leaves an impossible single-thread multi-core cpu otherwise. */
-            e->edx |= (1u << 28); /* HTT */
-            e->ecx &= ~(1u << 3); /* MONITOR is clear on the reference */
+            host_cpuid(1, 0, host);
+            e->ecx &= ~(1u << 31);
+            e->ecx |= (1u << 21) | (1u << 24); /* x2apic, TSC deadline. */
+            /* a multi-thread package keeps HTT and MONITOR as the host processor reports them; kvm's supported set
+               clears both, which leaves an impossible single-thread multi-core cpu otherwise. */
+            e->edx |= host[3] & (1u << 28);
+            e->ecx |= host[2] & (1u << 3);
+        }
+        if (e->function == 7) {
+            /* kvm emulates features of its own, umip on this processor: the guest has none the host lacks. */
+            host_cpuid(7, e->index, host);
+            e->ebx &= host[1];
+            e->ecx &= host[2];
+            e->edx &= host[3];
+        }
+        if (intel && (e->function == 5 || e->function == 0x15 || e->function == 0x16)) {
+            /* the monitor, TSC and frequency leaves, which a real intel processor answers and kvm zeros here. */
+            host_cpuid(e->function, 0, host);
+            e->eax = host[0];
+            e->ebx = host[1];
+            e->ecx = host[2];
+            e->edx = host[3];
         }
         if (intel && e->function == 0x80000001) {
-            e->ecx &= ~((1u << 6) | (1u << 7) | (1u << 8) | (1u << 22)); /* sse4a, misalignsse, 3dnowprefetch, topology extensions. */
+            e->ecx &= ~((1u << 6) | (1u << 7) | (1u << 22)); /* sse4a, misalignsse, topology extensions. */
             e->edx &= ~((1u << 22) | (1u << 30) | (1u << 31));                      /* mmxext, 3dnowext, 3dnow. */
+        }
+        if (intel && e->function == 0x80000008) {
+            /* kvm adds the guest's address width and amd's names of the speculation controls, which no intel
+               processor reports. */
+            host_cpuid(0x80000008, 0, host);
+            e->eax &= 0xFF00FFFF;
+            e->ebx &= host[1];
         }
         g_cpuid->entries[out++] = *e;
     }
     g_cpuid->nent = out;
-    if (!intel)
-        reference_leaves(vm->vcpu_count);
-    out = g_cpuid->nent;
-    uint32_t hv = add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out);
-    for (uint32_t i = 0; i < out; i++) {
-        struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
-        if (e->function == 1)
-            e->ecx = (hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31));
-    }
-    g_cpuid->nent = out + hv;
-    spoof_model(g_cpuid);
-    mime_info("processor: %s hypervisor", hv ? "microsoft's" : "hidden");
+    /* kvm leaves the topology leaf empty. the host's levels stand: the apic id of a guest processor is its index,
+       and the thread and core widths of the host split those the way they split the host's own. */
+    if (intel)
+        for (uint32_t level = 0; level < 4; level++) {
+            host_cpuid(0xB, level, host);
+            set_leaf(0xB, level, true, host[0], host[1], host[2], 0);
+            if (!(host[1] & 0xFFFF))
+                break;
+        }
+    brand_leaves();
     return true;
 }
 
@@ -731,10 +592,21 @@ static bool setup_vcpu(MimeVcpu *vcpu)
     }
 
     /* the guest's TSC runs with the host's, so both read the same clock. */
-    struct kvm_msrs *msrs = calloc(1, sizeof(*msrs) + sizeof(struct kvm_msr_entry));
+    struct kvm_msrs *msrs = calloc(1, sizeof(*msrs) + 3 * sizeof(struct kvm_msr_entry));
     msrs->nmsrs = 1;
     msrs->entries[0].index = MSR_IA32_TSC;
     msrs->entries[0].data = __rdtsc();
+    if (g_intel) {
+        /* vmx enabled outside smx and locked, as a real intel machine has it: windows reads it back as
+           virtualization firmware enabled. */
+        msrs->entries[msrs->nmsrs].index = 0x3A;
+        msrs->entries[msrs->nmsrs++].data = 5;
+    }
+    if (mime_host_microcode()) {
+        /* the microcode revision is the host's own. */
+        msrs->entries[msrs->nmsrs].index = 0x8B;
+        msrs->entries[msrs->nmsrs++].data = mime_host_microcode();
+    }
     ioctl(vcpu->fd, KVM_SET_MSRS, msrs);
     free(msrs);
     return true;
@@ -879,16 +751,6 @@ static void *vcpu_main(void *arg)
             break;
         case KVM_EXIT_HLT:
             vcpu->exits_halt++;
-            break;
-        case KVM_EXIT_HYPERV:
-            if (vcpu->run->hyperv.type == KVM_EXIT_HYPERV_HCALL) {
-                uint64_t regs[18] = {};
-                regs[0] = vcpu->run->hyperv.u.hcall.input;
-                regs[1] = vcpu->run->hyperv.u.hcall.params[0];
-                regs[2] = vcpu->run->hyperv.u.hcall.params[1];
-                mime_hv_dispatch(vcpu, true, regs);
-                vcpu->run->hyperv.u.hcall.result = regs[0];
-            }
             break;
         case KVM_EXIT_MMIO:
             if (mime_pci_mmio(vm, vcpu->run->mmio.phys_addr, vcpu->run->mmio.len, vcpu->run->mmio.is_write,

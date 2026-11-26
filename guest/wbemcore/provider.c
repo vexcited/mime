@@ -312,7 +312,13 @@ static BOOL computer_enum(WNs *ns, WObj *c, WEmit emit, void *context)
     put_uint(o, L"NumberOfProcessors", 1);
     put_uint(o, L"NumberOfLogicalProcessors", si.dwNumberOfProcessors);
     put_uint(o, L"TotalPhysicalMemory", memory.ullTotalPhys);
+#if defined(__x86_64__) || defined(__i386__)
+    unsigned int leaf1[4];
+    __asm__ volatile("cpuid" : "=a"(leaf1[0]), "=b"(leaf1[1]), "=c"(leaf1[2]), "=d"(leaf1[3]) : "a"(1), "c"(0));
+    put_bool(o, L"HypervisorPresent", (leaf1[2] >> 31) != 0);
+#else
     put_bool(o, L"HypervisorPresent", TRUE);
+#endif
     put_uint(o, L"PCSystemType", 1);
     put_uint(o, L"AdminPasswordStatus", 3);
     put_uint(o, L"KeyboardPasswordStatus", 3);

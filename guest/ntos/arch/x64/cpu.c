@@ -254,10 +254,12 @@ void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
 {
     ULONG feature_set = 0x3D193FFF; /* the bits windows sets for a current processor */
     set(key, L"FeatureSet", REG_DWORD, &feature_set, sizeof(feature_set));
-    ULONG64 update = 0;
+    /* the revision the processor answers, which the host gives the guest as its own, and the host's platform bits. */
+    ULONG update = (ULONG)(KiReadMsr(0x8B) >> 32);
     set(key, L"Update Revision", REG_BINARY, &update, sizeof(update));
-    ULONG platform = 0;
-    set(key, L"Platform ID", REG_DWORD, &platform, sizeof(platform));
+    ULONG platform = HalBootInfo->cpu_platform;
+    set(key, L"Platform Specific Field 1", REG_DWORD, &platform, sizeof(platform));
+    set(key, L"CPU Meta Data", REG_DWORD, &platform, sizeof(platform));
 }
 
 UCHAR KiProcessorSmbiosType(void)

@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#define MIME_ABI_VERSION 7
+#define MIME_ABI_VERSION 8
 
 /* guest physical layout. */
 #ifdef __x86_64__
@@ -419,6 +419,7 @@ typedef struct MimeBootInfo {
      */
     char cpu_name[64];          /* brand string of the reference processor. */
     uint32_t cpu_mhz;           /* its nominal peak frequency, 0 when unknown. */
+    uint32_t cpu_platform;      /* the platform bits of an intel host processor as windows records them, else 0. */
     uint64_t cpu_midr;          /* its MIDR_EL1, 0 to report the hardware one. */
     char system_manufacturer[64];
     char system_product[64];

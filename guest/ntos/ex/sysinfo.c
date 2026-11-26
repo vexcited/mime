@@ -1606,7 +1606,7 @@ static BOOLEAN query_small_block(ULONG klass, PVOID info, ULONG length, PULONG r
         b.Longs[0] = KiKernelVaShadowFlags();
         size = 4;
         break;
-    case 197: /* SystemHypervisorSharedPageInformation: where the page is, nowhere without the hypervisor. */
+    case 197: /* SystemHypervisorSharedPageInformation: where the page of the counter is. */
         b.Quads[0] = MmHypervisorSharedPageVa();
         size = 8;
         break;

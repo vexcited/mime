@@ -39,10 +39,11 @@ static UCHAR qpc_shift(void)
 }
 
 /*
- * under microsoft's hypervisor windows runs its performance counter at 10 MHz, one count per 100 ns, and scales the
- * tsc to it through the page the hypervisor shares: the high half of the tsc times a multiplier, plus a bias. the
- * kernel and user mode read it the same way, so they agree to the count. FALSE without that hypervisor, where the
- * counter is the timer shifted down.
+ * windows runs its performance counter at 10 MHz, one count per 100 ns, and scales the tsc to it through a page it
+ * shares with user mode, the one a hypervisor fills when there is one: the high half of the tsc times a multiplier,
+ * plus a bias. the kernel and user mode read it the same way, so they agree to the count. the page is the only
+ * scaling RtlQueryPerformanceCounter of 26300 knows: without it ntdll adds the bias to the tsc and shifts nothing.
+ * FALSE for a timer of 10 MHz or less, where the counter is the timer itself.
  */
 static MIME_HYPERVISOR_SHARED_PAGE *g_hypervisor_page;
 
@@ -69,8 +70,7 @@ static ULONG64 hns_per_count(ULONG64 f)
 static void initialize_hypervisor_page(void)
 {
 #ifndef __aarch64__
-    ULONG leaves[1][4];
-    if (!KiQueryHypervisorLeaves(leaves, 1) || HalBootInfo->timer_frequency <= 10000000)
+    if (HalBootInfo->timer_frequency <= 10000000)
         return;
     ULONG64 pa = MmAllocatePage();
     if (!pa)

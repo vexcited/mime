@@ -977,7 +977,7 @@ typedef struct MIME_HYPERVISOR_SHARED_PAGE {
 #define MIME_QPC_BYPASS_USE_HV_PAGE 0x02
 #define MIME_QPC_BYPASS_USE_RDTSCP 0x80
 void MiSetHypervisorSharedPage(ULONG64 pa); /* the page every new address space maps read only. */
-ULONG_PTR MmHypervisorSharedPageVa(void);   /* where user mode sees it, 0 without microsoft's hypervisor. */
+ULONG_PTR MmHypervisorSharedPageVa(void);   /* where user mode sees it, 0 when the kernel made none. */
 
 ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level);
 BOOLEAN MiMapPage(ULONG64 *root, ULONG_PTR va, ULONG64 pa, ULONG64 attrs);

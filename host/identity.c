@@ -47,6 +47,8 @@ static void make_machine_uuid(char *out, size_t size)
 
 #ifdef __linux__
 
+#include <cpuid.h>
+
 /* a line of the kernel's view of the firmware, which every user can read; empty when the firmware has none. */
 static void dmi_text(const char *name, char *out, size_t size)
 {
@@ -63,19 +65,17 @@ static void dmi_text(const char *name, char *out, size_t size)
 }
 
 /*
- * the machine mime runs on: its maker, model and firmware, as the dmi table names them. the reference laptop's
- * strings stand in for what the firmware leaves blank, and the processor is the reference one.
+ * the machine mime runs on: its processor, as cpuid names it, and its maker, model and firmware, as the dmi table
+ * names them. a guest runs the host's instructions, so any other processor would contradict what it executes. the
+ * reference laptop's strings stand in for what the firmware leaves blank.
  */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
-    static char manufacturer[64], product[64], family[64], sku[64], bios_vendor[64], bios_version[64], bios_date[16];
+    static char vendor[13], name[49], manufacturer[64], product[64], family[64], sku[64], bios_vendor[64],
+        bios_version[64], bios_date[16];
     static MimeHardwareProfile profile = {
-        .cpu_name = "AMD Ryzen 7 7435HS",
-        .cpu_vendor = "AuthenticAMD",
-        .cpu_mhz = 4100,
-        .cpu_family = 0x19,
-        .cpu_model = 0x44,
-        .cpu_stepping = 1,
+        .cpu_name = name,
+        .cpu_vendor = vendor,
         .manufacturer = manufacturer,
         .product = product,
         .family = family,
@@ -84,8 +84,34 @@ const MimeHardwareProfile *mime_hardware_profile(void)
         .bios_version = bios_version,
         .bios_date = bios_date,
     };
-    if (manufacturer[0])
+    if (vendor[0])
         return &profile;
+    unsigned int r[4] = {};
+    __get_cpuid(0, &r[0], &r[1], &r[2], &r[3]);
+    memcpy(vendor, &r[1], 4);
+    memcpy(vendor + 4, &r[3], 4);
+    memcpy(vendor + 8, &r[2], 4);
+    __get_cpuid(1, &r[0], &r[1], &r[2], &r[3]);
+    const uint32_t base = (r[0] >> 8) & 0xF;
+    profile.cpu_family = base == 0xF ? base + ((r[0] >> 20) & 0xFF) : base;
+    profile.cpu_model = ((r[0] >> 4) & 0xF) | (base == 6 || base == 0xF ? ((r[0] >> 16) & 0xF) << 4 : 0);
+    profile.cpu_stepping = r[0] & 0xF;
+    char brand[49] = {};
+    for (unsigned int i = 0; i < 3; i++)
+        if (__get_cpuid(0x80000002 + i, &r[0], &r[1], &r[2], &r[3]))
+            memcpy(brand + i * 16, r, 16);
+    size_t from = strspn(brand, " "), length = strlen(brand + from);
+    while (length && brand[from + length - 1] == ' ')
+        length--;
+    memcpy(name, brand + from, length);
+    FILE *f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "r");
+    unsigned long khz = 0;
+    if (f) {
+        if (fscanf(f, "%lu", &khz) != 1)
+            khz = 0;
+        fclose(f);
+    }
+    profile.cpu_mhz = (uint32_t)(khz / 1000);
     static const struct {
         const char *file;
         char *out;

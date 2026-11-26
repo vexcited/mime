@@ -5,6 +5,7 @@
 #include "../gpu/gpu.h"
 #include "../identity.h"
 #include "../locale.h"
+#include "../microcode.h"
 #include "../firmware.h"
 #include "../rom.h"
 
@@ -64,6 +65,7 @@ static void fill_identity(MimeVm *vm)
     const MimeHardwareProfile *hw = mime_hardware_profile();
     mime_strlcpy(boot->cpu_name, hw->cpu_name, sizeof(boot->cpu_name));
     boot->cpu_mhz = hw->cpu_mhz;
+    boot->cpu_platform = mime_host_platform();
     boot->cpu_midr = hw->cpu_midr;
     mime_strlcpy(boot->system_manufacturer, hw->manufacturer, sizeof(boot->system_manufacturer));
     mime_strlcpy(boot->system_product, hw->product, sizeof(boot->system_product));
