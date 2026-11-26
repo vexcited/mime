@@ -443,13 +443,18 @@ BOOL W32AttachInput(W32THREAD *a, W32THREAD *b, BOOL attach)
 {
     W32THREAD *ra = W32InputOwner(a), *rb = W32InputOwner(b);
     if (attach) {
-        if (ra != rb)
+        if (ra != rb) {
+            CursorAttached(ra, rb);
             move_sharers(ra, rb);
+            CursorUpdateImage();
+        }
         return TRUE;
     }
     if (ra != rb)
         return FALSE;
-    detach(a->InputShare ? a : b);
+    W32THREAD *gone = a->InputShare ? a : b;
+    detach(gone);
+    CursorDetached(gone, a);
     return TRUE;
 }
 
@@ -474,8 +479,12 @@ static void leave_group(W32THREAD *t)
 {
     InputKeysChanged();
     if (t->InputShare) {
+        W32THREAD *queue = t->InputShare;
         t->InputShare = nullptr;
         g_attached--;
+        /* its count leaves the sum of the queue. */
+        if (queue == InputCursorQueue)
+            CursorUpdateImage();
         return;
     }
     W32THREAD *heir = nullptr;
@@ -487,6 +496,7 @@ static void leave_group(W32THREAD *t)
     if (!heir)
         return;
     memcpy(heir->KeyState, t->KeyState, sizeof(t->KeyState));
+    CursorHeir(t, heir);
     move_sharers(t, heir);
     /* move_sharers counted t as a sharer it is not. */
     t->InputShare = nullptr;
@@ -577,10 +587,8 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     }
     InputKeysChanged();
     HostReleaseCursor(thread);
+    InputCursorThreadGone(t);
     CursorFreeThread(t);
-    /* otherwise a thread that hid the pointer leaves it hidden for the next program. */
-    if (InputCursorHidden && (t->CursorShowCount < 0 || t->CursorNone))
-        HostSetCursor(MIME_CURSOR_ARROW);
     WinStaFreeThread(t);
     DeskThreadFreed(t);
     RemoveEntryList(&t->Links);

@@ -279,6 +279,49 @@ BOOL NTAPI NtUserTrackMouseEvent(TRACKMOUSEEVENT *user_track)
 
 /* ------------------------------------------------------------------ the input thread */
 
+/*
+ * the queue the mouse goes to has the cursor of the screen, as UpdateGlobalCursorOwner of win32kbase keeps it at each
+ * mouse input. the thread of the host window is told once, when the mouse comes to it: the window under the pointer
+ * may be a child of another thread, which is told when the message is made for it.
+ */
+static W32THREAD *g_mouse_thread;
+
+void InputCursorTarget(W32THREAD *t)
+{
+    W32THREAD *q = t ? W32InputOwner(t) : nullptr;
+    if (!q || q == InputCursorQueue)
+        return;
+    InputCursorQueue = q;
+    CursorUpdateImage();
+}
+
+static void mouse_goes_to(W32THREAD *t)
+{
+    if (t == g_mouse_thread && InputCursorQueue)
+        return;
+    g_mouse_thread = t;
+    InputCursorTarget(t);
+}
+
+static void queue_mouse_refresh(void);
+
+/*
+ * a thread ends. when it was the last of the queue that has the cursor, no queue has it and a mouse move that the
+ * hardware did not make finds the next one, as zzzDestroyQueue does.
+ */
+void InputCursorThreadGone(W32THREAD *t)
+{
+    if (g_mouse_thread == t)
+        g_mouse_thread = nullptr;
+    if (InputCursorQueue != t)
+        return;
+    for (W32THREAD *x = W32NextThread(nullptr); x; x = W32NextThread(x))
+        if (x != t && !x->Destroying && x->InputShare == t)
+            return;
+    InputCursorQueue = nullptr;
+    queue_mouse_refresh();
+}
+
 static W32THREAD *mouse_target_thread(const MimeInputEvent *ev)
 {
     if (InputForeground && InputForeground->Thread && InputForeground->Thread->Capture)
@@ -547,6 +590,7 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     case MIME_INPUT_MOUSE_WHEEL:
         InputCursorPos = (POINT){ev->x, ev->y};
         t = mouse_target_thread(ev);
+        mouse_goes_to(t);
         break;
     case MIME_INPUT_KEY_DOWN:
     case MIME_INPUT_KEY_UP:
@@ -616,6 +660,7 @@ static void queue_mouse_refresh(void)
     W32THREAD *t = mouse_target_thread(&ev);
     if (!t)
         return;
+    mouse_goes_to(t);
     if (!IsListEmpty(&t->Input)) {
         QUEUED_MESSAGE *last = CONTAINING_RECORD(t->Input.Blink, QUEUED_MESSAGE, Links);
         if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id) {
@@ -1114,6 +1159,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             }
         }
         if (!w->Header.Destroyed && !capture) {
+            InputCursorTarget(w->Thread);
             track_mouse(of_another_thread(t, w) ? w->Thread : t, w, hit);
             if (ev->type != MIME_INPUT_MOUSE_UP) {
                 BOOLEAN held = HostHoldCursor();

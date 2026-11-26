@@ -1940,26 +1940,46 @@ BOOL NTAPI NtUserDrawIconEx(HDC hdc, int x, int y, HICON icon, int cx, int cy, U
 
 /* ------------------------------------------------------------------ the cursor of a thread */
 
-void CursorSet(HCURSOR cursor)
+W32THREAD *InputCursorQueue;
+static HCURSOR g_screen_cursor;
+
+/* the cursor of a queue, kept by the thread that holds its input. a queue starts with the wait cursor, as on windows. */
+static HCURSOR queue_cursor(W32THREAD *q)
 {
-    W32THREAD *t = W32GetThread();
+    if (!q->CursorMade) {
+        q->CursorMade = TRUE;
+        q->Cursor = CursorSystem(32514 /* IDC_WAIT */);
+    }
+    return q->Cursor;
+}
+
+static void queue_set_cursor(W32THREAD *q, HCURSOR cursor)
+{
+    CURICON *c = cursor ? lookup(cursor) : nullptr, *old = q->CursorLock;
+    q->CursorMade = TRUE;
+    q->Cursor = cursor;
+    q->CursorLock = c;
+    if (c)
+        c->Header.RefCount++;
+    if (old)
+        release(old);
+}
+
+/* the count of ShowCursor of a queue: the sum of the counts of its threads. */
+static LONG queue_level(W32THREAD *q)
+{
+    LONG level = 0;
+    for (W32THREAD *x = W32NextThread(nullptr); x; x = W32NextThread(x))
+        if (!x->Destroying && W32InputOwner(x) == q)
+            level += x->CursorShowCount;
+    return level;
+}
+
+static void show(HCURSOR cursor)
+{
     CURICON *c = cursor ? lookup(cursor) : nullptr;
-    if (t) {
-        CURICON *old = t->CursorLock;
-        t->Cursor = cursor;
-        t->CursorNone = !cursor;
-        t->CursorLock = c;
-        if (c)
-            c->Header.RefCount++;
-        if (old)
-            release(old);
-    }
+    g_screen_cursor = cursor;
     if (!cursor) {
-        HostSetCursor(MIME_CURSOR_HIDDEN);
-        return;
-    }
-    /* a thread that hid the cursor keeps it hidden, whatever another thread showed since. */
-    if (t && t->CursorShowCount < 0) {
         HostSetCursor(MIME_CURSOR_HIDDEN);
         return;
     }
@@ -1974,11 +1994,110 @@ void CursorSet(HCURSOR cursor)
     CaptureCursorShown(f && !c->System && f->Image ? cursor : nullptr);
 }
 
+/*
+ * zzzUpdateCursorImage of win32kfull 26300: the screen has the cursor of the queue the mouse goes to, and none while
+ * the count of that queue is below zero. the foreground queue hides it whatever the mouse is over when its program
+ * registered the mouse for raw input with RIDEV_CAPTUREMOUSE. with no queue yet nothing changes.
+ */
+void CursorUpdateImage(void)
+{
+    W32THREAD *fg = InputForeground ? InputForeground->Thread : nullptr;
+    HCURSOR cursor = nullptr;
+    if (fg && RawInputCapturesMouse(fg->Process) && queue_level(W32InputOwner(fg)) < 0)
+        cursor = nullptr;
+    else if (!InputCursorQueue)
+        return;
+    else if (queue_level(InputCursorQueue) >= 0)
+        cursor = queue_cursor(InputCursorQueue);
+    show(cursor);
+}
+
+/* what GetCursorInfo tells: the cursor on the screen, whoever asks, and whether one shows. */
+BOOL CursorOnScreen(HCURSOR *cursor)
+{
+    *cursor = g_screen_cursor;
+    return g_screen_cursor != nullptr;
+}
+
+/*
+ * zzzSetCursor: the cursor is the queue's, and reaches the screen when the mouse goes to that queue. the first queue
+ * that sets one takes the screen while no queue has it.
+ */
+void CursorSet(HCURSOR cursor)
+{
+    W32THREAD *t = W32GetThread();
+    if (!t)
+        return;
+    W32THREAD *q = W32InputOwner(t);
+    if (queue_cursor(q) == cursor)
+        return;
+    queue_set_cursor(q, cursor);
+    if (!InputCursorQueue)
+        InputCursorQueue = q;
+    if (q == InputCursorQueue)
+        CursorUpdateImage();
+}
+
+/* zzzShowCursor: the thread keeps its count, the answer is the queue's, and the screen follows at 0 and at -1. */
+int CursorShow(W32THREAD *t, BOOL show_it)
+{
+    W32THREAD *q = W32InputOwner(t);
+    t->CursorShowCount += show_it ? 1 : -1;
+    LONG level = queue_level(q);
+    if (q == InputCursorQueue && level == (show_it ? 0 : -1))
+        CursorUpdateImage();
+    return level;
+}
+
+/*
+ * a queue joins another, before its threads move: the cursor of the one joined stays, unless the mouse goes to the
+ * one that joins, whose cursor it takes. measured on windows.
+ */
+void CursorAttached(W32THREAD *from, W32THREAD *to)
+{
+    if (InputCursorQueue != from)
+        return;
+    queue_set_cursor(to, queue_cursor(from));
+    InputCursorQueue = to;
+}
+
+/*
+ * a thread left the queue it shared and has a new one, with the wait cursor. windows gives the new queue to the
+ * thread the call names first: when that one holds the input here and the other was all it shared with, the two
+ * cursors change places.
+ */
+void CursorDetached(W32THREAD *gone, W32THREAD *asked)
+{
+    queue_set_cursor(gone, nullptr);
+    gone->CursorMade = FALSE;
+    if (gone != asked) {
+        BOOLEAN shared = FALSE;
+        for (W32THREAD *x = W32NextThread(nullptr); x && !shared; x = W32NextThread(x))
+            shared = x->InputShare == asked;
+        if (!shared) {
+            queue_set_cursor(gone, queue_cursor(asked));
+            queue_set_cursor(asked, nullptr);
+            asked->CursorMade = FALSE;
+            if (InputCursorQueue == asked)
+                InputCursorQueue = gone;
+        }
+    }
+    CursorUpdateImage();
+}
+
+/* the thread that held the input of a queue ends and another of the queue holds it from now on. */
+void CursorHeir(W32THREAD *from, W32THREAD *heir)
+{
+    queue_set_cursor(heir, queue_cursor(from));
+    if (InputCursorQueue == from)
+        InputCursorQueue = heir;
+}
+
 HCURSOR NTAPI NtUserGetCursor(void)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    HCURSOR h = t ? t->Cursor : nullptr;
+    HCURSOR h = t ? queue_cursor(W32InputOwner(t)) : nullptr;
     UserLeave();
     return h;
 }
@@ -1991,7 +2110,7 @@ HCURSOR NTAPI NtUserSetCursor(HCURSOR cursor)
     if (cursor && !lookup(cursor)) {
         W32SetLastError(ERROR_INVALID_CURSOR_HANDLE);
     } else {
-        old = t ? t->Cursor : nullptr;
+        old = t ? queue_cursor(W32InputOwner(t)) : nullptr;
         CursorSet(cursor);
     }
     UserLeave();

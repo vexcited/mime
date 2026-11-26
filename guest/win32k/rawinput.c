@@ -92,6 +92,18 @@ static BOOLEAN captures_mouse(const W32RAW *raw)
     return FALSE;
 }
 
+/* the mouse is registered with RIDEV_CAPTUREMOUSE, the raw input mode zzzUpdateCursorImage looks at. */
+BOOLEAN RawInputCapturesMouse(const W32PROCESS *p)
+{
+    const W32RAW *raw = p ? p->Raw : nullptr;
+    for (ULONG i = 0; raw && i < raw->Count; i++) {
+        const RAWINPUTDEVICE *d = &raw->Devices[i];
+        if (d->usUsagePage == 1 && d->usUsage == 2 && (d->dwFlags & RIDEV_CAPTUREMOUSE))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 void InputUpdatePointer(void)
 {
     ULONG mode = MIME_POINTER_FREE, window = 0;

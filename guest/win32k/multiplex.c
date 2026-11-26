@@ -30,16 +30,6 @@ static ULONG queue_status(W32THREAD *t, ULONG flags, BOOL clear)
 #define QS_VALID 0x5DFF
 
 /* the service genuine user32 calls for GetQueueStatus; the readonly one leaves the change bits as they are. */
-static int show_cursor(W32THREAD *t, BOOL show)
-{
-    t->CursorShowCount += show ? 1 : -1;
-    if (t->CursorShowCount < 0)
-        HostSetCursor(MIME_CURSOR_HIDDEN);
-    else
-        CursorSet(t->Cursor);
-    return t->CursorShowCount;
-}
-
 DWORD NTAPI NtUserGetQueueStatus(UINT flags)
 {
     if (flags & ~QS_VALID) {
@@ -150,7 +140,7 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
         break;
     case MIME_ONEPARAM_SHOWCURSOR:
         if (t)
-            r = (ULONG_PTR)(LONG_PTR)show_cursor(t, param != 0);
+            r = (ULONG_PTR)(LONG_PTR)CursorShow(t, param != 0);
         break;
     case MIME_ONEPARAM_SETPROCESSDPIAWARENESS:
         /* a call is refused once the awareness was chosen, what the manifest says is forced. */
@@ -307,7 +297,7 @@ int NTAPI NtUserShowCursor(BOOL show)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
-    int count = t ? show_cursor(t, show != 0) : (show ? 0 : -1);
+    int count = t ? CursorShow(t, show != 0) : (show ? 0 : -1);
     UserLeave();
     return count;
 }
@@ -327,8 +317,7 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
     }
     UserEnter();
     W32THREAD *t = W32GetThread();
-    ci.flags = t && t->CursorShowCount >= 0 ? CURSOR_SHOWING : 0;
-    ci.hCursor = t ? t->Cursor : nullptr;
+    ci.flags = CursorOnScreen(&ci.hCursor) ? CURSOR_SHOWING : 0;
     ci.ptScreenPos = InputCursorPos;
     DpiPixelConvert(&ci.ptScreenPos, DPI_PHYSICAL, DpiThreadAwareness(t));
     UserLeave();

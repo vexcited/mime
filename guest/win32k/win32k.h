@@ -722,7 +722,7 @@ typedef struct W32THREAD {
     HCURSOR Cursor;
     struct CURICON *CursorLock; /* the object of Cursor, which stays alive while the thread shows it. */
     LONG CursorShowCount;
-    BOOLEAN CursorNone; /* the thread set no cursor, which hides it. */
+    BOOLEAN CursorMade; /* Cursor was set: before, the queue of a thread has the wait cursor of the system. */
     struct W32DESKTOP *Desktop;  /* referenced, winsta.c. */
     HANDLE DesktopHandle;
     HWND TsfSink;          /* text services window for host input methods, ime.c. */
@@ -1511,6 +1511,17 @@ void DisplayProcessExited(HANDLE pid);
 void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);
+/* the thread that holds the input of the queue the mouse goes to. its cursor is the one on the screen. */
+extern W32THREAD *InputCursorQueue;
+void CursorUpdateImage(void);
+int CursorShow(W32THREAD *t, BOOL show);
+BOOL CursorOnScreen(HCURSOR *cursor);
+void CursorAttached(W32THREAD *from, W32THREAD *to);
+void CursorDetached(W32THREAD *gone, W32THREAD *asked);
+void CursorHeir(W32THREAD *from, W32THREAD *heir);
+void InputCursorTarget(W32THREAD *t);
+void InputCursorThreadGone(W32THREAD *t);
+BOOLEAN RawInputCapturesMouse(const struct W32PROCESS *p);
 HCURSOR CursorSystem(ULONG idc);
 HICON CursorSystemIcon(ULONG idi);
 HICON CursorSmallCopy(HICON icon, BOOLEAN window);
