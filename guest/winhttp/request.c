@@ -475,10 +475,9 @@ static BOOL VerbIs(WH_OBJECT *request, LPCWSTR verb)
 }
 
 /*
- * webio, measured in scratch/winhttp-headers: the verbs http.sys knows go out in capitals, the request headers it
- * knows in HTTP_HEADER_ID order with their usual names, then the others in the order they were added, then the
- * Content-Length and the Host webio adds itself. a verb that begins with POST or PUT, or BITS_POST, always says its
- * length, 0 included.
+ * webio: the verbs http.sys knows go out in capitals, the request headers it knows in HTTP_HEADER_ID order with their
+ * usual names, then the others in the order they were added, then the Content-Length and the Host webio adds itself. a
+ * verb that begins with POST or PUT, or BITS_POST, always says its length, 0 included.
  */
 static const char *const KnownVerbs[] = {"OPTIONS", "GET",      "HEAD",      "POST",  "PUT",  "DELETE",
                                          "TRACE",   "CONNECT",  "TRACK",     "MOVE",  "COPY", "PROPFIND",

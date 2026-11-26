@@ -1,7 +1,7 @@
 /*
  * mfplat's 2D buffers: CMFDX9SurfaceBuffer over a direct3d 9 surface from MFCreateDXSurfaceBuffer, and
  * CMF2DMemMediaBuffer over memory from MFCreate2DMediaBuffer. Both share CMF2DMediaBuffer, whose lock rules, lengths
- * and copies were read from mfplat of windows 11 and measured with evrbuf.exe and evr2d.exe.
+ * and copies were read from mfplat of windows 11 and measured on windows.
  */
 #include "mfplat_private.h"
 #include <mime/win32/evr.h>

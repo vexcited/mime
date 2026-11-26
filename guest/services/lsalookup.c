@@ -1,7 +1,7 @@
 /*
  * the lookup interface of the lsa over ncalrpc:[lsapolicylookup], which genuine sechost's LsaLookupOpenLocalPolicy,
- * LsaLookupGetDomainInfo and LsaLookupClose speak; windows serves it from lsass, mime from the manager, like the rest of
- * what lsass does here, see lsa.c. answers measured with lsaq.c of scratch/dlls/shellexec in the research repository.
+ * LsaLookupGetDomainInfo and LsaLookupClose speak; windows serves it from lsass, mime from the manager, like the rest
+ * of what lsass does here, see lsa.c. answers measured on windows.
  */
 #include "services.h"
 #include <mime/win32/rpc.h>

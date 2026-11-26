@@ -229,9 +229,9 @@ DWMAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS *margins)
 }
 
 /*
- * measured on windows 11 26100 with blurargs.c of scratch/pr17 in the research repository: a region with fEnable false
- * is refused even when blur is on, and a region gdi does not know is ERROR_BAD_FORMAT. win32k reads whether blur is on
- * from DwmBlurBehind and copies the region of DwmBlurRegion as it is set, see FrameCompose.
+ * measured on windows 11 26100: a region with fEnable false is refused even when blur is on, and a region gdi does not
+ * know is ERROR_BAD_FORMAT. win32k reads whether blur is on from DwmBlurBehind and copies the region of DwmBlurRegion
+ * as it is set, see FrameCompose.
  */
 DWMAPI DwmEnableBlurBehindWindow(HWND hwnd, const DWM_BLURBEHIND *blur)
 {

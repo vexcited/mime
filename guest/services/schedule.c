@@ -5,8 +5,7 @@
  * a task is kept as windows keeps it: its xml, in the form taskxml.c writes, in a file of System32\Tasks named by its
  * path, and the keys of the task cache, the tree of its path with the id and the descriptor, the task's own key with
  * its path, its uri and DynamicInfo, which holds the time it was registered, the time it last ran and the result. what
- * the caller may do and what it reads back were measured with tsch.c and tfull.c of scratch/tasks in the research
- * repository, on windows 11 26300.
+ * the caller may do and what it reads back were measured, on windows 11 26300.
  */
 #include "services.h"
 #include <mime/win32/rpc.h>

@@ -1,7 +1,7 @@
 /*
  * the video sample of MFCreateVideoSampleFromSurface, evr's CMFVideoSample: evr's own sample class, not mfplat's, with
  * IMFDesiredSample and IMFTrackedSample, and the buffer that only carries the surface. Read from evr.dll of windows 11
- * and measured with evrsamp.exe.
+ * and measured on windows.
  */
 #include "evr_private.h"
 

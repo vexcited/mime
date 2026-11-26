@@ -135,11 +135,10 @@ static DWORD write_info(HKEY key, const BYTE *hashes, DWORD count)
 
 /*
  * the key ProtectedRoots crypt32 asks for at its first look at the root store of a user. its descriptor and its value
- * are those of windows 11 26300, read with label.ps1 and pr.ps1 of scratch/steam/keysvc in the research repository:
- * crypt32 checks that only the service may change the key, that the label is high, and that the value is a header of
- * 24 bytes followed by the sha1 hash of each protected root. the key is made by the caller, whose hive it is, owned by
- * it and read only to it. the label is set by the service
- * itself, as a caller of medium integrity may not label anything high.
+ * are those of windows 11 26300: crypt32 checks that only the service may change the key, that the label is high, and
+ * that the value is a header of 24 bytes followed by the sha1 hash of each protected root. the key is made by the
+ * caller, whose hive it is, owned by it and read only to it. the label is set by the service itself, as a caller of
+ * medium integrity may not label anything high.
  */
 static DWORD init_roots(handle_t h)
 {

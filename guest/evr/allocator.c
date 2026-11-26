@@ -1,7 +1,7 @@
 /*
  * the sample allocator of MFCreateVideoSampleAllocator, evr's CMFVideoSampleAllocator: samples in system memory, or on
  * surfaces made through the video processor service of a direct3d 9 device manager. Read from evr.dll of windows 11
- * and measured with evralloc.exe.
+ * and measured on windows.
  */
 #include "evr_private.h"
 

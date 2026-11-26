@@ -602,8 +602,8 @@ error_status_t WINAPI BthServ_EirRemoveRecord_s(BTHSERV_HANDLE client, long *res
 /*
  * the gatt interface of a low energy device, which Microsoft.Bluetooth.Service.dll serves in the process of bthserv on
  * windows 11. a call names the device by the token its driver gave for a handle of it, and mime has no low energy
- * device, so no token is known. measured with gattc.c of scratch/g2/bth on a machine without a radio: every
- * call succeeds and gives HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE) as its result, with every output zero.
+ * device, so no token is known. measured on a machine without a radio: every call succeeds and gives
+ * HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE) as its result, with every output zero.
  */
 #define UNKNOWN_TOKEN ((long)0x80070006)
 

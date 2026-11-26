@@ -166,9 +166,9 @@ static void combo_paint_item(HWND hwnd, HDC dc, HTHEME theme, const COMBOBOXINFO
 }
 
 /*
- * the box as the control of the common controls 6 lays it out, measured on windows 11 with v6.c of the research
- * repository: the button is two pixels narrower than a scroll bar and one pixel inside the right, top and bottom
- * edges, where the control of user32 keeps it inside its sunken edge.
+ * the box as the control of the common controls 6 lays it out, measured on windows 11: the button is two pixels
+ * narrower than a scroll bar and one pixel inside the right, top and bottom edges, where the control of user32 keeps it
+ * inside its sunken edge.
  */
 static BOOL combo_info(HWND hwnd, COMBOBOXINFO *info)
 {

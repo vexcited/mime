@@ -1,6 +1,6 @@
 /*
  * the COM side of evr.dll: its class objects and the functions that make the mixer and the presenter through
- * CoCreateInstance, as evr.dll of windows 11 does. Read from evr.dll and measured with evrobj.exe and evrfn.exe.
+ * CoCreateInstance, as evr.dll of windows 11 does. Read from evr.dll and measured on windows.
  */
 #include "evr_private.h"
 

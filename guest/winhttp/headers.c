@@ -457,7 +457,7 @@ static BOOL RequestLine(WH_OBJECT *request, WH_TEXT *text)
 /* raw headers: a status or request line, then the headers, NUL or CRLF separated. */
 /*
  * webio keeps the response headers http.sys knows in an array by HTTP_HEADER_ID, so the raw headers list them in that
- * order with their usual names, measured in scratch/winhttp-headers. the others follow as the server sent them.
+ * order with their usual names. the others follow as the server sent them.
  */
 static const char *const ResponseOrder[] = {
     "Cache-Control",    "Connection",       "Date",          "Keep-Alive",    "Pragma",

@@ -208,9 +208,9 @@ static PVOID logon_profile(BOOL network, PCWSTR machine, DWORD *length)
 }
 
 /*
- * the checks come in the order of windows 11, measured with lk.c of scratch/g2/lsa of the research repository:
- * provider, type and name leave the outputs alone, the token is cleared before the virtual provider and the profile pair
- * are refused, the other outputs before the logon itself. new credentials never look at the account.
+ * the checks come in the order of windows 11: provider, type and name leave the outputs alone, the token is cleared
+ * before the virtual provider and the profile pair are refused, the other outputs before the logon itself. new
+ * credentials never look at the account.
  */
 BOOL WINAPI LogonUserExExW(PCWSTR user, PCWSTR domain, PCWSTR password, DWORD type, DWORD provider, PVOID groups,
                            PHANDLE token, PSID *sid, PVOID *profile, PDWORD profile_length, LOGON_QUOTA_LIMITS *quota)

@@ -137,7 +137,7 @@ static void uploaded(RUN *run, BFILE *file, UINT64 acked)
         NotifyModification(job);
     }
     job->upload_acked = acked;
-    /* the total shows with the first bytes the server took, measured in scratch/bits/upload. */
+    /* the total shows with the first bytes the server took. */
     if (file->total == BG_SIZE_UNKNOWN)
         file->total = file->upload_size;
     if (job->state == BG_JOB_STATE_CONNECTING)

@@ -1,7 +1,7 @@
 /*
- * the xml of a scheduled task as the schedule service of windows 11 26300 reads and writes it, measured with tsch.c and
- * tfull.c of scratch/tasks in the research repository: what it refuses and where it says the error is, and the form it
- * keeps a task in, with its elements in an order of its own, the defaults it always writes and the ones it drops.
+ * the xml of a scheduled task as the schedule service of windows 11 26300 reads and writes it: what it refuses and
+ * where it says the error is, and the form it keeps a task in, with its elements in an order of its own, the defaults
+ * it always writes and the ones it drops.
  */
 #include "services.h"
 #include "taskxml.h"

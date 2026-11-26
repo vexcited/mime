@@ -1,11 +1,10 @@
 /*
  * the credentials of the credential manager, which CredWrite, CredRead, CredEnumerate and CredDelete of sechost reach
- * through the policy interface of lsarpc.c. an account has three sets: the one of its session, kept in memory, the local
- * one in AppData\Local\Microsoft\Credentials and the enterprise one in AppData\Roaming\Microsoft\Credentials. a file is
- * a head of three numbers and a blob of the data protection service that only the security authority opens, over the
- * credential laid out as windows does, and is named as windows names it. the answers and the files were read with cw.c
- * and the decoders of scratch/g2/lsa in the research repository. what is not known of windows: a number of the
- * head that is 8 in most files.
+ * through the policy interface of lsarpc.c. an account has three sets: the one of its session, kept in memory, the
+ * local one in AppData\Local\Microsoft\Credentials and the enterprise one in AppData\Roaming\Microsoft\Credentials. a
+ * file is a head of three numbers and a blob of the data protection service that only the security authority opens,
+ * over the credential laid out as windows does, and is named as windows names it, as read on windows 11. what is not
+ * known of windows: a number of the head that is 8 in most files.
  */
 #include "services.h"
 #include <mime/win32/rpc.h>

@@ -4,8 +4,8 @@
 enum { STOCK_IMAGERES, STOCK_SHELL32, STOCK_MYDOCS, STOCK_IMAGESP1 };
 
 /*
- * where windows 11 26100 keeps each stock icon of SHGetStockIconInfo: the module of System32 and the resource id,
- * by SHSTOCKICONID. measured with siid.exe of scratch/assets2/probe in the research repository.
+ * where windows 11 26100 keeps each stock icon of SHGetStockIconInfo: the module of System32 and the resource id, by
+ * SHSTOCKICONID. measured on windows.
  */
 static const struct {
     unsigned char Module;

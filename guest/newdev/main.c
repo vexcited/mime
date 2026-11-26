@@ -14,11 +14,11 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 }
 
 /*
- * measured on windows 11 26100 with dm.c of scratch/g2/bth, the same in both widths: any flag is
- * ERROR_INVALID_FLAGS and leaves the reboot answer alone, which is then cleared, a set that is none is
- * ERROR_INVALID_HANDLE and a device that is not of the set ERROR_INVALID_PARAMETER. what follows is documented and
- * not measured, as it needs a device to remove: a caller that is no administrator gets ERROR_ACCESS_DENIED, a 32-bit
- * one on a 64-bit system ERROR_IN_WOW64, and the device goes through the class installer's DIF_REMOVE.
+ * measured on windows 11 26100, the same in both widths: any flag is ERROR_INVALID_FLAGS and leaves the reboot answer
+ * alone, which is then cleared, a set that is none is ERROR_INVALID_HANDLE and a device that is not of the set
+ * ERROR_INVALID_PARAMETER. what follows is documented and not measured, as it needs a device to remove: a caller that
+ * is no administrator gets ERROR_ACCESS_DENIED, a 32-bit one on a 64-bit system ERROR_IN_WOW64, and the device goes
+ * through the class installer's DIF_REMOVE.
  */
 BOOL WINAPI DiUninstallDevice(HWND parent, HDEVINFO set, PSP_DEVINFO_DATA device, DWORD flags, PBOOL reboot)
 {
@@ -76,11 +76,11 @@ static BOOL device_with_id(PCWSTR id)
 }
 
 /*
- * measured on windows 11 26100 with api.c of scratch/pr17 in the research repository: a 32-bit caller gets
- * ERROR_IN_WOW64 before anything is looked at, a flag that is none ERROR_INVALID_FLAGS, a missing or empty id or no inf
- * ERROR_INVALID_PARAMETER, all three leaving the reboot answer alone, and an inf that is not there ERROR_FILE_NOT_FOUND.
- * no present device with the id is ERROR_NO_SUCH_DEVINST with the reboot answer cleared. a device that has the id gets
- * no driver: no driver package installs here, which windows reports as a driver no better than the current one.
+ * measured on windows 11 26100: a 32-bit caller gets ERROR_IN_WOW64 before anything is looked at, a flag that is none
+ * ERROR_INVALID_FLAGS, a missing or empty id or no inf ERROR_INVALID_PARAMETER, all three leaving the reboot answer
+ * alone, and an inf that is not there ERROR_FILE_NOT_FOUND. no present device with the id is ERROR_NO_SUCH_DEVINST with
+ * the reboot answer cleared. a device that has the id gets no driver: no driver package installs here, which windows
+ * reports as a driver no better than the current one.
  */
 BOOL WINAPI UpdateDriverForPlugAndPlayDevicesW(HWND parent, PCWSTR id, PCWSTR inf, DWORD flags, PBOOL reboot)
 {

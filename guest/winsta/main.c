@@ -219,9 +219,9 @@ WINSTA BOOLEAN WINAPI WinStationQueryInformationW(HANDLE server, ULONG id, ULONG
 }
 
 /*
- * measured on windows 11 26100 with ws.c of scratch/g2/bth, in both widths: only capability 1 can be asked,
- * the redirection of the session's devices to a remote client, which a local session answers with 0 and a last error
- * of 0. any other gives ERROR_INVALID_PARAMETER and a zero.
+ * measured on windows 11 26100, in both widths: only capability 1 can be asked, the redirection of the session's
+ * devices to a remote client, which a local session answers with 0 and a last error of 0. any other gives
+ * ERROR_INVALID_PARAMETER and a zero.
  */
 WINSTA BOOLEAN WINAPI WinStationGetCurrentSessionCapabilities(ULONG capability, PULONG value)
 {

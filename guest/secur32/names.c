@@ -132,7 +132,7 @@ static DWORD user_name(EXTENDED_NAME_FORMAT format, PWSTR out, DWORD capacity, D
  * the buffer holds the name and its zero. a short buffer fails with ERROR_MORE_DATA and the size in characters with the
  * zero, and success returns the length without it. the format is the low word. the 0x10000 flag, which GetUserNameW of
  * advapi32 sets, asks for the account alone without its domain, counts the zero on success and fails short buffers with
- * ERROR_INSUFFICIENT_BUFFER. measured with un.c of scratch/g2/lsa of the research repository.
+ * ERROR_INSUFFICIENT_BUFFER. measured on windows.
  */
 SECURITYAPI BOOLEAN SEC_ENTRY GetUserNameExW(EXTENDED_NAME_FORMAT format, LPWSTR buffer, PULONG size)
 {

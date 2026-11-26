@@ -104,9 +104,9 @@ HANDLE SvcCreateWorldEvent(const WCHAR *name)
 
 /*
  * the event the local session manager of windows makes and sets once the sessions can be asked about, which
- * winscard.dll opens before it does anything. the descriptor is the one of windows 11 26100, read with tsr.c of
- * scratch/g2/bth: everyone and the app containers wait on it, the system sets it. mime has no session
- * manager process, its sessions are there from the start, so the service manager makes the event set.
+ * winscard.dll opens before it does anything. the descriptor is the one of windows 11 26100: everyone and the app
+ * containers wait on it, the system sets it. mime has no session manager process, its sessions are there from the
+ * start, so the service manager makes the event set.
  */
 void SvcCreateSessionReadyEvent(void)
 {

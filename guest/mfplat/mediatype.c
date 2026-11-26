@@ -283,8 +283,8 @@ static const MediaTypeVtbl FACE_VTBL = {
 };
 
 /*
- * measured on windows 11 with vtqi.exe and vtqi2.exe of scratch/dlls/evr: a plain type whose major type is video
- * answers IMFVideoMediaType too, with the same pointer every time but not its own, sharing its items and its count.
+ * measured on windows 11: a plain type whose major type is video answers IMFVideoMediaType too, with the same pointer
+ * every time but not its own, sharing its items and its count.
  */
 static HRESULT STDMETHODCALLTYPE type_query_interface(IMFAttributes *iface, REFIID riid, void **out)
 {

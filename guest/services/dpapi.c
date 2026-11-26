@@ -1,11 +1,10 @@
 /*
- * the data protection interface of the lsa over ncalrpc:[protected_storage], which dpapi.dll and mime's crypt32 speak for
- * CryptProtectData and CryptUnprotectData. the blob and the master key files have the layout of windows, read with
- * dpx.c and dpdec.py of scratch/g2/lsa in the research repository: aes 256 in cbc under a key made of the master
- * key, the salt and the entropy with sha 512, then a sha 512 hmac over the blob. a master key is 64 random bytes in a file
- * named by its id, the user's below AppData\Roaming\Microsoft\Protect\<sid>, the machine's below
- * System32\Microsoft\Protect\S-1-5-18 and the system account's in User below that, with the id of the current one in the
- * file Preferred.
+ * the data protection interface of the lsa over ncalrpc:[protected_storage], which dpapi.dll and mime's crypt32 speak
+ * for CryptProtectData and CryptUnprotectData. the blob and the master key files have the layout of windows: aes 256 in
+ * cbc under a key made of the master key, the salt and the entropy with sha 512, then a sha 512 hmac over the blob. a
+ * master key is 64 random bytes in a file named by its id, the user's below AppData\Roaming\Microsoft\Protect\<sid>,
+ * the machine's below System32\Microsoft\Protect\S-1-5-18 and the system account's in User below that, with the id of
+ * the current one in the file Preferred.
  */
 #include "services.h"
 #include <mime/win32/rpc.h>

@@ -555,10 +555,10 @@ static MIME_AFD_CONFIG *read_config(void)
 }
 
 /*
- * the record of a lease, measured on Windows 11 26100 with scratch/g2/net2/lease.exe: the address, its mask
- * and the server as they go on the wire, the seconds the lease lasts, the time it was taken in seconds since 1970, and
- * the seconds to its renewal and to its rebinding, half and seven eighths of it. the dns servers of the lease are a
- * count and a block of addresses. the bytes between are what Windows has for a leased ethernet adapter.
+ * the record of a lease, measured on Windows 11 26100: the address, its mask and the server as they go on the wire, the
+ * seconds the lease lasts, the time it was taken in seconds since 1970, and the seconds to its renewal and to its
+ * rebinding, half and seven eighths of it. the dns servers of the lease are a count and a block of addresses. the bytes
+ * between are what Windows has for a leased ethernet adapter.
  */
 typedef struct {
     UCHAR Address[4];

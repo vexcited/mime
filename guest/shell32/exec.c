@@ -547,7 +547,7 @@ static BOOL execute(SHELLEXECUTEINFOW *info)
 
 /*
  * as windows.storage does: a wrong size is access denied in hInstApp and the last error, and the last error is 0 after
- * a success, whatever the calls on the way left there. measured with shex32.c of scratch/dlls/shellexec.
+ * a success, whatever the calls on the way left there. measured on windows.
  */
 SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
 {

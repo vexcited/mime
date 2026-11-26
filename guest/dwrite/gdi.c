@@ -143,10 +143,9 @@ static HRESULT WINAPI interop_face_from_hdc(IDWriteGdiInterop *This, HDC dc, IDW
 }
 
 /*
- * IDWriteBitmapRenderTarget: a memory dc with a 32-bit bitmap that glyph runs are drawn into, measured with brt.c of
- * scratch/steam/vgui in the research repository. the bitmap starts black, its first row is the top one. cleartype
- * blends each color with its own coverage and leaves the fourth byte alone, grayscale blends all four bytes. the
- * black box is the one of the run, not cut to the bitmap.
+ * IDWriteBitmapRenderTarget: a memory dc with a 32-bit bitmap that glyph runs are drawn into. the bitmap starts black,
+ * its first row is the top one. cleartype blends each color with its own coverage and leaves the fourth byte alone,
+ * grayscale blends all four bytes. the black box is the one of the run, not cut to the bitmap.
  */
 typedef struct DwTarget {
     const IDWriteBitmapRenderTarget2Vtbl *lpVtbl;

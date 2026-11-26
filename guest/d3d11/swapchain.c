@@ -195,10 +195,9 @@ static void send_metadata(D3dSwapChain *sc)
 }
 
 /*
- * a swap chain of the bitblt model copies into the redirection surface of its window on windows, which the dwm
- * composes by its alpha when the window extended its frame or asked for blur behind, as gdi's pixels, measured with
- * blur.c of scratch/pr17 in the research repository. the image then goes premultiplied over what win32k composes
- * under the window.
+ * a swap chain of the bitblt model copies into the redirection surface of its window on windows, which the dwm composes
+ * by its alpha when the window extended its frame or asked for blur behind, as gdi's pixels. the image then goes
+ * premultiplied over what win32k composes under the window.
  */
 static BOOL composed_by_alpha(const D3dSwapChain *sc)
 {

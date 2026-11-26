@@ -1,9 +1,8 @@
 /*
- * the static control of the common controls 6, for what it does that the one of user32 does not. measured on windows
- * 11 26300 with statalpha.c of the research repository: a 32 bit bitmap with a pixel that is not transparent is kept
- * as a copy with its colors multiplied by its alpha, which STM_GETIMAGE then returns, and the control paints it by
- * filling its client area with the brush of WM_CTLCOLORSTATIC and blending the copy over it. everything else is the
- * control of user32, which this one calls.
+ * the static control of the common controls 6, for what it does that the one of user32 does not. measured on windows 11
+ * 26300: a 32 bit bitmap with a pixel that is not transparent is kept as a copy with its colors multiplied by its
+ * alpha, which STM_GETIMAGE then returns, and the control paints it by filling its client area with the brush of
+ * WM_CTLCOLORSTATIC and blending the copy over it. everything else is the control of user32, which this one calls.
  */
 #include "comctl32_private.h"
 

@@ -705,7 +705,7 @@ static DWORD CALLBACK query_worker(PVOID param)
     return 0;
 }
 
-/* measured on windows 11 26100 with api.c and wct.c of scratch/pr17 in the research repository, in both widths. */
+/* measured on windows 11 26100, in both widths. */
 ADVAPI HANDLE WINAPI OpenThreadWaitChainSession(DWORD flags, PWAITCHAINCALLBACK callback)
 {
     if ((flags & ~WCT_ASYNC_OPEN_FLAG) || ((flags & WCT_ASYNC_OPEN_FLAG) && !callback)) {

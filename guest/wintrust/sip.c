@@ -2,8 +2,7 @@
 
 /*
  * the subject interface package of portable executables, which crypt32's CryptSIPLoad finds through the registry under
- * Cryptography\OID\EncodingType 0\CryptSIPDll* and calls here. measured on windows 11 26300 with sipprobe.c of the
- * research repository.
+ * Cryptography\OID\EncodingType 0\CryptSIPDll* and calls here. measured on windows 11 26300.
  */
 typedef struct {
     DWORD cbSize;

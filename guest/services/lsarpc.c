@@ -1,9 +1,8 @@
 /*
  * the policy interface of the lsa over ncalrpc:[LSARPC_ENDPOINT], which sechost speaks for the credentials of the
- * credential manager, served by cred.c, and genuine advapi32 for the names, the
- * numbers and the descriptions of privileges; windows serves it from lsass, mime from the manager, see lsalookup.c.
- * answers measured with lsa.c of scratch/steam/sec in the research repository. a procedure that is not served says
- * which one a program called.
+ * credential manager, served by cred.c, and genuine advapi32 for the names, the numbers and the descriptions of
+ * privileges; windows serves it from lsass, mime from the manager, see lsalookup.c. answers measured on windows. a
+ * procedure that is not served says which one a program called.
  */
 #include "services.h"
 #include <mime/win32/rpc.h>

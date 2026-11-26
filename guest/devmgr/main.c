@@ -223,7 +223,7 @@ static void show_selected(HWND dialog, PAGE *page)
 
 /*
  * the page takes the client area of its parent: the list takes what is added, the group below it keeps its height at
- * the bottom, everything gets wider and the button stays at the right. measured on windows 11 with dm.c.
+ * the bottom, everything gets wider and the button stays at the right. measured on windows 11.
  */
 static void layout(HWND dialog)
 {

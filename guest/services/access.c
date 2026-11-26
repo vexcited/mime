@@ -404,12 +404,12 @@ static void add_group(GROUP_LIST *list, PVOID sid, DWORD attributes)
 }
 
 /*
- * the token of a service's process, as the logon of windows 11 builds it, measured with scratch/procsd/self.c of the
- * research repository. LogonUserExExW of ScLogonService appends what ScBuildServiceTokenGroups gives when the process
- * hosts services with sids: those sids, the starting one enabled and the others to be enabled by svchost, a new logon
- * sid, LOCAL, and the write restricted sid for a restricted service. without them the logon sid follows LOCAL. the
- * default dacl is ScAdjustTokenDefaultDacl's when the starting service has a sid, the logon's otherwise. a restricted
- * service gets a write restricted token, ScMakeServiceTokenWriteRestricted.
+ * the token of a service's process, as the logon of windows 11 builds it. LogonUserExExW of ScLogonService appends what
+ * ScBuildServiceTokenGroups gives when the process hosts services with sids: those sids, the starting one enabled and
+ * the others to be enabled by svchost, a new logon sid, LOCAL, and the write restricted sid for a restricted service.
+ * without them the logon sid follows LOCAL. the default dacl is ScAdjustTokenDefaultDacl's when the starting service
+ * has a sid, the logon's otherwise. a restricted service gets a write restricted token,
+ * ScMakeServiceTokenWriteRestricted.
  */
 static HANDLE build_service_token(const SERVICE_LOGON *l, BYTE *logon, DWORD *error)
 {
