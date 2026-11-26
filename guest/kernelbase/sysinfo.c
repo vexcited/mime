@@ -801,13 +801,9 @@ static UINT firmware_tables(ULONG action, DWORD provider, DWORD id, PVOID buffer
             memcpy(out, request->TableBuffer, request->TableBufferLength);
         result = request->TableBufferLength;
     } else if (status == STATUS_BUFFER_TOO_SMALL) {
-        /* a NULL buffer asks for the size, a small one is an error. */
-        if (size) {
-            result = 0;
-            KbSetError(ERROR_INSUFFICIENT_BUFFER);
-        } else {
-            result = request->TableBufferLength;
-        }
+        /* measured on windows 11: no buffer and a small one both get the size and ERROR_INSUFFICIENT_BUFFER. */
+        result = request->TableBufferLength;
+        KbSetError(ERROR_INSUFFICIENT_BUFFER);
     } else {
         KbSetStatus(status);
     }
