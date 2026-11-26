@@ -199,9 +199,9 @@ static ULONG_PTR pack_margins(int a, int b)
 
 /*
  * win32k composes the frame under the client area the margins take and the caption buttons over it, reading the
- * margins from two properties, left and right then top and bottom.
+ * margins from two properties, left and right then top and bottom. no value is no property.
  */
-static void store_margins(HWND hwnd, LPCWSTR name, ULONG_PTR value)
+static void store_prop(HWND hwnd, LPCWSTR name, ULONG_PTR value)
 {
     if (value)
         SetPropW(hwnd, name, (HANDLE)value);
@@ -223,15 +223,29 @@ DWMAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS *margins)
 {
     if (!is_top_level(hwnd) || !margins)
         return E_INVALIDARG;
-    store_margins(hwnd, L"DwmMarginsLR", pack_margins(margins->cxLeftWidth, margins->cxRightWidth));
-    store_margins(hwnd, L"DwmMarginsTB", pack_margins(margins->cyTopHeight, margins->cyBottomHeight));
+    store_prop(hwnd, L"DwmMarginsLR", pack_margins(margins->cxLeftWidth, margins->cxRightWidth));
+    store_prop(hwnd, L"DwmMarginsTB", pack_margins(margins->cyTopHeight, margins->cyBottomHeight));
     return S_OK;
 }
 
+/*
+ * measured on windows 11 26100 with blurargs.c of scratch/pr17 in the research repository: a region with fEnable false
+ * is refused even when blur is on, and a region gdi does not know is ERROR_BAD_FORMAT. win32k reads whether blur is on
+ * from DwmBlurBehind and copies the region of DwmBlurRegion as it is set, see FrameCompose.
+ */
 DWMAPI DwmEnableBlurBehindWindow(HWND hwnd, const DWM_BLURBEHIND *blur)
 {
     if (!is_top_level(hwnd) || !blur || !blur->dwFlags || (blur->dwFlags & ~7u))
         return E_INVALIDARG;
+    HRGN region = (blur->dwFlags & DWM_BB_BLURREGION) ? blur->hRgnBlur : nullptr;
+    if (region && !blur->fEnable)
+        return E_INVALIDARG;
+    if (region && !GetRegionData(region, 0, nullptr))
+        return HRESULT_FROM_WIN32(ERROR_BAD_FORMAT);
+    if (blur->dwFlags & DWM_BB_BLURREGION)
+        store_prop(hwnd, L"DwmBlurRegion", (ULONG_PTR)region);
+    if (blur->dwFlags & DWM_BB_ENABLE)
+        store_prop(hwnd, L"DwmBlurBehind", blur->fEnable ? 1 : 0);
     return S_OK;
 }
 
