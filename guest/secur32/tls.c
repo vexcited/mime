@@ -2545,9 +2545,11 @@ static void send_key_update(TLS *t)
 SECURITY_STATUS TlsPostHandshake(TLS *t, SIZE_T size, SIZE_T *consumed)
 {
     *consumed = 0;
-    if (t->PendingSkip && size >= t->PendingSkip)
+    /* the record stays pending until it is handed back: qt first calls with no input after SEC_I_RENEGOTIATE. */
+    if (t->PendingSkip && size >= t->PendingSkip) {
         *consumed = t->PendingSkip;
-    t->PendingSkip = 0;
+        t->PendingSkip = 0;
+    }
     if (t->KeyUpdatePending && !t->SentClose)
         send_key_update(t);
     if (t->AlertPending && !t->SentClose) {
