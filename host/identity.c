@@ -66,8 +66,8 @@ static void dmi_text(const char *name, char *out, size_t size)
 
 /*
  * the machine mime runs on: its processor, as cpuid names it, and its maker, model and firmware, as the dmi table
- * names them. a guest runs the host's instructions, so any other processor would contradict what it executes. the
- * reference laptop's strings stand in for what the firmware leaves blank.
+ * names them. a guest runs the host's instructions, so any other processor would contradict what it executes. what
+ * the firmware leaves blank stays blank.
  */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
@@ -116,21 +116,17 @@ const MimeHardwareProfile *mime_hardware_profile(void)
         const char *file;
         char *out;
         size_t size;
-        const char *reference;
     } fields[] = {
-        {"sys_vendor", manufacturer, sizeof(manufacturer), "Microsoft Corporation"},
-        {"product_name", product, sizeof(product), "Microsoft Surface Laptop 6 for Business"},
-        {"product_family", family, sizeof(family), "Surface"},
-        {"product_sku", sku, sizeof(sku), "Surface_Laptop_6_for_Business_2033"},
-        {"bios_vendor", bios_vendor, sizeof(bios_vendor), "Microsoft Corporation"},
-        {"bios_version", bios_version, sizeof(bios_version), "1.11.138.0"},
-        {"bios_date", bios_date, sizeof(bios_date), "03/12/2024"},
+        {"sys_vendor", manufacturer, sizeof(manufacturer)},
+        {"product_name", product, sizeof(product)},
+        {"product_family", family, sizeof(family)},
+        {"product_sku", sku, sizeof(sku)},
+        {"bios_vendor", bios_vendor, sizeof(bios_vendor)},
+        {"bios_version", bios_version, sizeof(bios_version)},
+        {"bios_date", bios_date, sizeof(bios_date)},
     };
-    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
         dmi_text(fields[i].file, fields[i].out, fields[i].size);
-        if (!fields[i].out[0])
-            mime_strlcpy(fields[i].out, fields[i].reference, fields[i].size);
-    }
     return &profile;
 }
 #else
