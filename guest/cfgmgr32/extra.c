@@ -283,19 +283,20 @@ CMAPI CONFIGRET WINAPI CM_Query_And_Remove_SubTreeW(DEVINST devinst, PULONG veto
     return CR_REMOVE_VETOED;
 }
 
-/* only the hardware key CM_Open_DevNode_Key opens, Device Parameters. */
 CMAPI CONFIGRET WINAPI CM_Delete_DevNode_Key(DEVINST devinst, ULONG profile, ULONG flags)
 {
-    if (flags & ~(ULONG)(CM_REGISTRY_SOFTWARE | CM_REGISTRY_USER | CM_REGISTRY_CONFIG))
+    if ((flags & ~(ULONG)(CM_REGISTRY_SOFTWARE | CM_REGISTRY_USER | CM_REGISTRY_CONFIG)) ||
+        (flags & (CM_REGISTRY_USER | CM_REGISTRY_CONFIG)) == (CM_REGISTRY_USER | CM_REGISTRY_CONFIG))
         return CR_INVALID_FLAG;
     PCWSTR id = id_of(devinst);
     if (!id)
         return CR_INVALID_DEVNODE;
-    WCHAR path[MAX_DEVICE_ID_LEN + 96] = ENUM_PATH;
-    lstrcatW(path, id);
-    lstrcatW(path, L"\\Device Parameters");
-    LSTATUS error = RegDeleteTreeW(HKEY_LOCAL_MACHINE, path);
-    return from_registry(error);
+    WCHAR path[MAX_DEVICE_ID_LEN + 256];
+    HKEY root;
+    CONFIGRET cr = devnode_key_path(id, profile, flags, &root, path);
+    if (cr)
+        return cr;
+    return from_registry(RegDeleteTreeW(root, path));
 }
 
 /* ------------------------------------------------------------------ properties of device nodes */

@@ -18,6 +18,7 @@ CONFIGRET InterfaceOwnProperty(PCWSTR path, const DEVPROPKEY *key, DEVPROPTYPE *
 
 void format_guid(const GUID *g, WCHAR *out);
 CONFIGRET from_registry(LSTATUS error);
+CONFIGRET devnode_key_path(PCWSTR id, ULONG profile, ULONG flags, HKEY *root, WCHAR *path);
 BOOL interface_path(PCWSTR link, WCHAR *path, ULONG chars);
 BOOL interface_owner(PCWSTR link, WCHAR *device, GUID *klass, BOOL *enabled);
 BOOL machine_local(void *machine);

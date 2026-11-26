@@ -419,23 +419,71 @@ CMAPI CONFIGRET WINAPI CM_Get_DevNode_Registry_PropertyA(DEVINST devinst, ULONG 
     return CR_SUCCESS;
 }
 
+/*
+ * the key of a device that the flags name. the hardware key is Device Parameters of the instance and the software
+ * key is the driver key of its class. the user's and a profile's keys repeat System\CurrentControlSet under the
+ * user's hive and under the profile, where the hardware key is the instance itself. profile 0 is the current one.
+ */
+CONFIGRET devnode_key_path(PCWSTR id, ULONG profile, ULONG flags, HKEY *root, WCHAR *path)
+{
+    WCHAR driver[128];
+    if (flags & CM_REGISTRY_SOFTWARE) {
+        WCHAR instance[MAX_DEVICE_ID_LEN + 40] = L"SYSTEM\\CurrentControlSet\\Enum\\";
+        lstrcatW(instance, id);
+        DWORD bytes = sizeof(driver);
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, instance, L"Driver", RRF_RT_REG_SZ, nullptr, driver, &bytes) || !driver[0])
+            return CR_NO_SUCH_REGISTRY_KEY;
+    }
+    *root = flags & CM_REGISTRY_USER ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
+    if (flags & CM_REGISTRY_CONFIG) {
+        lstrcpyW(path, L"SYSTEM\\CurrentControlSet\\Hardware Profiles\\0000\\System\\CurrentControlSet\\");
+        WCHAR *digits = path + 43;
+        if (!profile)
+            profile = 1;
+        for (int i = 3; i >= 0; i--, profile /= 10)
+            digits[i] = (WCHAR)(L'0' + profile % 10);
+    } else {
+        lstrcpyW(path, flags & CM_REGISTRY_USER ? L"System\\CurrentControlSet\\" : L"SYSTEM\\CurrentControlSet\\");
+    }
+    if (flags & CM_REGISTRY_SOFTWARE) {
+        lstrcatW(path, L"Control\\Class\\");
+        lstrcatW(path, driver);
+        return CR_SUCCESS;
+    }
+    lstrcatW(path, L"Enum\\");
+    lstrcatW(path, id);
+    if (!(flags & (CM_REGISTRY_USER | CM_REGISTRY_CONFIG)))
+        lstrcatW(path, L"\\Device Parameters");
+    return CR_SUCCESS;
+}
+
 CMAPI CONFIGRET WINAPI CM_Open_DevNode_Key(DEVINST devinst, REGSAM access, ULONG profile, DWORD disposition,
                                            HKEY *out, ULONG flags)
 {
     if (!out)
         return CR_INVALID_POINTER;
+    *out = nullptr;
+    if (!devinst)
+        return CR_INVALID_DEVNODE;
+    if ((flags & ~(ULONG)(CM_REGISTRY_SOFTWARE | CM_REGISTRY_USER | CM_REGISTRY_CONFIG)) ||
+        (flags & (CM_REGISTRY_USER | CM_REGISTRY_CONFIG)) == (CM_REGISTRY_USER | CM_REGISTRY_CONFIG))
+        return CR_INVALID_FLAG;
+    /* RegDisposition_OpenAlways is 0 and makes the key if it is not there, RegDisposition_OpenExisting is 1. */
+    if (disposition > RegDisposition_OpenExisting || ((flags & CM_REGISTRY_CONFIG) && profile > 9999))
+        return CR_INVALID_DATA;
     PCWSTR id = id_of(devinst);
     if (!id)
         return CR_INVALID_DEVNODE;
-    WCHAR path[MAX_DEVICE_ID_LEN + 96] = L"SYSTEM\\CurrentControlSet\\Enum\\";
-    lstrcatW(path, id);
-    lstrcatW(path, L"\\Device Parameters");
-    /* RegDisposition_OpenAlways is 0 and makes the key if it is not there, RegDisposition_OpenExisting is 1. */
-    if (disposition > RegDisposition_OpenExisting)
-        return CR_INVALID_FLAG;
+    WCHAR path[MAX_DEVICE_ID_LEN + 256];
+    HKEY root;
+    CONFIGRET cr = devnode_key_path(id, profile, flags, &root, path);
+    if (cr)
+        return cr;
     LSTATUS error = disposition == RegDisposition_OpenAlways
-                        ? RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, nullptr, 0, access, nullptr, out, nullptr)
-                        : RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, access, out);
+                        ? RegCreateKeyExW(root, path, 0, nullptr, 0, access, nullptr, out, nullptr)
+                        : RegOpenKeyExW(root, path, 0, access, out);
+    if (error)
+        *out = nullptr;
     if (error == ERROR_ACCESS_DENIED)
         return CR_ACCESS_DENIED;
     return error ? CR_NO_SUCH_REGISTRY_KEY : CR_SUCCESS;
