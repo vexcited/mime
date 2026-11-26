@@ -28,6 +28,8 @@ void NtGdiDdDDICreateDCFromMemory(void);
 void NtDxgkEnumAdapters3(void);
 void NtDxgkIsFeatureEnabled(void);
 void NtGdiDdDDIOpenAdapterFromLuid(void);
+void NtGdiDdDDIOpenAdapterFromDeviceName(void);
+void NtGdiDdDDIEnumAdapters2(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2773,5 +2775,16 @@ void Win32kInitializeServices(SERVICE *table)
         (SERVICE){(void *)NtUserGetSendMessageReceiver, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtUserGetSendMessageReceiver has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiDdDDIOpenAdapterFromDeviceName
+    table[MIME_SVC_NtGdiDdDDIOpenAdapterFromDeviceName & 0xFFF] =
+        (SERVICE){(void *)NtGdiDdDDIOpenAdapterFromDeviceName, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiDdDDIOpenAdapterFromDeviceName has no syscall number"
+#endif
+#ifdef MIME_SVC_NtGdiDdDDIEnumAdapters2
+    table[MIME_SVC_NtGdiDdDDIEnumAdapters2 & 0xFFF] = (SERVICE){(void *)NtGdiDdDDIEnumAdapters2, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtGdiDdDDIEnumAdapters2 has no syscall number"
 #endif
 }

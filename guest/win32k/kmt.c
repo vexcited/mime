@@ -151,32 +151,66 @@ static BOOLEAN lookup(UINT handle, KMT_ADAPTER *out)
     return TRUE;
 }
 
-/* a room too small for the adapters takes none and asks for more, an empty one is told how many there are. */
+#define KMT_SESSION_ADAPTERS 34 /* GetMaximumAdapterCountInSession of dxgkrnl on windows 11. */
+#define FILTER_BITS 0x7ull
+#define FILTER_DISPLAY_ONLY 0x2ull
+
+typedef struct KMT_ENUMADAPTERS2 {
+    UINT NumAdapters;
+    KMT_ADAPTERINFO *Adapters;
+} KMT_ENUMADAPTERS2;
+
+/*
+ * DxgkEnumAdapters2Impl and DxgkEnumAdapters3Impl of dxgkrnl 26300, measured with enum2.c of scratch/pr17 in the
+ * research repository: no list is told the most adapters a session has, 34, a list too short fails with
+ * STATUS_BUFFER_TOO_SMALL and is left as it was, its count too, and a longer one than 34 counts as 34. enum2 lists
+ * every adapter with its video sources, one for an adapter that displays. enum3 tells no sources and leaves out the
+ * adapters that only display unless its filter asks for them.
+ */
+static NTSTATUS enum_adapters(UINT *user_count, KMT_ADAPTERINFO *user_list, UINT room, ULONG64 filter,
+                              BOOLEAN sources)
+{
+    UINT count = KMT_SESSION_ADAPTERS;
+    if (user_list) {
+        KMT_ADAPTER list[KMT_ADAPTERS];
+        ULONG all = adapters(list);
+        KMT_ADAPTERINFO infos[KMT_ADAPTERS];
+        count = 0;
+        for (ULONG i = 0; i < all; i++) {
+            BOOLEAN display_only = (list[i].Type & ADAPTER_DISPLAY) && !(list[i].Type & ADAPTER_RENDER);
+            if (display_only && !(filter & FILTER_DISPLAY_ONLY))
+                continue;
+            infos[count++] = (KMT_ADAPTERINFO){handle_of(i), {list[i].Luid, 0},
+                                               sources && (list[i].Type & ADAPTER_DISPLAY) ? 1 : 0, FALSE};
+        }
+        if (W32Min(room, KMT_SESSION_ADAPTERS) < count)
+            return STATUS_BUFFER_TOO_SMALL;
+        if (!NT_SUCCESS(MimeCopyToUser(user_list, infos, count * sizeof(KMT_ADAPTERINFO))))
+            return STATUS_ACCESS_VIOLATION;
+    }
+    return NT_SUCCESS(MimeCopyToUser(user_count, &count, sizeof(count))) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
+}
+
 NTSTATUS NTAPI NtDxgkEnumAdapters3(KMT_ENUMADAPTERS3 *user)
 {
     KMT_ENUMADAPTERS3 e;
+    if (!user)
+        return STATUS_INVALID_PARAMETER;
     if (!NT_SUCCESS(MimeCopyFromUser(&e, user, sizeof(e))))
         return STATUS_ACCESS_VIOLATION;
-    KMT_ADAPTER list[KMT_ADAPTERS];
-    ULONG count = adapters(list);
-    if (!e.Adapters) {
-        e.NumAdapters = count;
-        return NT_SUCCESS(MimeCopyToUser(&user->NumAdapters, &e.NumAdapters, sizeof(UINT))) ? STATUS_SUCCESS
-                                                                                            : STATUS_ACCESS_VIOLATION;
-    }
-    if (e.NumAdapters < count) {
-        e.NumAdapters = count;
-        MimeCopyToUser(&user->NumAdapters, &e.NumAdapters, sizeof(UINT));
-        return STATUS_BUFFER_TOO_SMALL;
-    }
-    for (ULONG i = 0; i < count; i++) {
-        KMT_ADAPTERINFO info = {handle_of(i), {list[i].Luid, 0}, 0, FALSE};
-        if (!NT_SUCCESS(MimeCopyToUser(&e.Adapters[i], &info, sizeof(info))))
-            return STATUS_ACCESS_VIOLATION;
-    }
-    e.NumAdapters = count;
-    return NT_SUCCESS(MimeCopyToUser(&user->NumAdapters, &e.NumAdapters, sizeof(UINT))) ? STATUS_SUCCESS
-                                                                                        : STATUS_ACCESS_VIOLATION;
+    if (e.Filter & ~FILTER_BITS)
+        return STATUS_INVALID_PARAMETER;
+    return enum_adapters(&user->NumAdapters, e.Adapters, e.NumAdapters, e.Filter, FALSE);
+}
+
+NTSTATUS NTAPI NtGdiDdDDIEnumAdapters2(KMT_ENUMADAPTERS2 *user)
+{
+    KMT_ENUMADAPTERS2 e;
+    if (!user)
+        return STATUS_INVALID_PARAMETER;
+    if (!NT_SUCCESS(MimeCopyFromUser(&e, user, sizeof(e))))
+        return STATUS_ACCESS_VIOLATION;
+    return enum_adapters(&user->NumAdapters, e.Adapters, e.NumAdapters, FILTER_DISPLAY_ONLY, TRUE);
 }
 
 NTSTATUS NTAPI NtGdiDdDDIOpenAdapterFromLuid(PVOID user)
@@ -196,6 +230,131 @@ NTSTATUS NTAPI NtGdiDdDDIOpenAdapterFromLuid(PVOID user)
         }
     }
     return STATUS_INVALID_PARAMETER;
+}
+
+#define COMPUTE_ARRIVAL L"#{1024e4c9-47c9-48d3-b4a8-f9df78523b53}"
+#define DISPLAY_ARRIVAL L"#{1ca05180-a699-450a-9a0c-de4fbe3ddd89}"
+#define NAME_CHARS 256
+
+/* whether the instance name, \ written #, starts with text, ignoring case. */
+static BOOLEAN instance_starts(PCWSTR instance, ULONG chars, PCWSTR text)
+{
+    ULONG n = (ULONG)wcslen(text);
+    if (chars < n)
+        return FALSE;
+    for (ULONG i = 0; i < n; i++) {
+        WCHAR a = instance[i] == L'#' ? L'\\' : instance[i];
+        if (RtlUpcaseUnicodeChar(a) != RtlUpcaseUnicodeChar(text[i]))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* whether the slot, device << 3 | function, ends the instance or follows its last & as pci.sys and the host write it. */
+static BOOLEAN instance_slot(PCWSTR instance, ULONG chars, ULONG slot)
+{
+    WCHAR hex[3];
+    _snwprintf(hex, RTL_NUMBER_OF(hex), L"%02X", slot & 0xFF);
+    ULONG amp = chars;
+    while (amp && instance[amp - 1] != L'&')
+        amp--;
+    return (chars >= 2 && !_wcsnicmp(instance + chars - 2, hex, 2)) ||
+           (amp && chars - amp >= 2 && !_wcsnicmp(instance + amp, hex, 2));
+}
+
+/*
+ * the adapter the device of an instance runs: warp on the root device of the basic render driver, the basic display
+ * adapter on the pci vga device when the host gives no gpu, else the gpu whose hardware id begins the instance.
+ */
+static LONG adapter_of_instance(PCWSTR instance, ULONG chars, const KMT_ADAPTER *list, ULONG count)
+{
+    for (ULONG i = 0; i < count; i++)
+        if (list[i].Luid == LUID_WARP && instance_starts(instance, chars, L"ROOT\\BasicRender\\"))
+            return (LONG)i;
+    if (!instance_starts(instance, chars, L"PCI\\"))
+        return -1;
+#if !defined(__aarch64__)
+    if (!HalBootInfo->gpu_count)
+        return list[0].Luid == LUID_BASIC_DISPLAY ? 0 : -1;
+    LONG found = -1;
+    ULONG matches = 0;
+    for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
+        const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
+        WCHAR id[64];
+        _snwprintf(id, RTL_NUMBER_OF(id), L"PCI\\VEN_%04X&DEV_%04X&SUBSYS_%08X&REV_%02X\\", gpu->vendor, gpu->device,
+                   gpu->subsystem, gpu->revision & 0xFF);
+        if (!instance_starts(instance, chars, id))
+            continue;
+        /* two gpus of one model are told apart by their slot. */
+        if (!matches++ || instance_slot(instance, chars, gpu->slot))
+            found = (LONG)i;
+    }
+    for (ULONG i = 0; found >= 0 && i < count; i++)
+        if (list[i].Luid == LUID_GPU + (ULONG)found)
+            return (LONG)i;
+#endif
+    return -1;
+}
+
+/* the handle at 8 and the luid at 12 of D3DKMT_OPENADAPTERFROMDEVICENAME, written one after the other as dxgkrnl does. */
+static NTSTATUS write_open(PVOID user, const UINT *adapter, const LUID *luid)
+{
+    NTSTATUS status = MimeCopyToUser((PUCHAR)user + 8, adapter, sizeof(*adapter));
+    return NT_SUCCESS(status) ? MimeCopyToUser((PUCHAR)user + 12, luid, sizeof(*luid)) : status;
+}
+
+/*
+ * D3DKMTOpenAdapterFromDeviceName, as DxgkOpenAdapterFromDeviceName of dxgkrnl 26300 answers it: a name of at most 255
+ * characters, \\?\ taken as \??\, that is the compute or display arrival interface of an adapter, ignoring case,
+ * opens that adapter. any other name is STATUS_INVALID_PARAMETER with the request left as it was; an empty one passes,
+ * as it equals the partition interfaces no adapter here has, and fails to open with both outputs zeroed. measured with
+ * kmtname.c of scratch/pr17 in the research repository.
+ */
+NTSTATUS NTAPI NtGdiDdDDIOpenAdapterFromDeviceName(PVOID user)
+{
+    struct {
+        PCWSTR DeviceName;
+        UINT Adapter;
+        LUID AdapterLuid;
+    } open;
+    WCHAR name[NAME_CHARS];
+    if (!NT_SUCCESS(MimeCopyFromUser(&open, user, sizeof(open))) || !open.DeviceName)
+        return STATUS_INVALID_PARAMETER;
+    ULONG chars = 0;
+    for (;; chars++) {
+        if (chars == NAME_CHARS - 1 || !NT_SUCCESS(MimeCopyFromUser(&name[chars], open.DeviceName + chars, sizeof(WCHAR))))
+            return STATUS_INVALID_PARAMETER;
+        if (!name[chars])
+            break;
+    }
+    if (!chars) {
+        open.Adapter = 0;
+        open.AdapterLuid = (LUID){};
+        write_open(user, &open.Adapter, &open.AdapterLuid);
+        return STATUS_OBJECT_PATH_SYNTAX_BAD;
+    }
+    if (chars > 1 && name[1] == L'\\')
+        name[1] = L'?';
+    static const WCHAR prefix[] = L"\\??\\";
+    ULONG suffix = RTL_NUMBER_OF(COMPUTE_ARRIVAL) - 1, start = RTL_NUMBER_OF(prefix) - 1;
+    if (chars <= start + suffix || _wcsnicmp(name, prefix, start) ||
+        (_wcsicmp(name + chars - suffix, COMPUTE_ARRIVAL) && _wcsicmp(name + chars - suffix, DISPLAY_ARRIVAL)))
+        return STATUS_INVALID_PARAMETER;
+    KMT_ADAPTER list[KMT_ADAPTERS];
+    ULONG count = adapters(list);
+    LONG index = adapter_of_instance(name + start, chars - start - suffix, list, count);
+    if (index < 0)
+        return STATUS_INVALID_PARAMETER;
+    /* the interface must be one the device tree registered: its link leads to the device. */
+    UNICODE_STRING link = {(USHORT)(chars * sizeof(WCHAR)), (USHORT)(chars * sizeof(WCHAR)), name};
+    PVOID device;
+    if (!NT_SUCCESS(ObReferenceObjectByName(&link, OBJ_CASE_INSENSITIVE, nullptr, 0, nullptr, KernelMode, nullptr,
+                                            &device)))
+        return STATUS_INVALID_PARAMETER;
+    ObDereferenceObject(device);
+    open.Adapter = handle_of((ULONG)index);
+    open.AdapterLuid = (LUID){list[index].Luid, 0};
+    return write_open(user, &open.Adapter, &open.AdapterLuid);
 }
 
 NTSTATUS NTAPI NtGdiDdDDICloseAdapter(const UINT *user)
