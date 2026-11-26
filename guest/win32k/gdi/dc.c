@@ -97,9 +97,8 @@ void DcSelectDefaults(DC *dc)
 /*
  * gdi32 keeps the attributes of a device context in the memory of the program that owns it, 0x170 bytes the entry of
  * the handle points to, see gdi/shared.c. it reads them there, and writes most of them there without a call: the
- * colours, the modes, the brush, the pen and the font, the current position, the origins and the extents. measured
- * on windows 11 26100 with dcattr.exe of scratch/dlls/probe in the research repository, and the offsets gdi32full
- * 26300 reads agree:
+ * colours, the modes, the brush, the pen and the font, the current position, the origins and the extents. measured on
+ * windows 11 26100, and the offsets gdi32full 26300 reads agree:
  *
  *   0x10 the colour space          0x20 the transform, as floats  0x68 the mapping mode       0x6c the layout
  *   0x80 the size of the bitmap    0x98 what gdi32 changed        0xa0 the brush              0xa8 the pen
@@ -185,9 +184,9 @@ static void attr_image(const DC *dc, UCHAR *block)
     A32(block, 0xec) = s->AttrFlag;
     /*
      * the matrices at 0x20 and 0x44 stay those of a fresh dc, so a mapping other than the identity sets the bits of
-     * 0x154 that send LPtoDP, DPtoLP and GetCurrentPositionEx of gdi32 to the kernel, as win32kfull's
-     * DC::iSetMapMode and bModifyWorldTransform set them. 0x400 marks the isotropic and anisotropic modes and 0x800
-     * clears with a mode other than MM_TEXT, as measured with dcattr.exe of scratch/dlls/probe.
+     * 0x154 that send LPtoDP, DPtoLP and GetCurrentPositionEx of gdi32 to the kernel, as win32kfull's DC::iSetMapMode
+     * and bModifyWorldTransform set them. 0x400 marks the isotropic and anisotropic modes and 0x800 clears with a mode
+     * other than MM_TEXT, as measured on windows.
      */
     ULONG fl = A32(block, 0x154);
     fl = s->MapMode == MM_ISOTROPIC || s->MapMode == MM_ANISOTROPIC ? fl | 0x400 : fl & ~0x400u;
@@ -1766,8 +1765,8 @@ static RECT ordered(LONG left, LONG top, LONG right, LONG bottom)
 
 /*
  * GrepSetBoundsRect of win32kfull 26300: the answer is the state before, enabled or not and empty or not, then
- * DCB_RESET empties the bounds, DCB_ACCUMULATE adds the rectangle in logical units, and DCB_ENABLE or DCB_DISABLE
- * turn the accumulation of what is drawn on or off. measured with bounds.c of the research repository.
+ * DCB_RESET empties the bounds, DCB_ACCUMULATE adds the rectangle in logical units, and DCB_ENABLE or DCB_DISABLE turn
+ * the accumulation of what is drawn on or off. measured on windows.
  */
 UINT NTAPI NtGdiSetBoundsRect(HDC hdc, const RECT *user_rect, UINT flags)
 {

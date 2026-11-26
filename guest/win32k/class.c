@@ -435,9 +435,8 @@ BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING user_name, L
     }
     UserEnter();
     /*
-     * measured on windows 11 26300 with clsinst.c of the research repository: no instance stands for user32, so a
-     * class local to another module is not found without its instance, and the instance told is the one asked with,
-     * none for user32.
+     * measured on windows 11 26300: no instance stands for user32, so a class local to another module is not found
+     * without its instance, and the instance told is the one asked with, none for user32.
      */
     W32PROCESS *p = W32GetProcess();
     HINSTANCE client = p ? p->ClientModule : nullptr;

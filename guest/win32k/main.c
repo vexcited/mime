@@ -185,9 +185,8 @@ typedef struct ATOM_ENTRY {
 static ATOM_ENTRY g_atoms[MAX_ATOMS];
 
 /*
- * the atoms windows 11 has from its start, 0xc001 on, read with GetClipboardFormatName by atoms.c of
- * scratch/dlls/window: user32 compares the atoms of its classes with the ones the server information names, and
- * gives some of them to properties.
+ * the atoms windows 11 has from its start, 0xc001 on, read with GetClipboardFormatName: user32 compares the atoms of
+ * its classes with the ones the server information names, and gives some of them to properties.
  */
 static const PCWSTR g_boot_atoms[] = {
     L"USER32", L"ObjectLink", L"OwnerLink", L"Native", L"Binary", L"FileName", L"FileNameW", L"NetworkName",
@@ -637,7 +636,7 @@ NTSTATUS NTAPI NtUserInitializeClientPfnArrays(PVOID ansi, PVOID unicode, PVOID 
 
 /*
  * ClientThreadSetup asks it once per thread and only tells 1, a session without its display, from the others. the
- * console session of the reference machine answers 3, measured with uictx.c of scratch/dlls/window.
+ * console session of the reference machine answers 3.
  */
 ULONG NTAPI NtUserRemoteConnectState(void)
 {

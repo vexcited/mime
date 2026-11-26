@@ -1,11 +1,11 @@
 /*
- * palette objects, as gdi32 of 26300 asks for them and measured with pal.exe of scratch/dlls/cursor in the
- * research repository. the display is true color: a palette selected into a dc only decides what PALETTEINDEX
- * colors are, realizing maps nothing and the system palette is not the device's.
+ * palette objects, as gdi32 of 26300 asks for them and measured on windows. the display is true color: a palette
+ * selected into a dc only decides what PALETTEINDEX colors are, realizing maps nothing and the system palette is not
+ * the device's.
  */
 #include "../win32k.h"
 
-/* CreateHalftonePalette on any dc, measured with paldump.exe. its first and last ten are the stock palette's. */
+/* CreateHalftonePalette on any dc, measured on windows. its first and last ten are the stock palette's. */
 static const ULONG g_halftone[256] = {
     0x00000000, 0x00000080, 0x00008000, 0x00008080, 0x00800000, 0x00800080,
     0x00808000, 0x00c0c0c0, 0x00c0dcc0, 0x00f0caa6, 0x04330000, 0x04000033,

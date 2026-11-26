@@ -133,8 +133,8 @@ void SurfaceDestroy(SURFACE *s)
 }
 
 /*
- * the rectangles gdi draws are what the dwm shows of a window made without a border, measured with unpainted.c of
- * scratch/pr17 in the research repository: all of each one, clipped, black where the draw left no pixel.
+ * the rectangles gdi draws are what the dwm shows of a window made without a border: all of each one, clipped, black
+ * where the draw left no pixel.
  */
 static void drawn_on_window(SURFACE *s, const RECT *r, const REGION *clip)
 {
@@ -926,9 +926,9 @@ NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *u
 }
 
 /*
- * the table GetDIBits gives a bitmap of more than 8 bits read at 8 bits or less, measured with dibpal.exe of
- * scratch/dlls/gdibatch: black and white, the 16 colours of vga, or at 8 bits the 20 static colours at both ends and
- * between them 8 levels of red and green and 4 of blue, as the index i makes them.
+ * the table GetDIBits gives a bitmap of more than 8 bits read at 8 bits or less: black and white, the 16 colours of
+ * vga, or at 8 bits the 20 static colours at both ends and between them 8 levels of red and green and 4 of blue, as the
+ * index i makes them.
  */
 static void default_dib_table(UCHAR bpp, RGBQUAD *out)
 {

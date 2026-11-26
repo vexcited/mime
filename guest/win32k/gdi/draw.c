@@ -336,7 +336,7 @@ BOOLEAN AlphaBlendSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect
                     continue;
                 ULONG d = SurfaceGetPixel(dst, x, y);
                 ULONG inv = 255 - sa;
-                /* the destination's share is rounded: measured with curpx.exe of scratch/dlls/cursor. */
+                /* the destination's share is rounded: measured on windows. */
                 ULONG ob = sb + div255_round((d & 0xFF) * inv);
                 ULONG og = sg + div255_round(((d >> 8) & 0xFF) * inv);
                 ULONG orr = sr + div255_round(((d >> 16) & 0xFF) * inv);
@@ -990,9 +990,8 @@ BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
 }
 
 /*
- * the frame of a rectangle: a pen centred on the edges l, t, r - 1 and b - 1, or inside them for PS_INSIDEFRAME,
- * with square corners. each pixel is drawn once, which a mix mode like R2_XORPEN shows. measured with rx.exe of
- * scratch/dlls/gdibatch.
+ * the frame of a rectangle: a pen centred on the edges l, t, r - 1 and b - 1, or inside them for PS_INSIDEFRAME, with
+ * square corners. each pixel is drawn once, which a mix mode like R2_XORPEN shows. measured on windows.
  */
 static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirty)
 {
@@ -1410,7 +1409,7 @@ BOOL NTAPI NtGdiArcInternal(ULONG type, HDC hdc, int left, int top, int right, i
     int direction = arc_direction(hdc);
     if (!direction || type > 3)
         return FALSE;
-    /* the box leaves out its right column and bottom row, as Ellipse does: measured with shp.exe. */
+    /* the box leaves out its right column and bottom row, as Ellipse does: measured on windows. */
     if (left > right) {
         int t = left;
         left = right;

@@ -409,8 +409,8 @@ static void append_rows(REGION *r, LONG left, LONG top, LONG right, LONG bottom)
 
 /*
  * a rectangle with elliptic corners of diameters ew and eh, which CreateEllipticRgn makes with the whole rectangle.
- * like windows, the region leaves out the last column and row of the rectangle, the diameters shrink to fit it, and
- * the corners follow the midpoint ellipse of Alois Zingl, measured with rgn.exe of scratch/dlls/gdibatch.
+ * like windows, the region leaves out the last column and row of the rectangle, the diameters shrink to fit it, and the
+ * corners follow the midpoint ellipse of Alois Zingl.
  */
 BOOLEAN RgnRoundRect(REGION *r, LONG left, LONG top, LONG right, LONG bottom, LONG ew, LONG eh)
 {

@@ -1,4 +1,4 @@
-/* generated from scratch/dlls/probe/gdishared-win.txt of the research repository, windows 11 26300, do not edit. */
+/* generated from windows 11 26300, do not edit. */
 static const GDI_TAIL_CELL g_gdi_tail[] = {
     {0x0, 0x100004000ull}, {0x8, 0xd400000153ull}, {0x10, 0x33ad200052aeaull}, {0x18, 0x32000000500ull}, {0x20, 0x100000020ull}, {0x28, 0xffffffffull},
     {0x30, 0x7e99ffffffffull}, {0x38, 0x2400000024ull}, {0x40, 0x6000000033ull}, {0x48, 0x60ull}, {0x50, 0x18ull}, {0x60, 0x780700000000ull},

@@ -258,8 +258,8 @@ static void link_window(WND *parent, WND *w, HWND after)
 }
 
 /*
- * ZOrderByOwner of win32kfull: a top level window moves with the windows it owns, and with its owners when it
- * leaves their tree. measured on windows 11 with zorder/probe.c of scratch/fl-vst in the research repository.
+ * ZOrderByOwner of win32kfull: a top level window moves with the windows it owns, and with its owners when it leaves
+ * their tree. measured on windows 11.
  */
 #define OWNER_DEPTH 32
 
@@ -699,7 +699,7 @@ void WndUpdateHostConfig(WND *w, BOOLEAN activate)
     HostConfigure(w, activate);
 }
 
-/* a border of its own, measured with unpainted4.c of scratch/pr17 in the research repository. */
+/* a border of its own, measured on windows. */
 static BOOLEAN has_border(const WND *w)
 {
     return (w->Style & (WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) ||
@@ -727,10 +727,9 @@ static REGION *unpainted(SURFACE *s)
 }
 
 /*
- * what a new redirection surface holds on windows 11, measured with unpainted.c to unpainted4.c of scratch/pr17 in the
- * research repository: gdi's white over the whole of a window with a border, nothing of one without, which shows what
- * is under it but for the rectangles gdi draws, see SurfaceMarkDrawn. windows makes a new one each time a hidden window
- * is shown again.
+ * what a new redirection surface holds on windows 11, measured on windows: gdi's white over the whole of a window with
+ * a border, nothing of one without, which shows what is under it but for the rectangles gdi draws, see
+ * SurfaceMarkDrawn. windows makes a new one each time a hidden window is shown again.
  */
 static void start_surface(WND *w, SURFACE *s)
 {
@@ -3989,8 +3988,8 @@ BOOL NTAPI NtUserSetForegroundWindow(HWND hwnd)
 
 /*
  * AllowSetForegroundWindow and LockSetForegroundWindow, which user32 26300 passes straight through. every process may
- * take the foreground here, so what is left is the answers windows 11 26300 gives a caller that may, measured with
- * fgallow.c of the research repository: any process or one that has windows, and a lock that is taken or given once.
+ * take the foreground here, so what is left is the answers windows 11 26300 gives a caller that may, measured on
+ * windows: any process or one that has windows, and a lock that is taken or given once.
  */
 #define ASFW_ANY ((DWORD)-1)
 #define LSFW_LOCK 1

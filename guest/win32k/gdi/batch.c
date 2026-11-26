@@ -219,9 +219,9 @@ static void run(DC *dc, const BATCH *b, ULONG count)
 }
 
 /*
- * takes the batch out of the teb, empty, and runs it, before every service of win32k as windows does. gdi32 makes
- * such a call itself for GdiFlush, when the batch is full, when another dc comes and at GdiBatchLimit records.
- * measured with bq.exe of scratch/dlls/gdibatch in the research repository.
+ * takes the batch out of the teb, empty, and runs it, before every service of win32k as windows does. gdi32 makes such
+ * a call itself for GdiFlush, when the batch is full, when another dc comes and at GdiBatchLimit records. measured on
+ * windows.
  */
 void NTAPI GdiFlushUserBatch(void)
 {

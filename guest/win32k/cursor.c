@@ -1,8 +1,8 @@
 /*
- * cursor and icon objects as win32kfull keeps them, read from its 26100 build and the user32 of 26300 and measured
- * with cur.exe of scratch/dlls/cursor in the research repository. user32 decodes the resources, then hands the
- * kernel a mask, a picture and their sizes. the kernel keeps the bitmaps as public objects, finds shared objects
- * again by module, resource and size, and draws them. mime also keeps a premultiplied picture for the host.
+ * cursor and icon objects as win32kfull keeps them, read from its 26100 build and the user32 of 26300 and measured on
+ * windows. user32 decodes the resources, then hands the kernel a mask, a picture and their sizes. the kernel keeps the
+ * bitmaps as public objects, finds shared objects again by module, resource and size, and draws them. mime also keeps a
+ * premultiplied picture for the host.
  */
 #include "win32k.h"
 #include <png/png.h>
@@ -41,7 +41,7 @@ static CURICON *g_global;
 
 /*
  * the objects the session loads from user32 as it starts: groups 100 to 118 of its cursors become the system
- * cursors, named by the OCR_ number, and groups 100 to 106 of its icons the OIC_ ones. measured with syslist.exe:
+ * cursors, named by the OCR_ number, and groups 100 to 106 of its icons the OIC_ ones. measured on windows:
  * these 18 numbers are the cursors user32 finds without a resource. group 116 is not matched to a number yet. the
  * icons were matched by their pixels with cur.exe, the cursors by their shapes: windows draws them from the files
  * of the cursor scheme of the user when it has one.
@@ -1766,7 +1766,7 @@ HICON NTAPI NtUserInternalGetWindowIcon(HWND hwnd, UINT kind)
         CURICON *from = lookup(kind == 1 ? (big ? big : small) : (small ? small : big));
         if (from)
             icon = duplicate(from);
-        /* measured with iconpx.exe: the picture of 32 pixels at each kind. */
+        /* measured on windows: the picture of 32 pixels at each kind. */
         else if (!big && !small && g_system[SYSTEM_CURSORS])
             icon = duplicate(g_system[SYSTEM_CURSORS]);
     }

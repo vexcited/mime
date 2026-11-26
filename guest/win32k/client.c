@@ -1,8 +1,7 @@
 /*
  * the calls of win32k into user32, as win32kfull of windows 11 makes them and the genuine user32 of 26300.9457 takes
- * them: KeUserModeCallback with an index of the apfnDispatch table user32 puts in the peb, and a message laid out
- * for the function at that index. read in IDA from user32 of 26300.9457 and win32kfull of 26100.9974, see
- * scratch/dlls/window in the research repository.
+ * them: KeUserModeCallback with an index of the apfnDispatch table user32 puts in the peb, and a message laid out for
+ * the function at that index. read in IDA from user32 of 26300.9457 and win32kfull of 26100.9974.
  *
  * a window procedure is called through the dispatcher of the client procedures ntdll keeps, DispatchClientMessage
  * of user32, with the procedure as the extra parameter. it finds the handle of the window in the callback window

@@ -1067,9 +1067,9 @@ static LONG round_f(float v)
 }
 
 /*
- * the characters of the text metrics, as windows 11 gives them for a truetype face: the first and the last character
- * of its cmap, the break character the first one but at least 2 and the default character the one before. a symbol
- * face covers 0 to 0xf0ff and its ansi characters start at 0x20. measured with textm.c of scratch/dlls/gdibatch.
+ * the characters of the text metrics, as windows 11 gives them for a truetype face: the first and the last character of
+ * its cmap, the break character the first one but at least 2 and the default character the one before. a symbol face
+ * covers 0 to 0xf0ff and its ansi characters start at 0x20. measured on windows.
  */
 /*
  * the characters of a raster face, as windows 11 gives them: its bytes read in code page 1252 whatever its charset,
@@ -1367,9 +1367,9 @@ static FONT_INSTANCE *realize_face(FONT_FACE *face, const LOGFONTW *lf, UINT dpi
     BOOLEAN sim_italic = lf->lfItalic && !face->Italic;
     UCHAR smooth = smooth_of(lf);
     /*
-     * the gasp table of the font can turn the smoothing off, measured on windows with smooth.c of scratch/steam:
-     * gray text is black and white at the sizes without the gray flag, and ClearType only for a font that asks
-     * for no smoothing at any size, which is marlett.
+     * the gasp table of the font can turn the smoothing off, measured on windows: gray text is black and white at the
+     * sizes without the gray flag, and ClearType only for a font that asks for no smoothing at any size, which is
+     * marlett.
      */
     if (smooth == FONT_SMOOTH_GRAY) {
         unsigned gasp = mime_ttf_gasp(&face->Ttf, (int)em);

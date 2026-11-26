@@ -832,8 +832,7 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
  * fields it reads, from IDA: the flags, the adapter, the source and the target, the video signal of the target, its
  * technology, its scaling for the active paths and for the database, the position and the size of the source, the
  * size of the desktop image, and a status that keeps the path. mime has one path a monitor, all on the adapter of the
- * gpu, source n to target n, as the instances of the monitors end with UIDn. measured on windows 11 26100 with qdc.c
- * and mon.c.
+ * gpu, source n to target n, as the instances of the monitors end with UIDn. measured on windows 11 26100.
  */
 #define QDC_RECORD 216
 #define QDC_ACTIVE_PATH (1ull << 63)

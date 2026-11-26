@@ -105,9 +105,9 @@ BOOL NTAPI NtUserGetGUIThreadInfo(DWORD thread_id, GUITHREADINFO *user_info)
 }
 
 /*
- * SetCursorPos and SetPhysicalCursorPos of user32 26300, the point in the units of the caller: kept inside the clip
- * of the cursor and the screen, and followed by a mouse move that the hardware did not make, as zzzSetCursorPos
- * does. measured with cur.c of the research repository.
+ * SetCursorPos and SetPhysicalCursorPos of user32 26300, the point in the units of the caller: kept inside the clip of
+ * the cursor and the screen, and followed by a mouse move that the hardware did not make, as zzzSetCursorPos does.
+ * measured on windows.
  */
 void InputSetCursorPos(POINT physical)
 {

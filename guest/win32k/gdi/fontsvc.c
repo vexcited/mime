@@ -1009,7 +1009,7 @@ typedef struct CHARSET_INFO {
     PCWSTR Script;
 } CHARSET_INFO;
 
-/* the charsets in the order EnumFontFamiliesEx lists those of a face, measured with enum3.c of scratch/steam. */
+/* the charsets in the order EnumFontFamiliesEx lists those of a face. */
 static const CHARSET_INFO g_charsets[] = {
     {ANSI_CHARSET, 0, L"Western"},         {SHIFTJIS_CHARSET, 17, L"Japanese"},
     {HANGUL_CHARSET, 19, L"Hangul"},       {JOHAB_CHARSET, 21, L"Johab"},

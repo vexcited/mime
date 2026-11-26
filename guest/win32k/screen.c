@@ -593,9 +593,9 @@ static BOOLEAN window_covers(WND *w, RECT *out)
 }
 
 /*
- * what windows reads from a window where nothing was ever drawn, measured with unpainted.c of scratch/pr17 in the
- * research repository: what the screen shows there, opaque. the rectangles of area, pixels of the surface of the top
- * level window, that were never drawn go into the dc at x, y for the corner of area.
+ * what windows reads from a window where nothing was ever drawn: what the screen shows there, opaque. the rectangles of
+ * area, pixels of the surface of the top level window, that were never drawn go into the dc at x, y for the corner of
+ * area.
  */
 void ScreenReadUnpainted(WND *top, const RECT *area, HDC hdc, LONG x, LONG y)
 {

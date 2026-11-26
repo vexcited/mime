@@ -1,10 +1,9 @@
 /*
- * the heap of the desktop, which user32 reads instead of asking: measured on windows 11 26100 with deskinfo.exe and
- * wndinfo.exe of scratch/dlls/probe in the research repository. win32k maps it read-only in every program of the
- * desktop, 0x1400000 bytes of which the head has pages, and a thread of the window manager holds in its teb the
- * desktop information at 0x1040 of it, the base of the view, and its own id as its thread information. what points
- * inside the heap is an offset from its start. the desktop information starts with the id of the heap, which the
- * entry of each handle of the desktop repeats, and the offset of the window of the desktop.
+ * the heap of the desktop, which user32 reads instead of asking: measured on windows 11 26100. win32k maps it read-only
+ * in every program of the desktop, 0x1400000 bytes of which the head has pages, and a thread of the window manager
+ * holds in its teb the desktop information at 0x1040 of it, the base of the view, and its own id as its thread
+ * information. what points inside the heap is an offset from its start. the desktop information starts with the id of
+ * the heap, which the entry of each handle of the desktop repeats, and the offset of the window of the desktop.
  *
  * a window is 0x160 bytes there:
  *
@@ -103,7 +102,7 @@
 
 /*
  * the state of a window, as the WNDS bits of windows name it. a top level window of the reference machine had
- * 0x40020048 and a child 0x00020000, with 0x80000700 and 0x80000710 after them, see wnd.c of scratch/dlls/window.
+ * 0x40020048 and a child 0x00020000, with 0x80000700 and 0x80000710 after them.
  */
 #define STATE_HASMENU 0x00000001u
 #define STATE_HASCAPTION 0x00000008u
@@ -513,10 +512,10 @@ static void write_window(WND *w)
     /* ZBID_DESKTOP, the band of every window of a desktop program. GetWindow of user32 skips a window of no band. */
     *(PULONG)(image + WND_BAND) = 1;
     /*
-     * the dpi awareness context of the window, which user32 compares with the one of its thread before it maps a
-     * point. measured on windows 11 with dpictx.exe of scratch/dlls/wall: 0x6010 unaware and 0x6011 system aware,
-     * the dpi in bits 8 to 16 over the awareness, and 0x12 and 0x22 for the two per monitor awarenesses, which carry
-     * no dpi. with a dpi there the contexts of a per monitor thread and its window were not equal.
+     * the dpi awareness context of the window, which user32 compares with the one of its thread before it maps a point.
+     * measured on windows 11: 0x6010 unaware and 0x6011 system aware, the dpi in bits 8 to 16 over the awareness, and
+     * 0x12 and 0x22 for the two per monitor awarenesses, which carry no dpi. with a dpi there the contexts of a per
+     * monitor thread and its window were not equal.
      */
     static const UCHAR awareness_code[] = {0x10, 0x11, 0x12, 0x22};
     ULONG awareness = w->Awareness < sizeof(awareness_code) ? w->Awareness : 0;
@@ -622,6 +621,8 @@ void DeskSync(void)
             o->DeskOffset = heap_alloc(WND_SIZE);
     for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_WINDOW)) != nullptr;)
         write_window((WND *)o);
+    /* spwndShell, which GetShellWindow reads. */
+    *(PULONG64)(g_heap + DESK_INFO + 0x18) = offset_of(WndShell);
     sync_threads();
 }
 
@@ -690,9 +691,8 @@ NTSTATUS DeskAttachThread(W32PROCESS *p)
     ULONG64 thread_info = (ULONG64)(ULONG_PTR)p->DeskBase + (t && t->DeskInfo ? t->DeskInfo : DESK_THREAD_INFO);
     MimeCopyToUser(teb + FIELD_OFFSET(TEB, Win32ClientInfo) + 0x60, &thread_info, sizeof(thread_info));
     /*
-     * at 0x10 the version of windows the program was made for, the subsystem version of its image: user32 keeps
-     * old behaviours below 4.0, like the cursors IDC_SIZE and IDC_ICON. measured with clientinfo.exe of
-     * scratch/dlls/cursor.
+     * at 0x10 the version of windows the program was made for, the subsystem version of its image: user32 keeps old
+     * behaviours below 4.0, like the cursors IDC_SIZE and IDC_ICON. measured on windows.
      */
     PPEB peb = PsGetProcessPeb(p->Process);
     ULONG version[2];

@@ -979,9 +979,9 @@ BOOL NTAPI NtUserUpdateWindow(HWND hwnd)
     WND *w = WndLookup(hwnd);
     if (w && w->Thread == W32GetThread()) {
         /*
-         * measured on windows 11 26300 with upd.c of the research repository: what a child is about to paint is
-         * taken out of the update regions of its parents that do not clip their children, so a parent that erases
-         * later leaves what the child drew. a child that is only validated is drawn over.
+         * measured on windows 11 26300: what a child is about to paint is taken out of the update regions of its
+         * parents that do not clip their children, so a parent that erases later leaves what the child drew. a child
+         * that is only validated is drawn over.
          */
         if (!RgnIsEmpty(&w->Update))
             for (WND *c = w; (c->Style & WS_CHILD) && c->Parent && c->Parent != WndDesktop(); c = c->Parent) {
@@ -999,11 +999,10 @@ BOOL NTAPI NtUserUpdateWindow(HWND hwnd)
 }
 
 /*
- * PrintWindow: what the window shows, frame and all or its client area alone with PW_CLIENTONLY, copied into the
- * device context. a window of windows 11 is kept whole by the compositor; a window of mime is kept whole by the
- * surface of its top level window, which the copy reads, with the alpha windows keeps and the screen where nothing
- * was drawn. PW_RENDERFULLCONTENT takes what the compositor shows, opaque, with the images presented in the window,
- * measured with unpainted.c of scratch/pr17 in the research repository.
+ * PrintWindow: what the window shows, frame and all or its client area alone with PW_CLIENTONLY, copied into the device
+ * context. a window of windows 11 is kept whole by the compositor; a window of mime is kept whole by the surface of its
+ * top level window, which the copy reads, with the alpha windows keeps and the screen where nothing was drawn.
+ * PW_RENDERFULLCONTENT takes what the compositor shows, opaque, with the images presented in the window.
  */
 BOOL NTAPI NtUserPrintWindow(HWND hwnd, HDC hdc, UINT flags)
 {

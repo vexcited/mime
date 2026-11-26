@@ -3,15 +3,14 @@
  * the win32u.dll a 32-bit process loads is microsoft's and has no such export, and its wow64win.dll has no thunk for
  * them, so each caller links the stub itself, as guest/win32u/mime_x64.S does for 64-bit callers.
  *
- * on an x64 machine the stub calls the 64-bit service itself: it enters the 64-bit code segment with a far call,
- * makes the system call with the arguments widened, and comes back with a far return. none of these services takes a
- * structure whose layout depends on the caller's pointers. a service may call back into user mode, a window message
- * for one: the callback is dispatched on the stack the call was made on, and wow64 resumes 32-bit code below the
- * stack pointer of its cpu context. so the stub does as wow64cpu does, which keeps the 64-bit stack in r14 and the
- * context in r13 while 32-bit code runs: it writes the 32-bit stack pointer into the context and makes the call on
- * the 64-bit stack. on arm64, where xta64 runs 32-bit code and serves every service, the stub calls Wow64Transition
- * as the stubs of the 32-bit ntdll do.
- * written by the generator in scratch/dlls/wow/genmime86.py of the research repository.
+ * on an x64 machine the stub calls the 64-bit service itself: it enters the 64-bit code segment with a far call, makes
+ * the system call with the arguments widened, and comes back with a far return. none of these services takes a
+ * structure whose layout depends on the caller's pointers. a service may call back into user mode, a window message for
+ * one: the callback is dispatched on the stack the call was made on, and wow64 resumes 32-bit code below the stack
+ * pointer of its cpu context. so the stub does as wow64cpu does, which keeps the 64-bit stack in r14 and the context in
+ * r13 while 32-bit code runs: it writes the 32-bit stack pointer into the context and makes the call on the 64-bit
+ * stack. on arm64, where xta64 runs 32-bit code and serves every service, the stub calls Wow64Transition as the stubs
+ * of the 32-bit ntdll do.
  */
 #include "mime_svc_win32k.h"
 

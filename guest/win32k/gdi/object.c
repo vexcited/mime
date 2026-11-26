@@ -476,7 +476,7 @@ BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
     GDI_OBJECT *o = GdiLookup(handle, 0);
     BOOL ok = FALSE;
     if (o && o->Type == GDI_TYPE_PALETTE && o->SelectCount && !(o->Flags & GDI_FLAG_STOCK)) {
-        /* a palette a dc holds stays, and the call fails: measured with pal.exe of scratch/dlls/cursor. */
+        /* a palette a dc holds stays, and the call fails: measured on windows. */
         ok = FALSE;
     } else if (o && !(o->Flags & GDI_FLAG_STOCK)) {
         GdiDeleteObject(o);

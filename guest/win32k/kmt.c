@@ -81,10 +81,10 @@ static void basic(KMT_ADAPTER *a, ULONG luid, ULONG type, ULONG wddm, const WCHA
 }
 
 /*
- * windows 11 lists each gpu, then the basic render driver; a machine without a gpu has the basic display adapter in
- * its place. the luids are dxgi's and those of the directx database, see guest/dxgi/main.c and guest/ntos/cm/boot.c.
- * the answers of the basic adapters were read on windows 11 with kmt.c of scratch/steam/kmt in the research
- * repository, those of a gpu follow the same layouts with what the host tells of it.
+ * windows 11 lists each gpu, then the basic render driver; a machine without a gpu has the basic display adapter in its
+ * place. the luids are dxgi's and those of the directx database, see guest/dxgi/main.c and guest/ntos/cm/boot.c. the
+ * answers of the basic adapters were read on windows 11, those of a gpu follow the same layouts with what the host
+ * tells of it.
  */
 static ULONG adapters(KMT_ADAPTER *list)
 {
@@ -161,11 +161,10 @@ typedef struct KMT_ENUMADAPTERS2 {
 } KMT_ENUMADAPTERS2;
 
 /*
- * DxgkEnumAdapters2Impl and DxgkEnumAdapters3Impl of dxgkrnl 26300, measured with enum2.c of scratch/pr17 in the
- * research repository: no list is told the most adapters a session has, 34, a list too short fails with
- * STATUS_BUFFER_TOO_SMALL and is left as it was, its count too, and a longer one than 34 counts as 34. enum2 lists
- * every adapter with its video sources, one for an adapter that displays. enum3 tells no sources and leaves out the
- * adapters that only display unless its filter asks for them.
+ * DxgkEnumAdapters2Impl and DxgkEnumAdapters3Impl of dxgkrnl 26300: no list is told the most adapters a session has,
+ * 34, a list too short fails with STATUS_BUFFER_TOO_SMALL and is left as it was, its count too, and a longer one than
+ * 34 counts as 34. enum2 lists every adapter with its video sources, one for an adapter that displays. enum3 tells no
+ * sources and leaves out the adapters that only display unless its filter asks for them.
  */
 static NTSTATUS enum_adapters(UINT *user_count, KMT_ADAPTERINFO *user_list, UINT room, ULONG64 filter,
                               BOOLEAN sources)
@@ -305,10 +304,9 @@ static NTSTATUS write_open(PVOID user, const UINT *adapter, const LUID *luid)
 
 /*
  * D3DKMTOpenAdapterFromDeviceName, as DxgkOpenAdapterFromDeviceName of dxgkrnl 26300 answers it: a name of at most 255
- * characters, \\?\ taken as \??\, that is the compute or display arrival interface of an adapter, ignoring case,
- * opens that adapter. any other name is STATUS_INVALID_PARAMETER with the request left as it was; an empty one passes,
- * as it equals the partition interfaces no adapter here has, and fails to open with both outputs zeroed. measured with
- * kmtname.c of scratch/pr17 in the research repository.
+ * characters, \\?\ taken as \??\, that is the compute or display arrival interface of an adapter, ignoring case, opens
+ * that adapter. any other name is STATUS_INVALID_PARAMETER with the request left as it was; an empty one passes, as it
+ * equals the partition interfaces no adapter here has, and fails to open with both outputs zeroed. measured on windows.
  */
 NTSTATUS NTAPI NtGdiDdDDIOpenAdapterFromDeviceName(PVOID user)
 {
@@ -505,9 +503,9 @@ NTSTATUS NTAPI NtGdiDdDDIQueryAdapterInfo(const KMT_QUERYADAPTERINFO *user)
 }
 
 /*
- * D3DKMTQueryStatistics, as dxgkrnl 26300 and dxgmms2 answer it: spec-querystatistics.md of scratch/syscalls in the
- * research repository. the request is 0x328 bytes, the result the 0x308 at +0x18, written back only on success. Mime
- * has no video memory manager or scheduler, so every counter is 0 and only the shape of each adapter shows. no process
+ * D3DKMTQueryStatistics, as dxgkrnl 26300 and dxgmms2 answer it. the request is 0x328 bytes, the result the 0x308 at
+ * +0x18, written back only on success. Mime has no video memory manager or scheduler, so every counter is 0 and only
+ * the shape of each adapter shows. no process
  * creates a dxgkrnl device here, so the queries about a process on an adapter fail as they do on windows without one.
  */
 #define QS_SIZE 0x328
@@ -538,10 +536,9 @@ typedef struct KMT_SHAPE {
 
 /*
  * the basic render driver has one aperture segment the size of the memory, cpu visible, a 3d engine per processor and
- * one more, between 3 and 62, and no performance data; its memory group is half the memory. measured on windows 11
- * with qs.c of scratch/syscalls/querystatistics in the research repository. a gpu has its local memory and the
- * system memory group, and one engine: Mime submits on one queue. both get the system memory segment of video memory
- * management last.
+ * one more, between 3 and 62, and no performance data; its memory group is half the memory. measured on windows 11. a
+ * gpu has its local memory and the system memory group, and one engine: Mime submits on one queue. both get the system
+ * memory segment of video memory management last.
  */
 static void shape_of(const KMT_ADAPTER *a, KMT_SHAPE *s)
 {

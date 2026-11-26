@@ -1,7 +1,6 @@
 /*
- * the memory gdi32 shares with win32k, as windows 11 26300 lays it out, measured there with gdishared.exe of
- * scratch/dlls/probe in the research repository. the peb of a process names a read-only view of 0x181000 bytes
- * in GdiSharedHandleTable:
+ * the memory gdi32 shares with win32k, as windows 11 26300 lays it out, measured there. the peb of a process names a
+ * read-only view of 0x181000 bytes in GdiSharedHandleTable:
  *
  *   65536 entries of 0x18 bytes, one for each index of a handle. the first 8 bytes stand for the object in the
  *   kernel, which windows hides as ff000000 over the reuse count and the index. then the process that owns it, 0
@@ -11,10 +10,10 @@
  *
  *   at 0x180000 the capabilities of the display, at 0x1800b0 the handles of the stock objects by their index.
  *
- * the attributes of device contexts are in gdi/dc.c. those of brushes and regions are here: windows gives them to
- * the solid brushes of NtGdiCreateSolidBrush and to the regions of NtGdiCreateRectRgn only, not to hatched brushes,
- * pens, stock objects or elliptic regions. a font takes the block gdi32 allocates itself and passes as the last
- * argument of NtGdiHfontCreate. measured with attrs.exe of scratch/dlls/gdibatch.
+ * the attributes of device contexts are in gdi/dc.c. those of brushes and regions are here: windows gives them to the
+ * solid brushes of NtGdiCreateSolidBrush and to the regions of NtGdiCreateRectRgn only, not to hatched brushes, pens,
+ * stock objects or elliptic regions. a font takes the block gdi32 allocates itself and passes as the last argument of
+ * NtGdiHfontCreate. measured on windows.
  *
  * a 32-bit program reads the same table, through the 64-bit peb, and takes the attributes out with 32 bits of the
  * cookie: cookie ^ ror32(value, 32 - (cookie & 31)), as win32kbase's GreEncodeUserModePointer writes them.
@@ -337,8 +336,7 @@ void GdiObjectAttrForget(GDI_OBJECT *o)
 
 /*
  * a freed entry keeps the high word of its handle and its type: gdi32's GetObjectType compares only the high word and
- * the process, 0 once freed, so a deleted palette still answers OBJ_PAL on windows. measured with pal.exe of
- * scratch/dlls/cursor.
+ * the process, 0 once freed, so a deleted palette still answers OBJ_PAL on windows. measured on windows.
  */
 void GdiSharedClear(ULONG index)
 {

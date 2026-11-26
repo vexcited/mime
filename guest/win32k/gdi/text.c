@@ -32,10 +32,9 @@ static void glyph_matrix(DC *dc, XFORM *g)
 }
 
 /*
- * the pen position after each code unit of a string: the advance and the extra of characters of each character, and
- * for each break character its share of the extra of SetTextJustification. as windows 11 does it, measured with textj.c
- * of scratch/dlls/gdibatch: the share keeps its 28.4 fraction, the positions round to pixels but the last one is
- * truncated, and the width returned rounds.
+ * the pen position after each code unit of a string: the advance and the extra of characters of each character, and for
+ * each break character its share of the extra of SetTextJustification. as windows 11 does it: the share keeps its 28.4
+ * fraction, the positions round to pixels but the last one is truncated, and the width returned rounds.
  */
 static LONG text_positions(DC *dc, FONT_INSTANCE *fi, PCWSTR text, ULONG count, BOOLEAN indices, LONG *pos)
 {

@@ -1,8 +1,8 @@
 /*
- * what win32k shares with user32, as windows 11 26300 does, measured there with csrdbgu.exe of scratch/dlls/probe
- * in the research repository. user32 connects to server dll 3 of csrss when it loads, with 0x248 bytes: a version,
- * then the 0x240 bytes it keeps as gSharedInfo. on windows winsrv passes them to NtUserProcessConnect, and win32k
- * maps two sections read-only in the client during that call and fills the bytes with addresses in them:
+ * what win32k shares with user32, as windows 11 26300 does, measured there. user32 connects to server dll 3 of csrss
+ * when it loads, with 0x248 bytes: a version, then the 0x240 bytes it keeps as gSharedInfo. on windows winsrv passes
+ * them to NtUserProcessConnect, and win32k maps two sections read-only in the client during that call and fills the
+ * bytes with addresses in them:
  *
  *   the server information, 0x8000 bytes: a heap whose block at 0x1040 is the structure user32 calls gpsi, with the
  *   display information at 0x6950, the tables of the messages of each window procedure, and the monitors. what

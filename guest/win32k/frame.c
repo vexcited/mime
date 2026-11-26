@@ -1134,8 +1134,8 @@ BOOLEAN FrameComposesAlpha(WND *w)
 }
 
 /*
- * what the dwm of windows 11 composes under a window that extended its frame or asked for blur behind, measured with
- * blur.c of scratch/pr17 in the research repository. dst holds the window's pixels in area, window relative.
+ * what the dwm of windows 11 composes under a window that extended its frame or asked for blur behind. dst holds the
+ * window's pixels in area, window relative.
  *
  * - out of the client area the window is opaque, whatever alpha gdi left there.
  * - the extended part shows the caption color of a window with a thick frame or a caption, and what is behind the
