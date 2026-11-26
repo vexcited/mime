@@ -642,8 +642,6 @@ static int crossings_at(const Seg *segs, size_t n, const Buckets *b, int axis, i
 #define SCAN_EPS 1e-7
 /* the curves are flattened finer than the display ones, a sample can be decided by a hundredth of a pixel. */
 #define SCAN_FLATNESS 0.002f
-/* how far around a dropout the next scan lines must show the contours going on. */
-#define STUB_MARGIN 1.5
 
 static bool scan_enabled(const MimeTtfScan *s)
 {
@@ -662,24 +660,164 @@ static unsigned scan_rules(const MimeTtfScan *s)
     return s->type & 0xFFFF;
 }
 
-/* true when the crossings at the line next to a dropout show the contours go on. */
-static bool continues(const Seg *segs, size_t n, const Buckets *b, Cross *tmp, int axis, int line, int lines, double lo,
-                      double hi)
-{
-    if (line < 0 || line >= lines)
-        return false;
-    int k = crossings_at(segs, n, b, axis, line, tmp);
-    int hit = 0;
-    for (int i = 0; i < k; i++)
-        if (tmp[i].x >= lo - STUB_MARGIN && tmp[i].x <= hi + STUB_MARGIN)
-            hit++;
-    return hit >= 2;
-}
-
 /* the box of the runs the scan found, relative to the box of the glyph: columns x0 to x1 and rows y0 to y1. */
 typedef struct RunBox {
     int x0, y0, x1, y1;
 } RunBox;
+
+/*
+ * the transitions of a line as the font driver of Windows keeps them, LookForDropouts and its helpers in DWrite 26300:
+ * where each crossing falls between samples, the index of the sample after it, in a list of the on crossings and one
+ * of the off ones, and where the crossings are for the smart rule.
+ */
+typedef struct Transitions {
+    int count;
+    int *on, *off;
+    double *on_at, *off_at;
+} Transitions;
+
+static int transitions_at(const Transitions *t, int lines, int line, int index)
+{
+    if (line < 0 || line >= lines)
+        return 0;
+    int c = 0;
+    for (int i = 0; i < t[line].count; i++)
+        c += (t[line].on[i] == index) + (t[line].off[i] == index);
+    return c;
+}
+
+static void grow_runs(RunBox *runs, int x, int y)
+{
+    if (runs->x1 <= runs->x0) {
+        *runs = (RunBox){x, y, x + 1, y + 1};
+        return;
+    }
+    if (x < runs->x0)
+        runs->x0 = x;
+    if (x + 1 > runs->x1)
+        runs->x1 = x + 1;
+    if (y < runs->y0)
+        runs->y0 = y;
+    if (y + 1 > runs->y1)
+        runs->y1 = y + 1;
+}
+
+/* the transitions of every line of an axis, from one allocation. */
+static Transitions *transitions_build(const MimeAllocator *alloc, const Seg *segs, size_t n, const Buckets *b, int axis,
+                                      int lines, Cross *cross)
+{
+    size_t total = 0;
+    for (int l = 0; l < lines; l++)
+        total += (size_t)crossings_at(segs, n, b, axis, l, cross);
+    size_t bytes = (size_t)lines * sizeof(Transitions) + total * 2 * (sizeof(int) + sizeof(double));
+    Transitions *t = mime_alloc(alloc, bytes ? bytes : 1);
+    if (!t)
+        return nullptr;
+    double *at = (double *)(t + lines);
+    int *index = (int *)(at + total * 2);
+    for (int l = 0; l < lines; l++) {
+        int k = crossings_at(segs, n, b, axis, l, cross);
+        t[l].on_at = at, t[l].off_at = at + k;
+        t[l].on = index, t[l].off = index + k;
+        at += 2 * (size_t)k;
+        index += 2 * (size_t)k;
+        /* the crossings of the direction the first one has turn the samples on, the others off. */
+        int on = 0, off = 0;
+        for (int i = 0; i < k; i++) {
+            if (cross[i].dir == cross[0].dir) {
+                t[l].on[on] = dceil(cross[i].x - 0.5 - SCAN_EPS);
+                t[l].on_at[on++] = cross[i].x;
+            } else {
+                t[l].off[off] = dfloor(cross[i].x - 0.5 + SCAN_EPS) + 1;
+                t[l].off_at[off++] = cross[i].x;
+            }
+        }
+        t[l].count = on < off ? on : off;
+    }
+    return t;
+}
+
+/*
+ * the dropout control of the font driver of Windows, DoHorizDropout and DoVertDropout of DWrite 26300. a dropout is an
+ * on and an off transition at the same place: the contour passes between two samples without a centre. the rows are
+ * looked at from the top, then the columns from the left, each from its first transition. without stubs, the cell
+ * on either side of the dropout must hold two crossings of the lines around it, or the contour ends there. a sample
+ * on beside it already fills it; otherwise the left one of a row or the lower one of a column is turned on, or with
+ * the smart rule the one under the middle of the crossings. the sample stays inside the samples whose centres the
+ * outline reaches, and the bitmap grows to hold it.
+ */
+static void dropouts(const MimeAllocator *alloc, const Seg *segs, size_t n, const Buckets *buckets, Cross *cross,
+                     unsigned rules, uint8_t *out, int width, int height, int stride, RunBox *runs)
+{
+    bool smart = (rules & 4) != 0, stubs = (rules & 1) != 0;
+    Transitions *rows = transitions_build(alloc, segs, n, &buckets[0], 0, height, cross);
+    Transitions *cols = transitions_build(alloc, segs, n, &buckets[1], 1, width, cross);
+    if (!rows || !cols) {
+        mime_free(alloc, rows);
+        mime_free(alloc, cols);
+        return;
+    }
+    double min_x = 1e30, max_x = -1e30, min_y = 1e30, max_y = -1e30;
+    for (size_t i = 0; i < n; i++) {
+        min_x = segs[i].x0 < min_x ? segs[i].x0 : min_x;
+        min_x = segs[i].x1 < min_x ? segs[i].x1 : min_x;
+        max_x = segs[i].x0 > max_x ? segs[i].x0 : max_x;
+        max_x = segs[i].x1 > max_x ? segs[i].x1 : max_x;
+        min_y = segs[i].y0 < min_y ? segs[i].y0 : min_y;
+        min_y = segs[i].y1 < min_y ? segs[i].y1 : min_y;
+        max_y = segs[i].y0 > max_y ? segs[i].y0 : max_y;
+        max_y = segs[i].y1 > max_y ? segs[i].y1 : max_y;
+    }
+    int x0 = dceil(min_x - 0.5 - SCAN_EPS), x1 = dfloor(max_x - 0.5 + SCAN_EPS) + 1;
+    int y0 = dceil(min_y - 0.5 - SCAN_EPS), y1 = dfloor(max_y - 0.5 + SCAN_EPS) + 1;
+    x0 = x0 < 0 ? 0 : x0, y0 = y0 < 0 ? 0 : y0;
+    x1 = x1 > width ? width : x1, y1 = y1 > height ? height : y1;
+
+    for (int r = 0; r < height; r++) {
+        for (int i = 0; i < rows[r].count; i++) {
+            int u = rows[r].on[i];
+            if (u != rows[r].off[i])
+                continue;
+            if (stubs && (transitions_at(rows, height, r - 1, u) + transitions_at(cols, width, u - 1, r) +
+                                  transitions_at(cols, width, u, r) < 2 ||
+                          transitions_at(rows, height, r + 1, u) + transitions_at(cols, width, u - 1, r + 1) +
+                                  transitions_at(cols, width, u, r + 1) < 2))
+                continue;
+            uint8_t *row = out + (size_t)r * (size_t)stride;
+            if ((u > x0 && u - 1 < width && row[u - 1]) || (u >= 0 && u < x1 && row[u]))
+                continue;
+            int at = smart ? dfloor((rows[r].on_at[i] + rows[r].off_at[i]) * 0.5 - SCAN_EPS) : u - 1;
+            at = at < x0 ? x0 : at >= x1 ? x1 - 1 : at;
+            if (at >= 0 && at < width) {
+                row[at] = 1;
+                grow_runs(runs, at, r);
+            }
+        }
+    }
+    for (int c = 0; c < width; c++) {
+        for (int i = 0; i < cols[c].count; i++) {
+            int t = cols[c].on[i];
+            if (t != cols[c].off[i])
+                continue;
+            if (stubs && (transitions_at(cols, width, c - 1, t) + transitions_at(rows, height, t - 1, c) +
+                                  transitions_at(rows, height, t, c) < 2 ||
+                          transitions_at(cols, width, c + 1, t) + transitions_at(rows, height, t - 1, c + 1) +
+                                  transitions_at(rows, height, t, c + 1) < 2))
+                continue;
+            if ((t - 1 >= y0 && t - 1 < height && out[(size_t)(t - 1) * (size_t)stride + (size_t)c]) ||
+                (t >= 0 && t < y1 && out[(size_t)t * (size_t)stride + (size_t)c]))
+                continue;
+            int at = smart ? dfloor((cols[c].on_at[i] + cols[c].off_at[i]) * 0.5) : t;
+            at = at < y0 ? y0 : at >= y1 ? y1 - 1 : at;
+            if (at >= 0 && at < height) {
+                out[(size_t)at * (size_t)stride + (size_t)c] = 1;
+                grow_runs(runs, c, at);
+            }
+        }
+    }
+    mime_free(alloc, rows);
+    mime_free(alloc, cols);
+}
 
 static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
                       const MimeTtfRenderParams *params, const MimeTtfScan *scan, uint8_t *out, int width, int height,
@@ -712,7 +850,6 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
             mime_free(alloc, list.v);
         return false;
     }
-    Cross *tmp = cross + list.count + 1;
     const Seg *segs = list.v;
     size_t n = list.count;
 
@@ -762,66 +899,8 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
         }
     }
 
-    if (!(rules & 2)) {
-        bool smart = (rules & 4) != 0, stubs = (rules & 1) != 0;
-        for (int pass = 0; pass < 2; pass++) {
-            int lines = pass ? width : height, along = pass ? height : width;
-            const Buckets *b = &buckets[pass];
-            for (int line = 0; line < lines; line++) {
-                int k = crossings_at(segs, n, b, pass, line, cross);
-                int wind = 0;
-                double start = 0;
-                double span[64][2];
-                int spans = 0;
-                for (int i = 0; i < k; i++) {
-                    int before = wind;
-                    wind += cross[i].dir;
-                    if (before == 0 && wind != 0) {
-                        start = cross[i].x;
-                    } else if (before != 0 && wind == 0 && spans < 64) {
-                        span[spans][0] = start;
-                        span[spans][1] = cross[i].x;
-                        spans++;
-                    }
-                }
-                /* the runs are looked at from the end, so the first dropout wins the sample. */
-                for (int s = 0; s < spans; s++) {
-                    int si = spans - 1 - s;
-                    double lo_x = span[si][0], hi_x = span[si][1];
-                    int first = dceil(lo_x - 0.5 - SCAN_EPS), last = dfloor(hi_x - 0.5 + SCAN_EPS);
-                    if (first <= last)
-                        continue;
-                    /* no centre inside, so the span lies between samples nr and nr + 1. */
-                    int nr = first - 1;
-                    if (pass == 0 ? (nr < 0 || nr + 1 >= along) : (nr < -1 || nr + 1 > along))
-                        continue;
-                    if (stubs && !(continues(segs, n, b, tmp, pass, line - 1, lines, nr, nr + 1.0 + SCAN_EPS) &&
-                                   continues(segs, n, b, tmp, pass, line + 1, lines, nr, nr + 1.0 + SCAN_EPS)))
-                        continue;
-                    uint8_t *base = pass ? out + (size_t)line : out + (size_t)line * (size_t)stride;
-                    size_t step = pass ? (size_t)stride : 1;
-                    if ((nr >= 0 && base[(size_t)nr * step]) || (nr + 1 < along && base[(size_t)(nr + 1) * step]))
-                        continue;
-                    int pick = 0;
-                    if (smart)
-                        pick = dfloor((lo_x + hi_x) * 0.5) > nr ? 1 : 0;
-                    /* the bitmap ends where the runs do, a sample beyond is left off down and pulled in across. */
-                    int at = nr + pick;
-                    if (pass == 0) {
-                        if (at < runs->x0)
-                            at = runs->x0;
-                        if (at >= runs->x1)
-                            at = runs->x1 - 1;
-                    } else if (at < runs->y0 || at >= runs->y1) {
-                        continue;
-                    }
-                    uint8_t *dst = pass ? out + (size_t)at * (size_t)stride + (size_t)line
-                                        : out + (size_t)line * (size_t)stride + (size_t)at;
-                    *dst = 1;
-                }
-            }
-        }
-    }
+    if (!(rules & 2))
+        dropouts(alloc, segs, n, buckets, cross, rules, out, width, height, stride, runs);
     buckets_free(alloc, &buckets[0]);
     buckets_free(alloc, &buckets[1]);
     mime_free(alloc, cross);
