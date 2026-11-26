@@ -128,6 +128,8 @@ struct _FILEDLG {
     /* a typed wildcard replaces the file type's filter until the folder changes. */
     WCHAR Wildcard[MAX_PATH];
     BOOL Syncing, SyncingName, Navigating;
+    /* the name box holds a folder picked in the list, which names it in the folder shown and no other. */
+    BOOL NameFromList;
     int Busy;
 
     LPWSTR *Results;
@@ -386,6 +388,8 @@ HWND FdWindow(const FILEDLG *dialog)
 HRESULT FdSetFileName(FILEDLG *dialog, LPCWSTR text)
 {
     HRESULT hr = set_text(&dialog->InitialName, text);
+    if (SUCCEEDED(hr))
+        dialog->NameFromList = FALSE;
     if (SUCCEEDED(hr) && dialog->NameEdit) {
         dialog->SyncingName = TRUE;
         SetWindowTextW(dialog->NameEdit, text ? text : L"");
@@ -1631,6 +1635,20 @@ static void history_push(FILEDLG *dialog, LPCWSTR where)
     }
 }
 
+/*
+ * a folder picked in the list goes from the name box once the folder shown changes or nothing is picked anymore, else
+ * accepting would name it under itself. a typed name and the name of an open or save dialog stay.
+ */
+static void forget_name_from_list(FILEDLG *dialog)
+{
+    if (!dialog->NameFromList)
+        return;
+    dialog->NameFromList = FALSE;
+    dialog->SyncingName = TRUE;
+    SetWindowTextW(dialog->NameEdit, L"");
+    dialog->SyncingName = FALSE;
+}
+
 /* shows a folder, "" for the drives. FALSE when it cannot be shown. */
 static BOOL navigate(FILEDLG *dialog, LPCWSTR where, BOOL record, BOOL sync_tree)
 {
@@ -1647,6 +1665,7 @@ static BOOL navigate(FILEDLG *dialog, LPCWSTR where, BOOL record, BOOL sync_tree
             return FALSE;
     }
     dialog->Navigating = TRUE;
+    forget_name_from_list(dialog);
     dialog->AtComputer = computer;
     if (computer)
         dialog->Folder[0] = 0;
@@ -1733,8 +1752,10 @@ static void name_from_selection(FILEDLG *dialog)
     if (dialog->Navigating || dialog->SyncingName)
         return;
     int count = selected_count(dialog);
-    if (!count)
+    if (!count) {
+        forget_name_from_list(dialog);
         return;
+    }
     const FD_ENTRY *entries[64];
     UINT n = selected_entries(dialog, entries, 64);
     WCHAR text[MAX_PATH * 2];
@@ -1746,8 +1767,10 @@ static void name_from_selection(FILEDLG *dialog)
             continue;
         used++;
     }
-    if (!used)
+    if (!used) {
+        forget_name_from_list(dialog);
         return;
+    }
     for (UINT i = 0; i < n; i++) {
         if (entries[i]->Folder != folders || entries[i]->Drive)
             continue;
@@ -1764,6 +1787,7 @@ static void name_from_selection(FILEDLG *dialog)
     dialog->SyncingName = TRUE;
     SetWindowTextW(dialog->NameEdit, text);
     dialog->SyncingName = FALSE;
+    dialog->NameFromList = folders;
 }
 
 /* absolute as typed, otherwise relative to the folder shown. */
@@ -3135,6 +3159,10 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         case IDC_NEWFOLDER:
             new_folder(dialog);
             return TRUE;
+        case IDC_NAME:
+            if (code == EN_CHANGE && !dialog->SyncingName)
+                dialog->NameFromList = FALSE;
+            return FALSE;
         case IDC_TYPE:
             if (code == CBN_SELCHANGE)
                 on_type_changed(dialog);
