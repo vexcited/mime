@@ -12,6 +12,8 @@ EXPORTS
     SetupDefaultQueueCallbackW@16
     SetupDiBuildDriverInfoList@12
     SetupDiCallClassInstaller@12
+    SetupDiSetClassInstallParamsW@16
+    SetupDiSetClassInstallParamsA@16
     SetupDiClassGuidsFromNameA@16
     SetupDiClassGuidsFromNameExA@24
     SetupDiClassGuidsFromNameExW@24
@@ -23,6 +25,7 @@ EXPORTS
     SetupDiEnumDeviceInfo@12
     SetupDiEnumDeviceInterfaces@20
     SetupDiEnumDriverInfoW@20
+    SetupDiEnumDriverInfoA@20
     SetupDiGetClassDevsA@16
     SetupDiGetClassDevsExW@28
     SetupDiGetClassDevsW@16
@@ -35,6 +38,9 @@ EXPORTS
     SetupDiGetDeviceRegistryPropertyA@28
     SetupDiGetDeviceRegistryPropertyW@28
     SetupDiGetDriverInstallParamsW@16
+    SetupDiGetDriverInstallParamsA@16
+    SetupDiGetClassInstallParamsW@20
+    SetupDiGetClassInstallParamsA@20
     SetupDiOpenClassRegKey@8
     SetupDiOpenClassRegKeyExW@20
     SetupDiOpenDevRegKey@24
@@ -118,6 +124,8 @@ EXPORTS
     CM_Get_Device_IDA@16
     CM_Get_Device_IDW@16
     CM_Get_Device_ID_Size@12
+    CM_Get_Device_ID_ExA@20
+    CM_Get_Device_ID_ExW@20
     CM_Get_Device_Interface_ListA@20
     CM_Get_Device_Interface_ListW@20
     CM_Get_Device_Interface_List_SizeA@16

@@ -242,10 +242,18 @@ CMAPI CONFIGRET WINAPI CM_Get_Sibling(PDEVINST out, DEVINST devinst, ULONG flags
     return flags ? CR_INVALID_FLAG : related(out, devinst, MIME_PNP_SIBLING);
 }
 
+/*
+ * measured on windows 11: a flag fails with CR_INVALID_FLAG, and the size is 0 then. the wide id needs no room for its
+ * terminator, the ansi one does.
+ */
 CMAPI CONFIGRET WINAPI CM_Get_Device_ID_Size(PULONG length, DEVINST devinst, ULONG flags)
 {
     if (!length)
         return CR_INVALID_POINTER;
+    if (flags) {
+        *length = 0;
+        return CR_INVALID_FLAG;
+    }
     PCWSTR id = id_of(devinst);
     if (!id)
         return CR_INVALID_DEVNODE;
@@ -258,6 +266,8 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_IDW(DEVINST devinst, PWSTR buffer, ULONG le
 {
     if (!buffer)
         return CR_INVALID_POINTER;
+    if (flags)
+        return CR_INVALID_FLAG;
     PCWSTR id = id_of(devinst);
     if (!id)
         return CR_INVALID_DEVNODE;
@@ -270,14 +280,16 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_IDW(DEVINST devinst, PWSTR buffer, ULONG le
 
 CMAPI CONFIGRET WINAPI CM_Get_Device_IDA(DEVINST devinst, PSTR buffer, ULONG length, ULONG flags)
 {
+    if (!buffer)
+        return CR_INVALID_POINTER;
     WCHAR w[MAX_DEVICE_ID_LEN + 1];
     CONFIGRET cr = CM_Get_Device_IDW(devinst, w, RTL_NUMBER_OF(w), flags);
     if (cr)
         return cr;
     int need = WideCharToMultiByte(CP_ACP, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    if ((ULONG)need - 1 > length)
+    if (!need || (ULONG)need > length)
         return CR_BUFFER_SMALL;
-    WideCharToMultiByte(CP_ACP, 0, w, -1, buffer, (int)length, nullptr, nullptr);
+    WideCharToMultiByte(CP_ACP, 0, w, -1, buffer, need, nullptr, nullptr);
     return CR_SUCCESS;
 }
 

@@ -3,6 +3,8 @@ LIBRARY setupapi.dll
 EXPORTS
     SetupDiBuildDriverInfoList
     SetupDiCallClassInstaller
+    SetupDiSetClassInstallParamsW
+    SetupDiSetClassInstallParamsA
     SetupDiClassGuidsFromNameA
     SetupDiClassGuidsFromNameExA
     SetupDiClassGuidsFromNameExW
@@ -21,6 +23,7 @@ EXPORTS
     SetupDiEnumDeviceInfo
     SetupDiEnumDeviceInterfaces
     SetupDiEnumDriverInfoW
+    SetupDiEnumDriverInfoA
     SetupDiGetClassDescriptionA
     SetupDiGetClassDevsA
     SetupDiGetClassDevsExW
@@ -37,6 +40,9 @@ EXPORTS
     SetupDiGetDeviceRegistryPropertyA
     SetupDiGetDeviceRegistryPropertyW
     SetupDiGetDriverInstallParamsW
+    SetupDiGetDriverInstallParamsA
+    SetupDiGetClassInstallParamsW
+    SetupDiGetClassInstallParamsA
     SetupDiOpenClassRegKey
     SetupDiOpenClassRegKeyExW
     SetupDiOpenDevRegKey
@@ -55,6 +61,8 @@ EXPORTS
     CM_Get_Device_IDW=cfgmgr32.CM_Get_Device_IDW
     CM_Get_Device_IDA=cfgmgr32.CM_Get_Device_IDA
     CM_Get_Device_ID_Size=cfgmgr32.CM_Get_Device_ID_Size
+    CM_Get_Device_ID_ExA=cfgmgr32.CM_Get_Device_ID_ExA
+    CM_Get_Device_ID_ExW=cfgmgr32.CM_Get_Device_ID_ExW
     CM_Get_Device_ID_List_SizeW=cfgmgr32.CM_Get_Device_ID_List_SizeW
     CM_Get_Device_ID_List_SizeA=cfgmgr32.CM_Get_Device_ID_List_SizeA
     CM_Get_Device_ID_ListW=cfgmgr32.CM_Get_Device_ID_ListW

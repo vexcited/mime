@@ -12,6 +12,8 @@ EXPORTS
     SetupDefaultQueueCallbackW=_SetupDefaultQueueCallbackW@16
     SetupDiBuildDriverInfoList=_SetupDiBuildDriverInfoList@12
     SetupDiCallClassInstaller=_SetupDiCallClassInstaller@12
+    SetupDiSetClassInstallParamsW=_SetupDiSetClassInstallParamsW@16
+    SetupDiSetClassInstallParamsA=_SetupDiSetClassInstallParamsA@16
     SetupDiClassGuidsFromNameA=_SetupDiClassGuidsFromNameA@16
     SetupDiClassGuidsFromNameExA=_SetupDiClassGuidsFromNameExA@24
     SetupDiClassGuidsFromNameExW=_SetupDiClassGuidsFromNameExW@24
@@ -24,6 +26,7 @@ EXPORTS
     SetupDiEnumDeviceInfo=_SetupDiEnumDeviceInfo@12
     SetupDiEnumDeviceInterfaces=_SetupDiEnumDeviceInterfaces@20
     SetupDiEnumDriverInfoW=_SetupDiEnumDriverInfoW@20
+    SetupDiEnumDriverInfoA=_SetupDiEnumDriverInfoA@20
     SetupDiGetClassDescriptionA=_SetupDiGetClassDescriptionA@16
     SetupDiGetClassDevsA=_SetupDiGetClassDevsA@16
     SetupDiGetClassDevsExA=_SetupDiGetClassDevsExA@28
@@ -40,6 +43,9 @@ EXPORTS
     SetupDiGetDeviceRegistryPropertyA=_SetupDiGetDeviceRegistryPropertyA@28
     SetupDiGetDeviceRegistryPropertyW=_SetupDiGetDeviceRegistryPropertyW@28
     SetupDiGetDriverInstallParamsW=_SetupDiGetDriverInstallParamsW@16
+    SetupDiGetDriverInstallParamsA=_SetupDiGetDriverInstallParamsA@16
+    SetupDiGetClassInstallParamsW=_SetupDiGetClassInstallParamsW@20
+    SetupDiGetClassInstallParamsA=_SetupDiGetClassInstallParamsA@20
     SetupDiOpenClassRegKey=_SetupDiOpenClassRegKey@8
     SetupDiOpenClassRegKeyExW=_SetupDiOpenClassRegKeyExW@20
     SetupDiOpenDevRegKey=_SetupDiOpenDevRegKey@24
@@ -125,6 +131,8 @@ EXPORTS
     CM_Get_Device_IDA=cfgmgr32.CM_Get_Device_IDA
     CM_Get_Device_IDW=cfgmgr32.CM_Get_Device_IDW
     CM_Get_Device_ID_Size=cfgmgr32.CM_Get_Device_ID_Size
+    CM_Get_Device_ID_ExA=cfgmgr32.CM_Get_Device_ID_ExA
+    CM_Get_Device_ID_ExW=cfgmgr32.CM_Get_Device_ID_ExW
     CM_Get_Device_Interface_ListA=cfgmgr32.CM_Get_Device_Interface_ListA
     CM_Get_Device_Interface_ListW=cfgmgr32.CM_Get_Device_Interface_ListW
     CM_Get_Device_Interface_List_SizeA=cfgmgr32.CM_Get_Device_Interface_List_SizeA

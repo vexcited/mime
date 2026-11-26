@@ -24,6 +24,8 @@ typedef struct DEVICE {
     WCHAR Id[MAX_DEVICE_ID_LEN];
     DEVINST Inst;
     GUID Class;
+    PVOID ClassParams; /* what SetupDiSetClassInstallParams left, as given. */
+    DWORD ClassParamsSize;
 } DEVICE;
 
 typedef struct IFACE {
@@ -40,6 +42,8 @@ typedef struct DEVICE_SET {
     DWORD DeviceCount, DeviceCapacity;
     IFACE *Ifaces;
     DWORD IfaceCount, IfaceCapacity;
+    PVOID ClassParams;
+    DWORD ClassParamsSize;
 } DEVICE_SET;
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
@@ -121,6 +125,7 @@ static DWORD add_device(DEVICE_SET *s, PCWSTR id)
     if (!grow((void **)&s->Devices, &s->DeviceCapacity, s->DeviceCount, sizeof(DEVICE)))
         return ~0u;
     DEVICE *d = &s->Devices[s->DeviceCount];
+    memset(d, 0, sizeof(*d));
     lstrcpynW(d->Id, id, MAX_DEVICE_ID_LEN);
     d->Inst = inst;
     d->Class = class_of(inst);
@@ -290,6 +295,9 @@ WINSETUPAPI BOOL WINAPI SetupDiDestroyDeviceInfoList(HDEVINFO set)
     if (!s)
         return FALSE;
     s->Magic = 0;
+    for (DWORD i = 0; i < s->DeviceCount; i++)
+        HeapFree(GetProcessHeap(), 0, s->Devices[i].ClassParams);
+    HeapFree(GetProcessHeap(), 0, s->ClassParams);
     HeapFree(GetProcessHeap(), 0, s->Devices);
     HeapFree(GetProcessHeap(), 0, s->Ifaces);
     HeapFree(GetProcessHeap(), 0, s);
@@ -809,6 +817,101 @@ WINSETUPAPI BOOL WINAPI SetupDiGetDriverInstallParamsW(HDEVINFO set, PSP_DEVINFO
     /* the driver is one of the list, and the list has none. */
     SetLastError(ERROR_INVALID_PARAMETER);
     return FALSE;
+}
+
+/* the lists have no record, so the ansi calls fail as the wide ones do and have no strings to convert. */
+WINSETUPAPI BOOL WINAPI SetupDiEnumDriverInfoA(HDEVINFO set, PSP_DEVINFO_DATA device, DWORD type, DWORD index,
+                                               PVOID driver)
+{
+    return SetupDiEnumDriverInfoW(set, device, type, index, driver);
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiGetDriverInstallParamsA(HDEVINFO set, PSP_DEVINFO_DATA device, PVOID driver, PVOID params)
+{
+    return SetupDiGetDriverInstallParamsW(set, device, driver, params);
+}
+
+/* where the class install parameters of a device are kept, or those of the set without one. */
+static BOOL class_params(HDEVINFO set, PSP_DEVINFO_DATA device, PVOID **params, DWORD **size)
+{
+    DEVICE_SET *s = set_of(set);
+    if (!s)
+        return FALSE;
+    DEVICE *d = nullptr;
+    if (device && !(d = device_of(s, device)))
+        return FALSE;
+    *params = d ? &d->ClassParams : &s->ClassParams;
+    *size = d ? &d->ClassParamsSize : &s->ClassParamsSize;
+    return TRUE;
+}
+
+static BOOL bad_header(PSP_CLASSINSTALL_HEADER header, DWORD size)
+{
+    if (header ? size < sizeof(*header) || header->cbSize != sizeof(*header) : size != 0) {
+        SetLastError(ERROR_INVALID_USER_BUFFER);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+ * measured on windows 11: the parameters are kept as given whatever their install function, none with no size clears
+ * them, and a header that is not one is ERROR_INVALID_USER_BUFFER. no class installer reads them here.
+ */
+WINSETUPAPI BOOL WINAPI SetupDiSetClassInstallParamsW(HDEVINFO set, PSP_DEVINFO_DATA device,
+                                                      PSP_CLASSINSTALL_HEADER params, DWORD size)
+{
+    PVOID *kept;
+    DWORD *kept_size;
+    if (!class_params(set, device, &kept, &kept_size) || bad_header(params, size))
+        return FALSE;
+    PVOID copy = nullptr;
+    if (params) {
+        if (!(copy = HeapAlloc(GetProcessHeap(), 0, size))) {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        memcpy(copy, params, size);
+    }
+    HeapFree(GetProcessHeap(), 0, *kept);
+    *kept = copy;
+    *kept_size = params ? size : 0;
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiSetClassInstallParamsA(HDEVINFO set, PSP_DEVINFO_DATA device,
+                                                      PSP_CLASSINSTALL_HEADER params, DWORD size)
+{
+    return SetupDiSetClassInstallParamsW(set, device, params, size);
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiGetClassInstallParamsW(HDEVINFO set, PSP_DEVINFO_DATA device,
+                                                      PSP_CLASSINSTALL_HEADER params, DWORD size, PDWORD required)
+{
+    PVOID *kept;
+    DWORD *kept_size;
+    if (!class_params(set, device, &kept, &kept_size))
+        return FALSE;
+    if (!*kept) {
+        SetLastError(ERROR_NO_CLASSINSTALL_PARAMS);
+        return FALSE;
+    }
+    if (bad_header(params, size))
+        return FALSE;
+    if (required)
+        *required = *kept_size;
+    if (size < *kept_size) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    memcpy(params, *kept, *kept_size);
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiGetClassInstallParamsA(HDEVINFO set, PSP_DEVINFO_DATA device,
+                                                      PSP_CLASSINSTALL_HEADER params, DWORD size, PDWORD required)
+{
+    return SetupDiGetClassInstallParamsW(set, device, params, size, required);
 }
 
 /* no class installers run: succeed as for a device already set up. */

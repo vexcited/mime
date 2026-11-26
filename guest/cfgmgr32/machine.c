@@ -491,6 +491,12 @@ CMAPI CONFIGRET WINAPI CM_Get_Device_ID_ExW(DEVINST devinst, PWSTR buffer, ULONG
     return CM_Get_Device_IDW(devinst, buffer, length, flags);
 }
 
+CMAPI CONFIGRET WINAPI CM_Get_Device_ID_ExA(DEVINST devinst, PSTR buffer, ULONG length, ULONG flags, void *machine)
+{
+    LOCAL(machine);
+    return CM_Get_Device_IDA(devinst, buffer, length, flags);
+}
+
 CMAPI CONFIGRET WINAPI CM_Get_Device_ID_List_ExW(PCWSTR filter, PWCHAR buffer, ULONG length, ULONG flags, void *machine)
 {
     LOCAL(machine);

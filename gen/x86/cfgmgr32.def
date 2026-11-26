@@ -76,6 +76,7 @@ EXPORTS
     CM_Get_Class_NameW=_CM_Get_Class_NameW@16
     CM_Get_Class_Property_ExW=_CM_Get_Class_Property_ExW@28
     CM_Get_Class_Property_Keys_Ex=_CM_Get_Class_Property_Keys_Ex@20
+    CM_Get_Device_ID_ExA=_CM_Get_Device_ID_ExA@20
     CM_Get_Device_ID_ExW=_CM_Get_Device_ID_ExW@20
     CM_Get_Device_ID_List_ExW=_CM_Get_Device_ID_List_ExW@20
     CM_Get_Device_ID_List_Size_ExW=_CM_Get_Device_ID_List_Size_ExW@16
