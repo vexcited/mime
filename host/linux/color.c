@@ -168,15 +168,18 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
         for (int i = 0; i < 8; i++)
             out[i] = primaries[i] > 0 ? (uint32_t)primaries[i] : 0;
     }
-    /* the luminances are the range the encoding spans, which KWin puts above the white of an output it shows in sdr. */
+    /*
+     * KWin's encoding reaches above the white only in hdr. on a dimmed internal panel in sdr it puts its edr headroom
+     * in the target luminance alone, and windows shows such a panel in sdr.
+     */
+    *hdr = max / reference > 1.05;
+    if (!*hdr)
+        return;
     double peak = max, floor = min;
     if (q->has_target_luminance && q->target_max) {
         peak = q->target_max;
         floor = q->target_min / 10000.0;
     }
-    *hdr = peak / reference > 1.05;
-    if (!*hdr)
-        return;
     double scale = REFERENCE_NITS / reference;
     double frame = q->max_fall && q->max_fall < peak ? q->max_fall : peak;
     color->min_nits = ten_thousandths(floor * scale);
