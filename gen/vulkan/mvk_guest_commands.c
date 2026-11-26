@@ -3161,7 +3161,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkBuildAccelerationStructuresKHR(VkDevice device,
                 mvk_put_VkAccelerationStructureBuildRangeInfoKHR(e, &ppBuildRangeInfos[i][j]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCopyAccelerationStructureKHR(VkDevice device, VkDeferredOperationKHR deferredOperation, const VkCopyAccelerationStructureInfoKHR * pInfo)
@@ -3175,7 +3175,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCopyAccelerationStructureKHR(VkDevice device, V
             mvk_put_VkCopyAccelerationStructureInfoKHR(e, &pInfo[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCopyAccelerationStructureToMemoryKHR(VkDevice device, VkDeferredOperationKHR deferredOperation, const VkCopyAccelerationStructureToMemoryInfoKHR * pInfo)
@@ -3189,7 +3189,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCopyAccelerationStructureToMemoryKHR(VkDevice d
             mvk_put_VkCopyAccelerationStructureToMemoryInfoKHR(e, &pInfo[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCopyMemoryToAccelerationStructureKHR(VkDevice device, VkDeferredOperationKHR deferredOperation, const VkCopyMemoryToAccelerationStructureInfoKHR * pInfo)
@@ -3203,7 +3203,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCopyMemoryToAccelerationStructureKHR(VkDevice d
             mvk_put_VkCopyMemoryToAccelerationStructureInfoKHR(e, &pInfo[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkWriteAccelerationStructuresPropertiesKHR(VkDevice device, uint32_t accelerationStructureCount, const VkAccelerationStructureKHR * pAccelerationStructures, VkQueryType queryType, size_t dataSize, void * pData, size_t stride)
@@ -3393,7 +3393,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateRayTracingPipelinesKHR(VkDevice device, V
         mvk_put_u64(e, (uint64_t)pPipelines[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetRayTracingShaderGroupHandlesKHR(VkDevice device, VkPipeline pipeline, uint32_t firstGroup, uint32_t groupCount, size_t dataSize, void * pData)
@@ -4941,7 +4941,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkBuildMicromapsEXT(VkDevice device, VkDeferredOp
             mvk_put_VkMicromapBuildInfoEXT(e, &pInfos[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCopyMicromapEXT(VkDevice device, VkDeferredOperationKHR deferredOperation, const VkCopyMicromapInfoEXT * pInfo)
@@ -4955,7 +4955,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCopyMicromapEXT(VkDevice device, VkDeferredOper
             mvk_put_VkCopyMicromapInfoEXT(e, &pInfo[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCopyMicromapToMemoryEXT(VkDevice device, VkDeferredOperationKHR deferredOperation, const VkCopyMicromapToMemoryInfoEXT * pInfo)
@@ -4969,7 +4969,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCopyMicromapToMemoryEXT(VkDevice device, VkDefe
             mvk_put_VkCopyMicromapToMemoryInfoEXT(e, &pInfo[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCopyMemoryToMicromapEXT(VkDevice device, VkDeferredOperationKHR deferredOperation, const VkCopyMemoryToMicromapInfoEXT * pInfo)
@@ -4983,7 +4983,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCopyMemoryToMicromapEXT(VkDevice device, VkDefe
             mvk_put_VkCopyMemoryToMicromapInfoEXT(e, &pInfo[i]);
     }
     mvk_call_end(e);
-    return VK_SUCCESS;
+    return deferredOperation ? VK_OPERATION_NOT_DEFERRED_KHR : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkWriteMicromapsPropertiesEXT(VkDevice device, uint32_t micromapCount, const VkMicromapEXT * pMicromaps, VkQueryType queryType, size_t dataSize, void * pData, size_t stride)

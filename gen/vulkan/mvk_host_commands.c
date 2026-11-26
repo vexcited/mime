@@ -10641,6 +10641,7 @@ static void run_vkBuildAccelerationStructuresKHR(MvkCall *c)
     } else {
         ppBuildRangeInfos = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkBuildAccelerationStructuresKHR");
         return;
@@ -10649,7 +10650,7 @@ static void run_vkBuildAccelerationStructuresKHR(MvkCall *c)
         mvk_unsupported(c, "vkBuildAccelerationStructuresKHR");
         return;
     }
-    VkResult result = c->fn->vkBuildAccelerationStructuresKHR(device, deferredOperation, infoCount, pInfos, ppBuildRangeInfos);
+    VkResult result = c->fn->vkBuildAccelerationStructuresKHR(device, VK_NULL_HANDLE, infoCount, pInfos, ppBuildRangeInfos);
     mvk_check(c, result, "vkBuildAccelerationStructuresKHR");
 }
 
@@ -10669,6 +10670,7 @@ static void run_vkCopyAccelerationStructureKHR(MvkCall *c)
     } else {
         pInfo = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCopyAccelerationStructureKHR");
         return;
@@ -10677,7 +10679,7 @@ static void run_vkCopyAccelerationStructureKHR(MvkCall *c)
         mvk_unsupported(c, "vkCopyAccelerationStructureKHR");
         return;
     }
-    VkResult result = c->fn->vkCopyAccelerationStructureKHR(device, deferredOperation, pInfo);
+    VkResult result = c->fn->vkCopyAccelerationStructureKHR(device, VK_NULL_HANDLE, pInfo);
     mvk_check(c, result, "vkCopyAccelerationStructureKHR");
 }
 
@@ -10697,6 +10699,7 @@ static void run_vkCopyAccelerationStructureToMemoryKHR(MvkCall *c)
     } else {
         pInfo = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCopyAccelerationStructureToMemoryKHR");
         return;
@@ -10705,7 +10708,7 @@ static void run_vkCopyAccelerationStructureToMemoryKHR(MvkCall *c)
         mvk_unsupported(c, "vkCopyAccelerationStructureToMemoryKHR");
         return;
     }
-    VkResult result = c->fn->vkCopyAccelerationStructureToMemoryKHR(device, deferredOperation, pInfo);
+    VkResult result = c->fn->vkCopyAccelerationStructureToMemoryKHR(device, VK_NULL_HANDLE, pInfo);
     mvk_check(c, result, "vkCopyAccelerationStructureToMemoryKHR");
 }
 
@@ -10725,6 +10728,7 @@ static void run_vkCopyMemoryToAccelerationStructureKHR(MvkCall *c)
     } else {
         pInfo = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCopyMemoryToAccelerationStructureKHR");
         return;
@@ -10733,7 +10737,7 @@ static void run_vkCopyMemoryToAccelerationStructureKHR(MvkCall *c)
         mvk_unsupported(c, "vkCopyMemoryToAccelerationStructureKHR");
         return;
     }
-    VkResult result = c->fn->vkCopyMemoryToAccelerationStructureKHR(device, deferredOperation, pInfo);
+    VkResult result = c->fn->vkCopyMemoryToAccelerationStructureKHR(device, VK_NULL_HANDLE, pInfo);
     mvk_check(c, result, "vkCopyMemoryToAccelerationStructureKHR");
 }
 
@@ -11066,6 +11070,7 @@ static void run_vkCreateRayTracingPipelinesKHR(MvkCall *c)
     VkPipeline *pPipelines = mvk_alloc(d, sizeof(VkPipeline) * (size_t)(createInfoCount));
     for (uint32_t i = 0; i < (uint32_t)(createInfoCount); i++)
         ids_pPipelines[i] = mvk_get_u64(d);
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCreateRayTracingPipelinesKHR");
         return;
@@ -11074,7 +11079,7 @@ static void run_vkCreateRayTracingPipelinesKHR(MvkCall *c)
         mvk_unsupported(c, "vkCreateRayTracingPipelinesKHR");
         return;
     }
-    VkResult result = c->fn->vkCreateRayTracingPipelinesKHR(device, deferredOperation, pipelineCache, createInfoCount, pCreateInfos, NULL, pPipelines);
+    VkResult result = c->fn->vkCreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, pipelineCache, createInfoCount, pCreateInfos, NULL, pPipelines);
     for (uint32_t i = 0; i < (uint32_t)(createInfoCount); i++) {
         mvk_bind_id(c, ids_pPipelines[i], (uint64_t)pPipelines[i]);
         mvk_track(c->conn, (uint64_t)pPipelines[i], MVK_KIND_VkPipeline);
@@ -13940,6 +13945,7 @@ static void run_vkBuildMicromapsEXT(MvkCall *c)
     } else {
         pInfos = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkBuildMicromapsEXT");
         return;
@@ -13948,7 +13954,7 @@ static void run_vkBuildMicromapsEXT(MvkCall *c)
         mvk_unsupported(c, "vkBuildMicromapsEXT");
         return;
     }
-    VkResult result = c->fn->vkBuildMicromapsEXT(device, deferredOperation, infoCount, pInfos);
+    VkResult result = c->fn->vkBuildMicromapsEXT(device, VK_NULL_HANDLE, infoCount, pInfos);
     mvk_check(c, result, "vkBuildMicromapsEXT");
 }
 
@@ -13968,6 +13974,7 @@ static void run_vkCopyMicromapEXT(MvkCall *c)
     } else {
         pInfo = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCopyMicromapEXT");
         return;
@@ -13976,7 +13983,7 @@ static void run_vkCopyMicromapEXT(MvkCall *c)
         mvk_unsupported(c, "vkCopyMicromapEXT");
         return;
     }
-    VkResult result = c->fn->vkCopyMicromapEXT(device, deferredOperation, pInfo);
+    VkResult result = c->fn->vkCopyMicromapEXT(device, VK_NULL_HANDLE, pInfo);
     mvk_check(c, result, "vkCopyMicromapEXT");
 }
 
@@ -13996,6 +14003,7 @@ static void run_vkCopyMicromapToMemoryEXT(MvkCall *c)
     } else {
         pInfo = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCopyMicromapToMemoryEXT");
         return;
@@ -14004,7 +14012,7 @@ static void run_vkCopyMicromapToMemoryEXT(MvkCall *c)
         mvk_unsupported(c, "vkCopyMicromapToMemoryEXT");
         return;
     }
-    VkResult result = c->fn->vkCopyMicromapToMemoryEXT(device, deferredOperation, pInfo);
+    VkResult result = c->fn->vkCopyMicromapToMemoryEXT(device, VK_NULL_HANDLE, pInfo);
     mvk_check(c, result, "vkCopyMicromapToMemoryEXT");
 }
 
@@ -14024,6 +14032,7 @@ static void run_vkCopyMemoryToMicromapEXT(MvkCall *c)
     } else {
         pInfo = NULL;
     }
+    (void)deferredOperation;
     if (d->error) {
         mvk_malformed(c, "vkCopyMemoryToMicromapEXT");
         return;
@@ -14032,7 +14041,7 @@ static void run_vkCopyMemoryToMicromapEXT(MvkCall *c)
         mvk_unsupported(c, "vkCopyMemoryToMicromapEXT");
         return;
     }
-    VkResult result = c->fn->vkCopyMemoryToMicromapEXT(device, deferredOperation, pInfo);
+    VkResult result = c->fn->vkCopyMemoryToMicromapEXT(device, VK_NULL_HANDLE, pInfo);
     mvk_check(c, result, "vkCopyMemoryToMicromapEXT");
 }
 
