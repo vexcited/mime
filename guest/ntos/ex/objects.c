@@ -38,7 +38,7 @@ static void init_shared_data(void)
     k->TickCountMultiplier = 0x0FA00000; /* 15.625 ms in 24.8 fixed point, as on windows */
     k->ImageNumberLow = MIME_NATIVE_MACHINE;
     k->ImageNumberHigh = MIME_NATIVE_MACHINE;
-    static const WCHAR root[] = L"C:\\WINDOWS"; /* upper case on windows */
+    static const WCHAR root[] = L"C:\\Windows"; /* the case of the boot entry, measured on windows 11 26300 */
     memcpy(k->NtSystemRoot, root, sizeof(root));
     k->MaxStackTraceDepth = 0;
     k->TimeZoneId = 0;
