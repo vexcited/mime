@@ -257,24 +257,166 @@ static void link_window(WND *parent, WND *w, HWND after)
     link_after(parent, w, above);
 }
 
-/* owned windows stay above their owner. */
-static void raise_owned(WND *owner)
+/*
+ * ZOrderByOwner of win32kfull: a top level window moves with the windows it owns, and with its owners when it
+ * leaves their tree. measured on windows 11 with zorder/probe.c of scratch/fl-vst in the research repository.
+ */
+#define OWNER_DEPTH 32
+
+static BOOLEAN owned_by(const WND *c, const WND *owner)
 {
-    for (WND *c = g_desktop->LastChild; c;) {
-        WND *prev = c->Prev;
-        if (c->Owner == owner && c->Prev != nullptr) {
-            WND *o = owner;
-            BOOLEAN below = FALSE;
-            for (WND *x = owner->Next; x; x = x->Next)
-                if (x == c)
-                    below = TRUE;
-            if (below) {
-                unlink_window(c);
-                link_after(g_desktop, c, o->Prev);
+    return c->Owner == owner && c != owner && c->Parent == g_desktop && !is_message_window(c) &&
+           !(c->Flags & WNDF_DESTROYING);
+}
+
+static WND *owner_of(const WND *w)
+{
+    WND *o = w->Owner;
+    return o && o != w && o->Parent == g_desktop && !is_message_window(o) ? o : nullptr;
+}
+
+static WND *tree_root(WND *w)
+{
+    for (ULONG depth = 0; owner_of(w) && depth < OWNER_DEPTH; depth++)
+        w = owner_of(w);
+    return w;
+}
+
+static BOOLEAN listed(WND *const *list, ULONG n, const WND *w)
+{
+    for (ULONG i = 0; i < n; i++)
+        if (list[i] == w)
+            return TRUE;
+    return FALSE;
+}
+
+/* the windows w owns, each after those it owns itself, in the order they have, then w. */
+static ULONG owned_group(WND *w, WND **out, ULONG n, ULONG max, ULONG depth)
+{
+    if (depth < OWNER_DEPTH)
+        for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+            if (owned_by(c, w) && !listed(out, n, c))
+                n = owned_group(c, out, n, max, depth + 1);
+    if (n < max && !listed(out, n, w))
+        out[n++] = w;
+    return n;
+}
+
+/*
+ * the tree of the owner at the top of the chain of w. the branch of w comes first when the tree goes to the top,
+ * and last, next to its owners, when it goes to the bottom or after another window.
+ */
+static ULONG owner_tree(WND *w, WND **out, ULONG max, BOOLEAN branch_first)
+{
+    WND *chain[OWNER_DEPTH];
+    ULONG links = 0, n = 0;
+    for (WND *c = w; c && links < OWNER_DEPTH; c = owner_of(c))
+        chain[links++] = c;
+    if (branch_first)
+        n = owned_group(w, out, n, max, 0);
+    for (ULONG k = 1; k < links; k++) {
+        ULONG i = branch_first ? k : links - k;
+        for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+            if (owned_by(c, chain[i]) && c != chain[i - 1] && !listed(out, n, c))
+                n = owned_group(c, out, n, max, 0);
+        if (branch_first && n < max)
+            out[n++] = chain[i];
+    }
+    if (!branch_first) {
+        n = owned_group(w, out, n, max, 0);
+        for (ULONG i = 1; i < links && n < max; i++)
+            out[n++] = chain[i];
+    }
+    return n;
+}
+
+static void zorder_alone(WND *w, HWND after)
+{
+    if (after == HWND_TOPMOST)
+        w->ExStyle |= WS_EX_TOPMOST;
+    else if (after == HWND_NOTOPMOST)
+        w->ExStyle &= ~WS_EX_TOPMOST;
+    WND *parent = w->Parent;
+    unlink_window(w);
+    link_window(parent, w, after);
+}
+
+static void zorder_top_level(WND *w, HWND after)
+{
+    ULONG max = 0;
+    for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+        max++;
+    WND **list = W32Alloc(2 * max * sizeof(WND *));
+    if (!list) {
+        zorder_alone(w, after);
+        return;
+    }
+    ULONG n = 0;
+    WND *target = after && after != HWND_TOPMOST && after != HWND_NOTOPMOST && after != HWND_BOTTOM ? WndLookup(after)
+                                                                                                  : nullptr;
+    if (target && (target->Parent != g_desktop || is_message_window(target)))
+        target = nullptr;
+    if (after == HWND_NOTOPMOST) {
+        /* a window that is not topmost stays where it is. its whole tree leaves the band with it, in its order. */
+        if (w->ExStyle & WS_EX_TOPMOST) {
+            WND **members = list + max;
+            ULONG count = owned_group(tree_root(w), members, 0, max, 0);
+            for (WND *c = g_desktop->FirstChild; c; c = c->Next)
+                if (listed(members, count, c))
+                    list[n++] = c;
+            for (ULONG i = n; i; i--) {
+                list[i - 1]->ExStyle &= ~WS_EX_TOPMOST;
+                unlink_window(list[i - 1]);
+                link_window(g_desktop, list[i - 1], HWND_TOP);
             }
         }
-        c = prev;
+    } else if (after == HWND_BOTTOM) {
+        n = owner_tree(w, list, max, FALSE);
+        BOOLEAN leaves = (w->ExStyle & WS_EX_TOPMOST) != 0;
+        for (ULONG i = 0; i < n; i++) {
+            if (leaves)
+                list[i]->ExStyle &= ~WS_EX_TOPMOST;
+            unlink_window(list[i]);
+            link_window(g_desktop, list[i], HWND_BOTTOM);
+        }
+    } else if (!target) {
+        if (after == HWND_TOPMOST) {
+            n = owned_group(w, list, 0, max, 0);
+            for (ULONG i = 0; i < n; i++)
+                list[i]->ExStyle |= WS_EX_TOPMOST;
+        }
+        n = owner_tree(w, list, max, TRUE);
+        for (ULONG i = n; i; i--) {
+            unlink_window(list[i - 1]);
+            link_window(g_desktop, list[i - 1], HWND_TOP);
+        }
+    } else if (target != w) {
+        /* a window already under the other one stays, and so does one told to go under a window it owns. */
+        n = owned_group(w, list, 0, max, 0);
+        if (w->Prev != target && !listed(list, n, target)) {
+            /* inside its tree the window moves with what it owns, outside the whole tree follows. */
+            if (tree_root(w) != tree_root(target))
+                n = owner_tree(w, list, max, FALSE);
+            for (ULONG i = 0; i < n; i++)
+                unlink_window(list[i]);
+            /* what goes under a window that is not topmost is not either, and between two topmost ones it is. */
+            if (!(target->ExStyle & WS_EX_TOPMOST)) {
+                for (ULONG i = 0; i < n; i++)
+                    list[i]->ExStyle &= ~WS_EX_TOPMOST;
+            } else if (target->Next && (target->Next->ExStyle & WS_EX_TOPMOST)) {
+                for (ULONG i = 0; i < n; i++)
+                    list[i]->ExStyle |= WS_EX_TOPMOST;
+            }
+            WND *above = target;
+            for (ULONG pass = 0; pass < 2; pass++)
+                for (ULONG i = 0; i < n; i++)
+                    if (!(list[i]->ExStyle & WS_EX_TOPMOST) == pass) {
+                        link_after(g_desktop, list[i], above);
+                        above = list[i];
+                    }
+        }
     }
+    W32Free(list);
 }
 
 static void offset_tree(WND *w, LONG dx, LONG dy)
@@ -947,15 +1089,10 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     }
 
     if (!(pos.flags & SWP_NOZORDER) && w->Parent) {
-        if (pos.hwndInsertAfter == HWND_TOPMOST)
-            w->ExStyle |= WS_EX_TOPMOST;
-        else if (pos.hwndInsertAfter == HWND_NOTOPMOST)
-            w->ExStyle &= ~WS_EX_TOPMOST;
-        WND *parent = w->Parent;
-        unlink_window(w);
-        link_window(parent, w, pos.hwndInsertAfter);
-        if (parent == g_desktop)
-            raise_owned(w);
+        if (w->Parent != g_desktop || is_message_window(w) || (pos.flags & SWP_NOOWNERZORDER))
+            zorder_alone(w, pos.hwndInsertAfter);
+        else
+            zorder_top_level(w, pos.hwndInsertAfter);
     }
 
     if (pos.flags & SWP_SHOWWINDOW)
@@ -1909,10 +2046,7 @@ void WndActivate(WND *w, BOOLEAN click)
         w->Thread->Active = WndHandle(w);
     ImeFocusChanged();
     if (WndIsTopLevel(w)) {
-        WND *parent = w->Parent;
-        unlink_window(w);
-        link_window(parent, w, HWND_TOP);
-        raise_owned(w);
+        zorder_top_level(w, HWND_TOP);
     }
     WndUpdateHostConfig(w, !WndActivatedByHost);
     if (!old || old->Thread != w->Thread)
