@@ -158,6 +158,28 @@
         v[1] = a[1];
         v[2] = a[2];
         return MxCallService(number, v);
+    case MIME_SVC_NtUserBeginDeferWindowPos:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserDeferWindowPosAndBand:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = (LONG64)(LONG)a[1];
+        v[2] = (LONG64)(LONG)a[2];
+        v[3] = (LONG64)(LONG)a[3];
+        v[4] = (LONG64)(LONG)a[4];
+        v[5] = (LONG64)(LONG)a[5];
+        v[6] = (LONG64)(LONG)a[6];
+        v[7] = a[7];
+        v[8] = a[8];
+        v[9] = a[9];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserEndDeferWindowPosEx:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserLockWindowUpdate:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
     case MIME_SVC_NtUserValidateRgn:
         v[0] = (LONG64)(LONG)a[0];
         v[1] = a[1];

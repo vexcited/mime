@@ -540,6 +540,7 @@ enum {
     USER_TYPE_WINDOW = 1,
     USER_TYPE_MENU = 2,
     USER_TYPE_CURSOR = 3,
+    USER_TYPE_SETWINDOWPOS = 4,
     USER_TYPE_HOOK = 5,
     USER_TYPE_ACCELTABLE = 8,
     USER_TYPE_MONITOR = 12,
@@ -1038,6 +1039,8 @@ void WndDestroyThreadWindows(W32THREAD *t);
 WND *WndFromPoint(WND *top, POINT pt);
 WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled);
 void WndSetPos(WND *w, WND *after, LONG x, LONG y, LONG cx, LONG cy, UINT flags);
+/* the deferred positions and the window update lock a thread leaves behind. */
+void WndPosThreadGone(W32THREAD *t);
 void WndDisplayChanged(void);
 void WndShow(WND *w, int cmd);
 void WndGetMinMaxInfo(WND *w, MINMAXINFO *info);

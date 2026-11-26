@@ -443,6 +443,10 @@ void NtUserUpdateLayeredWindow(void);
 void NtUserValidateRect(void);
 void NtUserInvalidateRgn(void);
 void NtUserValidateRgn(void);
+void NtUserBeginDeferWindowPos(void);
+void NtUserDeferWindowPosAndBand(void);
+void NtUserEndDeferWindowPosEx(void);
+void NtUserLockWindowUpdate(void);
 void NtUserWaitForInputIdle(void);
 void NtUserWaitMessage(void);
 void NtGdiGetPublicFontTableChangeCookie(void);
@@ -2636,6 +2640,26 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserValidateRgn & 0xFFF] = (SERVICE){(void *)NtUserValidateRgn, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtUserValidateRgn has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserBeginDeferWindowPos
+    table[MIME_SVC_NtUserBeginDeferWindowPos & 0xFFF] = (SERVICE){(void *)NtUserBeginDeferWindowPos, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserBeginDeferWindowPos has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserDeferWindowPosAndBand
+    table[MIME_SVC_NtUserDeferWindowPosAndBand & 0xFFF] = (SERVICE){(void *)NtUserDeferWindowPosAndBand, STACK_ARGS(10), 1, 0};
+#else
+#warning "NtUserDeferWindowPosAndBand has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserEndDeferWindowPosEx
+    table[MIME_SVC_NtUserEndDeferWindowPosEx & 0xFFF] = (SERVICE){(void *)NtUserEndDeferWindowPosEx, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserEndDeferWindowPosEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserLockWindowUpdate
+    table[MIME_SVC_NtUserLockWindowUpdate & 0xFFF] = (SERVICE){(void *)NtUserLockWindowUpdate, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserLockWindowUpdate has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserWaitForInputIdle
     table[MIME_SVC_NtUserWaitForInputIdle & 0xFFF] = (SERVICE){(void *)NtUserWaitForInputIdle, STACK_ARGS(3), 1, 0};

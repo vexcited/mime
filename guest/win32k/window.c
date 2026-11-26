@@ -2729,6 +2729,208 @@ BOOL NTAPI NtUserMoveWindow(HWND hwnd, int x, int y, int cx, int cy, BOOL repain
 }
 
 /*
+ * BeginDeferWindowPos, DeferWindowPos and EndDeferWindowPos, like win32kfull 26300: a list of positions a thread
+ * owns, which the end applies in the order they came and frees. the end answers TRUE whatever it applied. a
+ * position for a window band is for the shell alone, as a program has no access to bands.
+ */
+#define ERROR_INVALID_DWP_HANDLE_ 1405
+#define ERROR_SCREEN_ALREADY_LOCKED_ 1440
+#define DWP_MAX 0xC30C30
+
+typedef struct DEFER_POS {
+    HWND Hwnd, After;
+    int X, Y, Cx, Cy;
+    UINT Flags;
+} DEFER_POS;
+
+typedef struct DEFER_LIST {
+    USER_OBJECT Header;
+    W32THREAD *Thread;
+    ULONG Count, Size;
+    DEFER_POS *Pos;
+} DEFER_LIST;
+
+static void defer_free(DEFER_LIST *d)
+{
+    if (d->Header.Destroyed)
+        return;
+    d->Header.Destroyed = TRUE;
+    W32Free(d->Pos);
+    d->Pos = nullptr;
+    UserDereference(&d->Header);
+}
+
+HANDLE NTAPI NtUserBeginDeferWindowPos(int count)
+{
+    ULONG size = count ? (ULONG)count : 8;
+    if (count < 0 || size > DWP_MAX) {
+        W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return nullptr;
+    }
+    DEFER_LIST *d = W32Alloc(sizeof(*d));
+    DEFER_POS *pos = W32Alloc(size * sizeof(DEFER_POS));
+    HANDLE h = nullptr;
+    if (d && pos) {
+        UserEnter();
+        d->Thread = W32GetThread();
+        d->Size = size;
+        d->Pos = pos;
+        h = UserCreateHandle(&d->Header, USER_TYPE_SETWINDOWPOS);
+        UserLeave();
+    }
+    if (!h) {
+        W32Free(pos);
+        W32Free(d);
+        W32SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    }
+    return h;
+}
+
+static int clamp_coord(int v, int low)
+{
+    return v > 0x7FFF ? 0x7FFF : v < low ? low : v;
+}
+
+HANDLE NTAPI NtUserDeferWindowPosAndBand(HANDLE hdwp, HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags,
+                                         ULONG band, ULONG band_options)
+{
+    if (flags & 0xFFFD9800) {
+        W32SetLastError(ERROR_INVALID_FLAGS);
+        return nullptr;
+    }
+    UserEnter();
+    DEFER_LIST *d = (DEFER_LIST *)UserLookup(hdwp, USER_TYPE_SETWINDOWPOS);
+    HANDLE result = nullptr;
+    ULONG error = 0;
+    WND *w = d ? WndLookup(hwnd) : nullptr;
+    if (!d) {
+        error = ERROR_INVALID_DWP_HANDLE_;
+    } else if (!can_touch(w) ||
+               (after && after != HWND_BOTTOM && after != HWND_TOPMOST && after != HWND_NOTOPMOST && !WndLookup(after))) {
+        error = ERROR_INVALID_WINDOW_HANDLE;
+    } else if (band_options) {
+        error = ERROR_ACCESS_DENIED;
+    } else if (flags & ~0x3FFu) {
+        error = ERROR_INVALID_PARAMETER;
+    } else {
+        if (!(flags & SWP_NOMOVE)) {
+            x = clamp_coord(x, -0x8000);
+            y = clamp_coord(y, -0x8000);
+        }
+        if (!(flags & SWP_NOSIZE)) {
+            cx = clamp_coord(cx, 0);
+            cy = clamp_coord(cy, 0);
+        }
+        if (d->Count == d->Size) {
+            ULONG size = d->Size + 4;
+            DEFER_POS *pos = size <= DWP_MAX ? W32Alloc(size * sizeof(DEFER_POS)) : nullptr;
+            if (pos) {
+                memcpy(pos, d->Pos, d->Count * sizeof(DEFER_POS));
+                W32Free(d->Pos);
+                d->Pos = pos;
+                d->Size = size;
+            }
+        }
+        if (d->Count < d->Size) {
+            d->Pos[d->Count++] = (DEFER_POS){hwnd, after, x, y, cx, cy, flags};
+            result = hdwp;
+        } else {
+            defer_free(d);
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        }
+    }
+    if (error && d && band_options)
+        defer_free(d);
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return result;
+}
+
+BOOL NTAPI NtUserEndDeferWindowPosEx(HANDLE hdwp, BOOL async)
+{
+    UserEnter();
+    DEFER_LIST *d = (DEFER_LIST *)UserLookup(hdwp, USER_TYPE_SETWINDOWPOS);
+    if (!d) {
+        UserLeave();
+        W32SetLastError(ERROR_INVALID_DWP_HANDLE_);
+        return FALSE;
+    }
+    /* the list leaves the handle table first, so a procedure called by a move cannot end it again. */
+    DEFER_POS *pos = d->Pos;
+    ULONG count = d->Count;
+    d->Pos = nullptr;
+    defer_free(d);
+    UserLeave();
+    (void)async;
+    for (ULONG i = 0; i < count; i++) {
+        /* every position is worked out from the window as it was, so of two for one window the last one counts. */
+        ULONG later = i + 1;
+        while (later < count && pos[later].Hwnd != pos[i].Hwnd)
+            later++;
+        if (later == count)
+            NtUserSetWindowPos(pos[i].Hwnd, pos[i].After, pos[i].X, pos[i].Y, pos[i].Cx, pos[i].Cy, pos[i].Flags);
+    }
+    W32Free(pos);
+    return TRUE;
+}
+
+/*
+ * LockWindowUpdate, like zzzLockWindowUpdate2 of win32kfull 26300: one window of the screen at a time, locked by one
+ * thread, and a lock or an unlock that changes nothing fails with ERROR_INVALID_PARAMETER. drawing goes on while it is
+ * locked, so the unlock paints the window and its children again, which is what windows does with what was drawn.
+ */
+static WND *g_update_locked;
+static W32THREAD *g_update_locker;
+
+static void unlock_update(void)
+{
+    WND *w = g_update_locked;
+    g_update_locked = nullptr;
+    g_update_locker = nullptr;
+    if (w) {
+        if (alive(w))
+            WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+        UserDereference(&w->Header);
+    }
+}
+
+BOOL NTAPI NtUserLockWindowUpdate(HWND hwnd)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    WND *w = hwnd ? WndLookup(hwnd) : nullptr;
+    ULONG error = 0;
+    if (hwnd && !w)
+        error = ERROR_INVALID_WINDOW_HANDLE;
+    else if (g_update_locker && g_update_locker != t)
+        error = ERROR_SCREEN_ALREADY_LOCKED_;
+    else if ((w != nullptr) == (g_update_locked != nullptr))
+        error = ERROR_INVALID_PARAMETER;
+    else if (w) {
+        UserReference(&w->Header);
+        g_update_locked = w;
+        g_update_locker = t;
+    } else {
+        unlock_update();
+    }
+    UserLeave();
+    if (error)
+        W32SetLastError(error);
+    return !error;
+}
+
+void WndPosThreadGone(W32THREAD *t)
+{
+    if (g_update_locker == t)
+        unlock_update();
+    ULONG index = 0;
+    for (USER_OBJECT *o; (o = UserNextObject(&index, USER_TYPE_SETWINDOWPOS));)
+        if (((DEFER_LIST *)o)->Thread == t)
+            defer_free((DEFER_LIST *)o);
+}
+
+/*
  * TransformPoint and TransformRect of user32, when the dpi awareness context of the thread is not the one of the
  * window: the coordinates go from the dpi of one context, in bits 8 to 16, to the dpi of the other.
  */
