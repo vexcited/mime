@@ -64,7 +64,10 @@ static const struct wl_message info_events[] = {
 };
 static const struct wl_interface info_interface = {"wp_image_description_info_v1", 1, 0, nullptr, 11, info_events};
 
-/* kde_output_device_v2 at version 21, the first with the registry, from plasma-wayland-protocols. */
+/*
+ * kde_output_device_v2 of plasma-wayland-protocols, up to version 21. KWin hands its devices out through the registry
+ * since 6.7 and as a global for each output before.
+ */
 static const struct wl_interface device_interface, mode_interface;
 static const struct wl_interface *types_device[] = {&device_interface};
 static const struct wl_interface *types_mode[] = {&mode_interface};
@@ -136,12 +139,13 @@ typedef struct Output {
     char name[32]; /* the connector, as KWin's devices name it too. */
     uint32_t serial; /* of the last question asked. */
     bool answered;
-    bool hdr; /* the encoding reaches above the white. */
+    bool hdr; /* the encoding is PQ or HLG. */
     MimeMonitorColor color;
 } Output;
 
 typedef struct Device {
     struct wl_proxy *proxy;
+    uint32_t global; /* of a device bound as a global of its own. */
     char name[32];
     uint32_t capabilities, hdr;
     bool done;
@@ -291,21 +295,27 @@ static void devices_finished(void *data, struct wl_proxy *proxy)
     g_devices = nullptr;
 }
 
-static void devices_output(void *data, struct wl_proxy *proxy, struct wl_proxy *device)
+static bool add_device(struct wl_proxy *device, uint32_t global)
 {
     pthread_mutex_lock(&g_lock);
     Device *d = nullptr;
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_device) && !d; i++)
         if (!g_device[i].proxy)
             d = &g_device[i];
-    if (d)
+    if (d) {
         d->proxy = device;
-    pthread_mutex_unlock(&g_lock);
-    if (!d) {
-        wl_proxy_marshal_flags(device, 0, nullptr, wl_proxy_get_version(device), WL_MARSHAL_FLAG_DESTROY);
-        return;
+        d->global = global;
     }
-    wl_proxy_add_listener(device, (void (**)(void))device_listener, d);
+    pthread_mutex_unlock(&g_lock);
+    if (d)
+        wl_proxy_add_listener(device, (void (**)(void))device_listener, d);
+    return d != nullptr;
+}
+
+static void devices_output(void *data, struct wl_proxy *proxy, struct wl_proxy *device)
+{
+    if (!add_device(device, 0))
+        wl_proxy_marshal_flags(device, 0, nullptr, wl_proxy_get_version(device), WL_MARSHAL_FLAG_DESTROY);
 }
 
 static const void *devices_listener[2] = {(void *)devices_finished, (void *)devices_output};
@@ -319,11 +329,28 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
         g_devices = wl_registry_bind(registry, name, &devices_interface, 21);
         if (g_devices)
             wl_proxy_add_listener(g_devices, (void (**)(void))devices_listener, nullptr);
+    } else if (!strcmp(interface, device_interface.name) && version >= 3) {
+        /* the release request and the removed event come with the registry, so this one is bound below them. */
+        struct wl_proxy *device = wl_registry_bind(registry, name, &device_interface, version < 20 ? version : 20);
+        if (device && !add_device(device, name))
+            wl_proxy_destroy(device);
     }
 }
 
 static void registry_remove(void *data, struct wl_registry *registry, uint32_t name)
 {
+    struct wl_proxy *gone = nullptr;
+    pthread_mutex_lock(&g_lock);
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(g_device); i++) {
+        Device *d = &g_device[i];
+        if (d->proxy && d->global == name) {
+            gone = d->proxy;
+            memset(d, 0, sizeof(*d));
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (gone)
+        wl_proxy_destroy(gone);
 }
 
 static const struct wl_registry_listener registry_listener = {registry_global, registry_remove};
@@ -357,8 +384,10 @@ static uint32_t ten_thousandths(double nits)
 }
 
 /*
- * an output is in hdr when what it can show reaches above its reference white. programs draw in the nits of PQ, whose
- * reference white the compositor shows at the output's own, so the output's range is told on that scale.
+ * an output is in hdr when the compositor encodes it with PQ or HLG, as mutter, Hyprland, wlroots and Weston do. room
+ * above the reference white says nothing: mutter 48 lowers the white of sdr with its luminance setting and KWin lends
+ * an sdr panel edr headroom. programs draw in the nits of PQ, whose reference white the compositor shows at the
+ * output's own, so the output's range is told on that scale.
  */
 static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
 {
@@ -370,7 +399,8 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
         min = 0.005, max = 1000.0, reference = REFERENCE_NITS;
     if (q->has_luminances && q->reference) {
         min = q->min / 10000.0;
-        max = q->max;
+        /* the protocol ignores the maximum of PQ and takes the minimum plus 10000. */
+        max = q->tf == TF_ST2084_PQ ? min + 10000.0 : q->max;
         reference = q->reference;
     }
     const int32_t *primaries = q->has_target_primaries ? q->target_primaries
@@ -381,9 +411,10 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
         for (int i = 0; i < 8; i++)
             out[i] = primaries[i] > 0 ? (uint32_t)primaries[i] : 0;
     }
-    *hdr = max / reference > 1.05;
+    *hdr = q->tf == TF_ST2084_PQ || q->tf == TF_HLG;
+    /* Hyprland targets the white when it does not know the display's peak, then the encoding's range stands. */
     double peak = max, floor = min;
-    if (q->has_target_luminance && q->target_max) {
+    if (q->has_target_luminance && q->target_max > reference) {
         peak = q->target_max;
         floor = q->target_min / 10000.0;
     }
@@ -395,11 +426,7 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
     color->white_nits = ten_thousandths(REFERENCE_NITS);
 }
 
-/*
- * with the lock held. KWin says whether it runs the output in hdr. its encoding also reaches above the white in sdr,
- * while a window asks for the edr headroom of a dimmed internal panel, and windows shows such a panel in sdr. the
- * range decides only for a compositor that says nothing.
- */
+/* with the lock held. KWin encodes its outputs in gamma 2.2 even in hdr, and says through its own protocol. */
 static void told(const Output *o, bool *hdr, MimeMonitorColor *color)
 {
     *hdr = o->hdr;
@@ -612,9 +639,8 @@ static bool bind(struct wl_display *display)
         mime_info("color: the compositor has no color management, every output is sdr");
         return false;
     }
-    /* the devices come once the registry is bound, and each tells its state right away. */
-    if (g_devices)
-        wl_display_roundtrip_queue(display, g_queue);
+    /* KWin's devices tell their state right after they are bound, and the registry's come with it. */
+    wl_display_roundtrip_queue(display, g_queue);
     g_wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (g_wake < 0 || pthread_create(&g_thread, nullptr, reader, nullptr)) {
         g_manager = nullptr;
