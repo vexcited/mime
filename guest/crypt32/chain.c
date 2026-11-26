@@ -9,6 +9,8 @@
 
 #define ENGINE_MAGIC 0x454E4743
 #define MAX_CHAIN 20
+#define CERT_CHAIN_DISABLE_AIA 0x00002000
+#define DEFAULT_URL_TIMEOUT 15000
 
 typedef struct {
     DWORD magic;
@@ -18,6 +20,7 @@ typedef struct {
     HCERTSTORE system_roots;
     HCERTSTORE disallowed;
     DWORD flags;
+    DWORD url_timeout; /* of the engine's configuration, 0 for the default. */
     LONG generation;
     ULONGLONG checked;
 } cr_engine;
@@ -215,6 +218,7 @@ BOOL WINAPI CertCreateCertificateChainEngine(PCERT_CHAIN_ENGINE_CONFIG pConfig, 
     cr_engine *engine = new_engine(pConfig->dwFlags);
     if (!engine)
         return FALSE;
+    engine->url_timeout = pConfig->dwUrlRetrievalTimeout;
     add_to_world(engine, pConfig->hRestrictedOther);
     add_to_world(engine, pConfig->hRestrictedTrust);
     for (DWORD i = 0; i < pConfig->cAdditionalStore; i++)
@@ -411,9 +415,75 @@ static DWORD constraint_errors(PCCERT_CONTEXT cert, DWORD position, DWORD ca_bel
     return error;
 }
 
+typedef struct {
+    typeof(&CryptGetObjectUrl) GetObjectUrl;
+    typeof(&CryptRetrieveObjectByUrlW) RetrieveObjectByUrl;
+} url_api;
+
+/* cryptnet imports crypt32, so it is loaded when a chain first lacks an issuer. */
+static BOOL load_urls(url_api *api)
+{
+    HMODULE module = LoadLibraryExW(L"cryptnet.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!module)
+        return FALSE;
+    api->GetObjectUrl = (typeof(api->GetObjectUrl))GetProcAddress(module, "CryptGetObjectUrl");
+    api->RetrieveObjectByUrl = (typeof(api->RetrieveObjectByUrl))GetProcAddress(module, "CryptRetrieveObjectByUrlW");
+    return api->GetObjectUrl && api->RetrieveObjectByUrl;
+}
+
+/*
+ * like windows, a certificate whose issuer no store holds names where to fetch it, in its authority information
+ * access. what comes back is only a candidate: it must sign the certificate, and the chain is checked as any other.
+ * only http is followed, so a fetch never needs a chain of its own.
+ */
+static PCCERT_CONTEXT aia_issuer(cr_engine *engine, PCCERT_CONTEXT subject, PCCERT_CONTEXT *certs, DWORD count,
+                                 const FILETIME *time, const CERT_CHAIN_PARA *para, DWORD flags, DWORD *info_status)
+{
+    if (engine)
+        flags |= engine->flags;
+    url_api api;
+    DWORD size = 0;
+    if ((flags & CERT_CHAIN_DISABLE_AIA) || !load_urls(&api) ||
+        !api.GetObjectUrl(URL_OID_CERTIFICATE_ISSUER, (void *)subject, CRYPT_GET_URL_FROM_EXTENSION, nullptr, &size,
+                          nullptr, nullptr, nullptr) ||
+        !size)
+        return nullptr;
+    PCRYPT_URL_ARRAY urls = CrAlloc(size);
+    if (!urls || !api.GetObjectUrl(URL_OID_CERTIFICATE_ISSUER, (void *)subject, CRYPT_GET_URL_FROM_EXTENSION, urls,
+                                   &size, nullptr, nullptr, nullptr)) {
+        CrFree(urls);
+        return nullptr;
+    }
+    DWORD timeout = para && para->dwUrlRetrievalTimeout ? para->dwUrlRetrievalTimeout
+                    : engine && engine->url_timeout     ? engine->url_timeout
+                                                        : DEFAULT_URL_TIMEOUT;
+    DWORD retrieval = CRYPT_RETRIEVE_MULTIPLE_OBJECTS | CRYPT_AIA_RETRIEVAL |
+                      ((flags & CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL) ? CRYPT_CACHE_ONLY_RETRIEVAL : 0);
+    PCCERT_CONTEXT issuer = nullptr;
+    for (DWORD i = 0; i < urls->cUrl && !issuer; i++) {
+        if (CompareStringOrdinal(urls->rgwszUrl[i], 7, L"http://", 7, TRUE) != CSTR_EQUAL)
+            continue;
+        HCERTSTORE fetched = nullptr;
+        if (!api.RetrieveObjectByUrl(urls->rgwszUrl[i], CONTEXT_OID_CERTIFICATE, retrieval, timeout, (void **)&fetched,
+                                     nullptr, nullptr, nullptr, nullptr) ||
+            !fetched)
+            continue;
+        int score = 0;
+        issuer = find_issuer(fetched, engine, subject, certs, count, time, &score, nullptr, info_status);
+        if (issuer && check_signature(subject, issuer)) {
+            CertFreeCertificateContext(issuer);
+            issuer = nullptr;
+        }
+        CertCloseStore(fetched, 0);
+    }
+    CrFree(urls);
+    return issuer;
+}
+
 /* builds the path from the certificate up; returns the number of certificates, each a reference. */
 static DWORD build(cr_engine *engine, PCCERT_CONTEXT cert, const FILETIME *time, HCERTSTORE additional,
-                   PCCERT_CONTEXT *certs, DWORD *errors, DWORD *infos, DWORD *chain_error)
+                   const CERT_CHAIN_PARA *para, DWORD flags, PCCERT_CONTEXT *certs, DWORD *errors, DWORD *infos,
+                   DWORD *chain_error)
 {
     memset(errors, 0, MAX_CHAIN * sizeof(DWORD));
     memset(infos, 0, MAX_CHAIN * sizeof(DWORD));
@@ -446,6 +516,8 @@ static DWORD build(cr_engine *engine, PCCERT_CONTEXT cert, const FILETIME *time,
             issuer = find_issuer(engine->world, engine, cur, certs, count, time, &score, issuer, &status);
         if (score < 31 && engine && !engine->roots)
             issuer = find_issuer(CrAutoRoots(), engine, cur, certs, count, time, &score, issuer, &status);
+        if (!issuer)
+            issuer = aia_issuer(engine, cur, certs, count, time, para, flags, &status);
         if (!issuer) {
             *chain_error |= CERT_TRUST_IS_PARTIAL_CHAIN;
             break;
@@ -461,7 +533,6 @@ static DWORD build(cr_engine *engine, PCCERT_CONTEXT cert, const FILETIME *time,
 /* ------------------------------------------------------------------ revocation */
 
 #define CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT 0x08000000
-#define DEFAULT_URL_TIMEOUT 15000
 
 typedef struct {
     HCERTSTORE crls;
@@ -596,7 +667,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
     }
     PCCERT_CONTEXT certs[MAX_CHAIN];
     DWORD errors[MAX_CHAIN], infos[MAX_CHAIN], chain_error;
-    DWORD count = build(engine, pCertContext, pTime, hAdditionalStore, certs, errors, infos, &chain_error);
+    DWORD count =
+        build(engine, pCertContext, pTime, hAdditionalStore, pChainPara, dwFlags, certs, errors, infos, &chain_error);
     /* a chain the system roots do not end may end in a root the program trusts. */
     if (engine && !engine->roots && !(dwFlags & CERT_CHAIN_DISABLE_AUTH_ROOT_AUTO_UPDATE) &&
         ((chain_error & CERT_TRUST_IS_PARTIAL_CHAIN) || (errors[count - 1] & CERT_TRUST_IS_UNTRUSTED_ROOT))) {
@@ -609,7 +681,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         if (CrAutoRootUpdate(top, self, aki, aki_size)) {
             for (DWORD i = 0; i < count; i++)
                 CertFreeCertificateContext(certs[i]);
-            count = build(engine, pCertContext, pTime, hAdditionalStore, certs, errors, infos, &chain_error);
+            count = build(engine, pCertContext, pTime, hAdditionalStore, pChainPara, dwFlags, certs, errors, infos,
+                          &chain_error);
         }
     }
     DWORD ca_below = 0;
