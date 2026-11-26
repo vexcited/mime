@@ -337,13 +337,48 @@ static void child_title_bar_info(WND *w, const FRAME_METRICS *m, TITLEBARINFOEX 
     }
 }
 
+/*
+ * a window without a caption, xxxGetTitleBarInfoEx and xxxCalcCaptionButton of win32kfull 26300: the title bar is
+ * invisible and empty, and each button gets the place a caption would give it inside the borders of the window, the
+ * help button without WS_EX_CONTEXTHELP the window inside its borders. the dwm answers a top level window with a
+ * thick frame with no buttons.
+ */
+static void no_caption_title_bar_info(WND *w, TITLEBARINFOEX *info)
+{
+    info->rgstate[0] = STATE_SYSTEM_FOCUSABLE | STATE_SYSTEM_INVISIBLE;
+    if (is_top_frame(w->Style) && (w->Style & WS_THICKFRAME))
+        return;
+    UINT dpi = WndFrameDpi(w);
+    FRAME_METRICS m;
+    FrameGetMetrics(w->Style, w->ExStyle, dpi, &m);
+    LONG b = (w->Style & WS_MINIMIZE) ? 3 : m.Border;
+    RECT inside = {w->WindowRect.left + b, w->WindowRect.top + b, w->WindowRect.right - b, w->WindowRect.bottom - b};
+    LONG cx = scale(22, dpi), cy = scale(22, dpi);
+    /* minimize, maximize, help and close, by how many buttons they stand from the right. */
+    static const int slots[4] = {2, 1, 1, 0};
+    for (int i = 0; i < 4; i++) {
+        RECT r = inside;
+        if (i == 2 && !(w->ExStyle & WS_EX_CONTEXTHELP)) {
+            info->rgrect[2 + i] = r;
+            continue;
+        }
+        r.right -= slots[i] * cx;
+        r = (RECT){r.right - cx - 1, r.top - 1, r.right + 1, r.top + cy + 1};
+        if (w->ExStyle & WS_EX_LAYOUTRTL) {
+            LONG span = r.right - r.left;
+            r.left = w->WindowRect.left + w->WindowRect.right - r.right;
+            r.right = r.left + span;
+        }
+        info->rgrect[2 + i] = r;
+    }
+}
+
 void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info)
 {
     memset(&info->rcTitleBar, 0, sizeof(*info) - sizeof(info->cbSize));
     LONG x = w->WindowRect.left, y = w->WindowRect.top;
     if (!FrameHasCaption(w->Style, w->ExStyle)) {
-        for (int i = 0; i < 6; i++)
-            info->rgstate[i] = STATE_SYSTEM_INVISIBLE;
+        no_caption_title_bar_info(w, info);
         return;
     }
     FRAME_METRICS m;
