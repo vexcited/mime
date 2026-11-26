@@ -1,12 +1,13 @@
 /*
  * features on demand, where a program meets them. a feature is a runtime windows 11 comes with and mime fetches the
  * first time a program needs it: the WebView2 runtime, the .NET Framework, Windows PowerShell, the catalogs of the
- * system files. the system dlls are microsoft's, so the need is seen here, in the two services a program reaches for a
- * feature with:
+ * system files. the Visual C++ runtime is one too, as near every machine has it from some program's installer and a
+ * program or a plugin that does not bring its own takes it for granted. the system dlls are microsoft's, so the need is
+ * seen here, in the two services a program reaches for a feature with:
  *
  *   - a file in the folders of a feature that is opened to be read or run and is not there. a look at a name, the
  *     attributes of a file or the listing of a folder, asks for nothing, except for the one program a feature is
- *     started by, which is searched for by its attributes;
+ *     started by and the dlls of the Visual C++ runtime in System32, which are searched for by their attributes;
  *   - the registry key the updater of a feature writes and its programs read to find it, when it is not there.
  *
  * the caller then waits for OptionalFeatures.exe, which asks the user and installs the feature, and the open is tried
@@ -84,13 +85,40 @@ static BOOLEAN catalogs_present(void)
 #endif
 }
 
-enum { FEATURE_WEBVIEW2, FEATURE_NETFX, FEATURE_POWERSHELL, FEATURE_CATALOGS };
+#define SYSTEM_FOLDER L"\\Windows\\System32\\"
+
+/*
+ * the dlls of the x64 packages of the redistributable that programs load. the runtime is the first three, which every
+ * program built with it loads. an arm64 machine keeps them in SysX64 and does not ask.
+ */
+static const PCWSTR g_vcruntime[] = {
+    L"vcruntime140.dll", L"vcruntime140_1.dll", L"msvcp140.dll", L"vcruntime140_threads.dll", L"msvcp140_1.dll",
+    L"msvcp140_2.dll", L"msvcp140_atomic_wait.dll", L"msvcp140_codecvt_ids.dll", L"concrt140.dll", L"vccorlib140.dll",
+    L"vcomp140.dll", L"vcamp140.dll", L"mfc140.dll", L"mfc140u.dll", L"mfcm140.dll", L"mfcm140u.dll",
+};
+
+static BOOLEAN vcruntime_present(void)
+{
+#ifdef __x86_64__
+    WCHAR path[64];
+    for (ULONG i = 0; i < 3; i++) {
+        _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"\\??\\C:" SYSTEM_FOLDER L"%ls", g_vcruntime[i]);
+        path[RTL_NUMBER_OF(path) - 1] = 0;
+        if (!file_exists(path))
+            return FALSE;
+    }
+#endif
+    return TRUE;
+}
+
+enum { FEATURE_WEBVIEW2, FEATURE_NETFX, FEATURE_POWERSHELL, FEATURE_CATALOGS, FEATURE_VCRUNTIME };
 
 static const FEATURE g_features[] = {
     [FEATURE_WEBVIEW2] = {L"WebView2", webview2_present},
     [FEATURE_NETFX] = {L"NetFx4", netfx_present},
     [FEATURE_POWERSHELL] = {L"PowerShell", powershell_present},
     [FEATURE_CATALOGS] = {L"SystemCatalogs", catalogs_present},
+    [FEATURE_VCRUNTIME] = {L"VCRuntime.x64", vcruntime_present},
 };
 
 /* the folders programs look into for what a feature holds. the shell comes before the folders it shares. */
@@ -236,6 +264,13 @@ BOOLEAN ExFeatureFileFault(PCUNICODE_STRING name, BOOLEAN look)
         if (starts_with(text, chars, g_assemblies[i].Path) && (chars == n || text[n] == L'\\'))
             return ask(g_assemblies[i].Feature);
     }
+#ifdef __x86_64__
+    /* the loader looks for a dll in each folder of its search by its attributes, and opens only the one it found. */
+    if (starts_with(text, chars, SYSTEM_FOLDER))
+        for (ULONG i = 0; i < RTL_NUMBER_OF(g_vcruntime); i++)
+            if (chars - wcslen(SYSTEM_FOLDER) == wcslen(g_vcruntime[i]) && ends_with(text, chars, g_vcruntime[i]))
+                return ask(FEATURE_VCRUNTIME);
+#endif
     if (look) {
         for (ULONG i = 0; i < RTL_NUMBER_OF(g_programs); i++)
             if (chars == wcslen(g_programs[i].Path) && starts_with(text, chars, g_programs[i].Path))
