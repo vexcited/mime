@@ -1001,22 +1001,37 @@ BOOL NTAPI NtUserUpdateWindow(HWND hwnd)
 /*
  * PrintWindow: what the window shows, frame and all or its client area alone with PW_CLIENTONLY, copied into the
  * device context. a window of windows 11 is kept whole by the compositor; a window of mime is kept whole by the
- * surface of its top level window, which the copy reads.
+ * surface of its top level window, which the copy reads, with the alpha windows keeps and the screen where nothing
+ * was drawn. PW_RENDERFULLCONTENT takes what the compositor shows, opaque, with the images presented in the window,
+ * measured with unpainted.c of scratch/pr17 in the research repository.
  */
 BOOL NTAPI NtUserPrintWindow(HWND hwnd, HDC hdc, UINT flags)
 {
     UserEnter();
     WND *w = WndLookup(hwnd);
+    WND *top = w ? WndTopLevel(w) : nullptr;
     BOOL ok = FALSE;
-    if (w && w != WndDesktop()) {
+    if (w && w != WndDesktop() && top) {
         BOOLEAN client = (flags & 1) != 0; /* PW_CLIENTONLY */
         RECT r = client ? w->ClientRect : w->WindowRect;
-        HDC from = PaintGetDC(w, nullptr, client ? DCX_CACHE : DCX_WINDOW | DCX_CACHE);
-        if (from) {
-            ok = NtGdiBitBlt(hdc, 0, 0, r.right - r.left, r.bottom - r.top, from, 0, 0, SRCCOPY, 0, 0);
-            DC *dc = DcLookup(from);
-            if (dc)
-                PaintReleaseDC(dc);
+        LONG width = r.right - r.left, height = r.bottom - r.top;
+        if (flags & 2) { /* PW_RENDERFULLCONTENT */
+            SURFACE *s = width > 0 && height > 0 ? SurfaceCreate(width, height, 32, SURF_TOPDOWN) : nullptr;
+            if (s && ScreenWindowPixels(w, client, TRUE, s->Bits, s->Stride, width, height))
+                ok = GdiBltFromSurface(hdc, 0, 0, width, height, s, 0, 0, SRCCOPY);
+            SurfaceDestroy(s);
+        } else {
+            HDC from = PaintGetDC(w, nullptr, client ? DCX_CACHE : DCX_WINDOW | DCX_CACHE);
+            if (from) {
+                ok = NtGdiBitBlt(hdc, 0, 0, width, height, from, 0, 0, SRCCOPY, 0, 0);
+                DC *dc = DcLookup(from);
+                if (dc)
+                    PaintReleaseDC(dc);
+            }
+            RECT area = r;
+            RectOffset(&area, -top->WindowRect.left, -top->WindowRect.top);
+            if (ok)
+                ScreenReadUnpainted(top, &area, hdc, 0, 0);
         }
     }
     UserLeave();

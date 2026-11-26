@@ -1557,7 +1557,10 @@ COLORREF NTAPI NtGdiGetPixel(HDC hdc, int x, int y)
         if (RgnPtIn(&dc->VisRgn, sx, sy) && sx < dc->Surface->Width && sy < dc->Surface->Height) {
             if (ScreenIsSurface(dc->Surface))
                 ScreenComposeFor(dc->Surface, &(RECT){sx, sy, sx + 1, sy + 1});
-            result = PixelToColor(SurfaceGetPixel(dc->Surface, sx, sy));
+            ULONG pixel;
+            if (!ScreenUnpaintedPixel(dc->Surface, sx, sy, &pixel))
+                pixel = SurfaceGetPixel(dc->Surface, sx, sy);
+            result = PixelToColor(pixel);
         }
     }
     UserLeave();

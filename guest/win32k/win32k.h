@@ -1473,6 +1473,8 @@ BOOLEAN ScreenIsSurface(const SURFACE *s);
 void ScreenCompose(const RECT *area);
 BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUCHAR bits, LONG stride, LONG width,
                            LONG height);
+void ScreenReadUnpainted(WND *top, const RECT *area, HDC hdc, LONG x, LONG y);
+BOOLEAN ScreenUnpaintedPixel(SURFACE *s, LONG x, LONG y, ULONG *pixel);
 ULONG64 ScreenHostSerial(void);
 void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out);
 void ScreenLayersChanged(WND *w);

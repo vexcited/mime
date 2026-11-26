@@ -592,6 +592,48 @@ static BOOLEAN window_covers(WND *w, RECT *out)
     return RectIntersect(out, &window, &own);
 }
 
+/*
+ * what windows reads from a window where nothing was ever drawn, measured with unpainted.c of scratch/pr17 in the
+ * research repository: what the screen shows there, opaque. the rectangles of area, pixels of the surface of the top
+ * level window, that were never drawn go into the dc at x, y for the corner of area.
+ */
+void ScreenReadUnpainted(WND *top, const RECT *area, HDC hdc, LONG x, LONG y)
+{
+    SURFACE *s = top->Surface, *screen = ScreenSurface();
+    PLACE place = place_on_screen(top);
+    if (!s || !screen || !has_holes(s) || place.Num != place.Den)
+        return;
+    REGION part;
+    RgnInit(&part);
+    RgnSetRect(&part, area);
+    RgnCombine(&part, &part, s->Unpainted, RGN_AND);
+    for (ULONG i = 0; i < part.Count; i++) {
+        RECT q = part.Rects[i], on = q;
+        RectOffset(&on, place.Origin.x - g_screen_origin.x, place.Origin.y - g_screen_origin.y);
+        ScreenCompose(&on);
+        GdiBltFromSurface(hdc, x + q.left - area->left, y + q.top - area->top, q.right - q.left, q.bottom - q.top, screen,
+                          on.left, on.top, SRCCOPY);
+    }
+    RgnFree(&part);
+}
+
+/* the same for one pixel of a window surface, false where it was drawn. */
+BOOLEAN ScreenUnpaintedPixel(SURFACE *s, LONG x, LONG y, ULONG *pixel)
+{
+    WND *top = s->Window;
+    SURFACE *screen = ScreenSurface();
+    if (!top || !screen || !has_holes(s) || !RgnPtIn(s->Unpainted, x, y))
+        return FALSE;
+    PLACE place = place_on_screen(top);
+    LONG sx = place.Origin.x + (LONG)((LONG64)x * place.Num / place.Den) - g_screen_origin.x;
+    LONG sy = place.Origin.y + (LONG)((LONG64)y * place.Num / place.Den) - g_screen_origin.y;
+    if (sx < 0 || sy < 0 || sx >= screen->Width || sy >= screen->Height)
+        return FALSE;
+    ScreenCompose(&(RECT){sx, sy, sx + 1, sy + 1});
+    *pixel = ((const ULONG *)(screen->Bits + (LONG_PTR)sy * screen->Stride))[sx];
+    return TRUE;
+}
+
 #define PLAN_MAX 1024
 
 typedef struct PLAN {
