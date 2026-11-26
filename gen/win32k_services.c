@@ -443,6 +443,7 @@ void NtUserUpdateLayeredWindow(void);
 void NtUserValidateRect(void);
 void NtUserInvalidateRgn(void);
 void NtUserValidateRgn(void);
+void NtUserValidateTimerCallback(void);
 void NtUserBeginDeferWindowPos(void);
 void NtUserDeferWindowPosAndBand(void);
 void NtUserEndDeferWindowPosEx(void);
@@ -2644,6 +2645,12 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserValidateRgn & 0xFFF] = (SERVICE){(void *)NtUserValidateRgn, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtUserValidateRgn has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserValidateTimerCallback
+    table[MIME_SVC_NtUserValidateTimerCallback & 0xFFF] =
+        (SERVICE){(void *)NtUserValidateTimerCallback, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserValidateTimerCallback has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserBeginDeferWindowPos
     table[MIME_SVC_NtUserBeginDeferWindowPos & 0xFFF] = (SERVICE){(void *)NtUserBeginDeferWindowPos, STACK_ARGS(1), 1, 0};

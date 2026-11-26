@@ -545,6 +545,20 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
     return result;
 }
 
+/* user32 runs the procedure of a WM_TIMER only when a timer of the process was set with it, as ValidateTimerCallback. */
+BOOL NTAPI NtUserValidateTimerCallback(LPARAM proc)
+{
+    UserEnter();
+    W32THREAD *self = W32GetThread();
+    BOOL valid = FALSE;
+    for (PLIST_ENTRY e = g_timers.Flink; self && e != &g_timers && !valid; e = e->Flink) {
+        TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
+        valid = !tm->System && tm->Thread && tm->Thread->Process == self->Process && (LPARAM)tm->Proc == proc;
+    }
+    UserLeave();
+    return valid;
+}
+
 BOOL NTAPI NtUserKillTimer(HWND hwnd, UINT_PTR id)
 {
     UserEnter();
