@@ -34,11 +34,42 @@ typedef struct _IMAGELIST {
     BYTE *Items;
     /* each image's original size, cx in the low word and cy in the high word, 0 when unset. */
     DWORD *Original;
+    /*
+     * a sparse list numbers its images itself: Virtual maps each number to a slot of the strip, -1 while the image
+     * was never made, and the callback makes it the first time it is needed. Overlay then holds the numbers.
+     */
+    BOOL Sparse;
+    int *Virtual;
+    int VirtualCount, VirtualCapacity;
+    IUnknown *Callback;
+    BOOL InCallback;
+    /*
+     * a container of lists answers with one of them once it has them: a layer list with its first, a gang list with
+     * the one whose size its last Resize asked for.
+     */
+    const void *LayerVtbl;
+    BOOL Gang;
+    struct _IMAGELIST *Forward;
+    IUnknown *Layers[6];
+    struct _IMAGELIST *LayerLists[6];
+    int LayerCount;
 } IMAGELIST;
 
 static SRWLOCK g_lists_lock = SRWLOCK_INIT;
 static IMAGELIST *g_lists;
 static const IImageList2Vtbl list_vtbl;
+
+static IMAGELIST *find_list(HIMAGELIST himl)
+{
+    if (!himl || ((ULONG_PTR)himl & 3))
+        return nullptr;
+    AcquireSRWLockShared(&g_lists_lock);
+    IMAGELIST *il = g_lists;
+    while (il && il != himl)
+        il = il->Next;
+    ReleaseSRWLockShared(&g_lists_lock);
+    return il && il->Magic == IMAGELIST_MAGIC ? il : nullptr;
+}
 
 static IMAGELIST *get_list(HIMAGELIST himl)
 {
@@ -49,7 +80,104 @@ static IMAGELIST *get_list(HIMAGELIST himl)
     while (il && il != himl)
         il = il->Next;
     ReleaseSRWLockShared(&g_lists_lock);
+    if (il && il->Magic == IMAGELIST_MAGIC && il->Forward)
+        il = il->Forward;
     return il && il->Magic == IMAGELIST_MAGIC ? il : nullptr;
+}
+
+/* ------------------------------------------------------------------ sparse lists */
+
+/* the interface a sparse list asks to make a missing image: method 3 gets the list and the image's number. */
+MIME_DEFINE_GUID(IID_IImageListCallback_, 0x08CB26CC, 0x58EB, 0x4712, 0xB3, 0xDC, 0xA9, 0x6F, 0x8D, 0x17, 0xE0, 0x4F);
+
+typedef struct IImageListCallback_ IImageListCallback_;
+typedef struct IImageListCallback_Vtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IImageListCallback_ *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IImageListCallback_ *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IImageListCallback_ *This);
+    HRESULT(STDMETHODCALLTYPE *ForceImagePresent)(IImageListCallback_ *This, IImageList2 *list, int index);
+} IImageListCallback_Vtbl;
+struct IImageListCallback_ {
+    const IImageListCallback_Vtbl *lpVtbl;
+};
+
+static BOOL set_virtual_count(IMAGELIST *il, int count)
+{
+    if (count > il->VirtualCapacity) {
+        int capacity = il->VirtualCapacity ? il->VirtualCapacity : 64;
+        while (capacity < count)
+            capacity *= 2;
+        int *bigger = CcAlloc((SIZE_T)capacity * sizeof(int));
+        if (!bigger)
+            return FALSE;
+        if (il->Virtual)
+            memcpy(bigger, il->Virtual, (SIZE_T)il->VirtualCount * sizeof(int));
+        CcFree(il->Virtual);
+        il->Virtual = bigger;
+        il->VirtualCapacity = capacity;
+    }
+    for (int i = il->VirtualCount; i < count; i++)
+        il->Virtual[i] = -1;
+    il->VirtualCount = count;
+    return TRUE;
+}
+
+/* the slot of an image, which a sparse list makes through its callback when load is set; -1 without one. */
+static int slot_of(IMAGELIST *il, int i, BOOL load)
+{
+    if (!il->Sparse)
+        return i >= 0 && i < il->Count ? i : -1;
+    if (i < 0 || i >= il->VirtualCount)
+        return -1;
+    if (il->Virtual[i] < 0 && load && il->Callback && !il->InCallback) {
+        IImageListCallback_ *callback;
+        if (SUCCEEDED(il->Callback->lpVtbl->QueryInterface(il->Callback, &IID_IImageListCallback_,
+                                                            (void **)&callback))) {
+            il->InCallback = TRUE;
+            il->Refs++;
+            callback->lpVtbl->ForceImagePresent(callback, (IImageList2 *)il, i);
+            il->Refs--;
+            il->InCallback = FALSE;
+            callback->lpVtbl->Release(callback);
+        }
+    }
+    return il->Virtual[i];
+}
+
+/* the slot a sparse image is written to, made blank when the image had none. */
+static BOOL ensure_capacity(IMAGELIST *il, int needed);
+static int claim_slot(IMAGELIST *il, int i)
+{
+    if (!il->Sparse)
+        return i >= 0 && i < il->Count ? i : -1;
+    if (i < 0 || i >= il->VirtualCount)
+        return -1;
+    if (il->Virtual[i] >= 0)
+        return il->Virtual[i];
+    if (!ensure_capacity(il, il->Count + 2))
+        return -1;
+    int slot = il->Count++;
+    il->Items[slot] = 0;
+    il->Original[slot] = 0;
+    il->Virtual[i] = slot;
+    return slot;
+}
+
+/* a new number for a slot just added to a sparse list. */
+static int number_slot(IMAGELIST *il, int slot)
+{
+    if (!il->Sparse || slot < 0)
+        return slot;
+    int i = il->VirtualCount;
+    if (!set_virtual_count(il, i + 1))
+        return -1;
+    il->Virtual[i] = slot;
+    return i;
+}
+
+static int image_count(const IMAGELIST *il)
+{
+    return il->Sparse ? il->VirtualCount : il->Count;
 }
 
 static inline DWORD to_pixel(COLORREF c)
@@ -281,6 +409,12 @@ static void free_list(IMAGELIST *il)
     ReleaseSRWLockExclusive(&g_lists_lock);
     il->Magic = 0;
     release_storage(il);
+    CcFree(il->Virtual);
+    if (il->Callback)
+        il->Callback->lpVtbl->Release(il->Callback);
+    for (int i = 0; i < 6; i++)
+        if (il->Layers[i])
+            il->Layers[i]->lpVtbl->Release(il->Layers[i]);
     CcFree(il);
 }
 
@@ -293,7 +427,7 @@ WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_Create(int cx, int cy, UINT flags, in
 
 WINCOMMCTRLAPI BOOL WINAPI ImageList_Destroy(HIMAGELIST himl)
 {
-    IMAGELIST *il = get_list(himl);
+    IMAGELIST *il = find_list(himl);
     if (!il || (il->Flags & 0x100))
         return FALSE;
     if (InterlockedDecrement(&il->Refs) == 0)
@@ -304,7 +438,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Destroy(HIMAGELIST himl)
 /* ordinal 53: also frees lists created shared. */
 WINCOMMCTRLAPI BOOL WINAPI ImageList_DestroyShared(HIMAGELIST himl)
 {
-    IMAGELIST *il = get_list(himl);
+    IMAGELIST *il = find_list(himl);
     if (!il)
         return FALSE;
     if (InterlockedDecrement(&il->Refs) == 0)
@@ -315,7 +449,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_DestroyShared(HIMAGELIST himl)
 WINCOMMCTRLAPI int WINAPI ImageList_GetImageCount(HIMAGELIST himl)
 {
     IMAGELIST *il = get_list(himl);
-    return il ? il->Count : 0;
+    return il ? image_count(il) : 0;
 }
 
 WINCOMMCTRLAPI BOOL WINAPI ImageList_SetImageCount(HIMAGELIST himl, UINT count)
@@ -323,6 +457,9 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_SetImageCount(HIMAGELIST himl, UINT count)
     IMAGELIST *il = get_list(himl);
     if (!il || count > 0x7FFFFFFD)
         return FALSE;
+    /* the numbers past the count lose their images, the slots stay with the strip. */
+    if (il->Sparse)
+        return set_virtual_count(il, (int)count);
     if (!set_capacity(il, round_up((int)count + 2, il->Grow)))
         return FALSE;
     for (int i = il->Count; i < (int)count; i++)
@@ -355,6 +492,9 @@ static BOOL remove_all(IMAGELIST *il)
 {
     il->Count = 0;
     reset_overlays(il);
+    /* a sparse list keeps its numbers, whose images are made again when needed. */
+    for (int i = 0; i < il->VirtualCount; i++)
+        il->Virtual[i] = -1;
     return set_capacity(il, il->Grow);
 }
 
@@ -531,7 +671,12 @@ static int add_pixels(IMAGELIST *il, const PIXELS *image, const PIXELS *mask, in
     for (int k = 0; k < count; k++)
         store_image(il, first + k, image, k * il->Cx, mask);
     il->Count += count;
-    return first;
+    if (!il->Sparse)
+        return first;
+    int number = number_slot(il, first);
+    for (int k = 1; k < count && number >= 0; k++)
+        number_slot(il, first + k);
+    return number;
 }
 
 WINCOMMCTRLAPI int WINAPI ImageList_Add(HIMAGELIST himl, HBITMAP image, HBITMAP mask)
@@ -595,7 +740,7 @@ WINCOMMCTRLAPI int WINAPI ImageList_AddMasked(HIMAGELIST himl, HBITMAP image, CO
         blacken_source(image, &pixels);
     /* no width check here, unlike Add: a narrow bitmap adds nothing and returns the count. */
     int count = il->Cx ? pixels.Width / il->Cx : 0;
-    int index = count ? add_pixels(il, &pixels, il->MaskBits ? &mask : nullptr, count) : il->Count;
+    int index = count ? add_pixels(il, &pixels, il->MaskBits ? &mask : nullptr, count) : image_count(il);
     CcFree(pixels.Data);
     CcFree(mask.Data);
     return index;
@@ -605,11 +750,12 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Replace(HIMAGELIST himl, int i, HBITMAP ima
 {
     IMAGELIST *il = get_list(himl);
     PIXELS pixels, mask_pixels = {};
-    if (!il || i < 0 || i >= il->Count || !read_bitmap(image, &pixels))
+    int slot = il ? claim_slot(il, i) : -1;
+    if (slot < 0 || !read_bitmap(image, &pixels))
         return FALSE;
     if (mask)
         read_bitmap(mask, &mask_pixels);
-    store_image(il, i, &pixels, 0, mask_pixels.Data ? &mask_pixels : nullptr);
+    store_image(il, slot, &pixels, 0, mask_pixels.Data ? &mask_pixels : nullptr);
     CcFree(pixels.Data);
     CcFree(mask_pixels.Data);
     return TRUE;
@@ -620,7 +766,11 @@ WINCOMMCTRLAPI int WINAPI ImageList_ReplaceIcon(HIMAGELIST himl, int i, HICON ic
     IMAGELIST *il = get_list(himl);
     if (!il || i < -1 || !icon)
         return -1;
-    if (i >= il->Count)
+    if (i >= image_count(il))
+        return -1;
+    /* a sparse list writes the slot of the image, the caller keeps its number. */
+    int number = i;
+    if (il->Sparse && i >= 0 && (i = claim_slot(il, i)) < 0)
         return -1;
     ICONINFO info;
     HICON sized = nullptr;
@@ -641,10 +791,14 @@ WINCOMMCTRLAPI int WINAPI ImageList_ReplaceIcon(HIMAGELIST himl, int i, HICON ic
         }
     }
     if (i == -1) {
-        if (!ensure_capacity(il, il->Count + 2))
+        if (!ensure_capacity(il, il->Count + 2)) {
             i = -2;
-        else
+        } else {
             i = il->Count++;
+            il->Items[i] = 0;
+            il->Original[i] = 0;
+            number = number_slot(il, i);
+        }
     }
     if (i >= 0) {
         PIXELS color = {}, mask = {};
@@ -691,7 +845,9 @@ WINCOMMCTRLAPI int WINAPI ImageList_ReplaceIcon(HIMAGELIST himl, int i, HICON ic
     DeleteObject(info.hbmMask);
     if (sized)
         DestroyIcon(sized);
-    return i >= 0 ? i : -1;
+    if (i < 0)
+        return -1;
+    return il->Sparse ? number : i;
 }
 
 static void copy_slot(IMAGELIST *il, int dst, int src)
@@ -713,6 +869,13 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Remove(HIMAGELIST himl, int i)
         return FALSE;
     if (i == -1)
         return remove_all(il);
+    /* a sparse image goes, its number stays. */
+    if (il->Sparse) {
+        if (i < 0 || i >= il->VirtualCount)
+            return FALSE;
+        il->Virtual[i] = -1;
+        return TRUE;
+    }
     if (i < 0 || i >= il->Count)
         return FALSE;
     for (int j = i; j < il->Count - 1; j++)
@@ -744,15 +907,30 @@ WINCOMMCTRLAPI COLORREF WINAPI ImageList_GetBkColor(HIMAGELIST himl)
     return il ? il->Bk : 0;
 }
 
+static void measure_overlay(IMAGELIST *il, int slot, int image);
+
 WINCOMMCTRLAPI BOOL WINAPI ImageList_SetOverlayImage(HIMAGELIST himl, int image, int overlay)
 {
     IMAGELIST *il = get_list(himl);
-    if (!il || !(il->Flags & ILC_MASK) || overlay < 1 || overlay > 15 || image < 0 || image >= il->Count)
+    if (!il || !(il->Flags & ILC_MASK) || overlay < 1 || overlay > 15 || image < 0 || image >= image_count(il))
         return FALSE;
     int slot = overlay - 1;
+    /* a sparse list keeps the number, the box is measured when the overlay is drawn. */
+    if (il->Sparse) {
+        il->Overlay[slot] = image;
+        SetRectEmpty(&il->OverlayBox[slot]);
+        return TRUE;
+    }
     if (il->Overlay[slot] == image)
         return TRUE;
     il->Overlay[slot] = image;
+    measure_overlay(il, slot, image);
+    return TRUE;
+}
+
+/* the box of the opaque pixels of an overlay image, and whether all of them inside it are opaque. */
+static void measure_overlay(IMAGELIST *il, int slot, int image)
+{
     RECT box = {il->Cx, il->Cy, 0, 0};
     for (int y = 0; y < il->Cy; y++) {
         BYTE *row = mask_row(il, image * il->Cy + y);
@@ -781,7 +959,6 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_SetOverlayImage(HIMAGELIST himl, int image,
     }
     il->OverlayBox[slot] = box;
     il->OverlayOpaque[slot] = opaque;
-    return TRUE;
 }
 
 /* ------------------------------------------------------------------ drawing */
@@ -1010,11 +1187,14 @@ static BOOL draw_image(IMAGELIST *il, const IMAGELISTDRAWPARAMS *p, BOOL full, c
         scratch_free(&s);
     }
     int overlay = (int)((p->fStyle & ILD_OVERLAYMASK) >> 8);
-    if (overlay >= 1 && overlay <= 15 && il->Overlay[overlay - 1] >= 0 && il->Overlay[overlay - 1] < il->Count) {
+    int overlay_slot = overlay >= 1 && overlay <= 15 ? il->Overlay[overlay - 1] : -1;
+    if (il->Sparse && overlay_slot >= 0 && (overlay_slot = slot_of(il, overlay_slot, !(p->fStyle & ILD_ASYNC))) >= 0)
+        measure_overlay(il, overlay - 1, overlay_slot);
+    if (overlay_slot >= 0 && overlay_slot < il->Count) {
         RECT box = il->OverlayBox[overlay - 1];
         if (!IsRectEmpty(&box)) {
             IMAGELISTDRAWPARAMS o = *p;
-            o.i = il->Overlay[overlay - 1];
+            o.i = overlay_slot;
             o.fStyle = (p->fStyle & (ILD_MASK | ILD_SCALE | ILD_DPISCALE | ILD_PRESERVEALPHA)) | ILD_TRANSPARENT;
             if (il->OverlayOpaque[overlay - 1])
                 o.fStyle |= ILD_IMAGE;
@@ -1045,7 +1225,25 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_DrawIndirect(IMAGELISTDRAWPARAMS *params)
     IMAGELIST *il = get_list(params->himl);
     if (!il)
         return FALSE;
-    return draw_image(il, params, params->cbSize == sizeof(IMAGELISTDRAWPARAMS), nullptr);
+    IMAGELISTDRAWPARAMS p = *params;
+    if ((p.i = slot_of(il, params->i, !(params->fStyle & ILD_ASYNC))) < 0)
+        return FALSE;
+    return draw_image(il, &p, params->cbSize == sizeof(IMAGELISTDRAWPARAMS), nullptr);
+}
+
+/* draws a slot of the strip, whatever numbers a sparse list gives its images. */
+static void draw_slot(IMAGELIST *il, int slot, HDC dc, UINT style)
+{
+    IMAGELISTDRAWPARAMS p = {};
+    p.cbSize = IMAGELISTDRAWPARAMS_V3_SIZE;
+    p.himl = (HIMAGELIST)il;
+    p.i = slot;
+    p.hdcDst = dc;
+    p.rgbBk = CLR_DEFAULT;
+    p.rgbFg = CLR_DEFAULT;
+    p.fStyle = style;
+    p.dwRop = SRCCOPY;
+    draw_image(il, &p, FALSE, nullptr);
 }
 
 WINCOMMCTRLAPI BOOL WINAPI ImageList_DrawEx(HIMAGELIST himl, int i, HDC dc, int x, int y, int dx, int dy,
@@ -1075,7 +1273,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_Draw(HIMAGELIST himl, int i, HDC dc, int x,
 WINCOMMCTRLAPI HICON WINAPI ImageList_GetIcon(HIMAGELIST himl, int i, UINT flags)
 {
     IMAGELIST *il = get_list(himl);
-    if (!il || i < 0 || i >= il->Count || !il->Bits)
+    if (!il || (i = slot_of(il, i, TRUE)) < 0 || !il->Bits)
         return nullptr;
     void *bits, *mask_bits;
     HBITMAP color = create_dib(il->Cx, il->Cy, 32, &bits);
@@ -1087,7 +1285,7 @@ WINCOMMCTRLAPI HICON WINAPI ImageList_GetIcon(HIMAGELIST himl, int i, UINT flags
         HGDIOBJ old = SelectObject(dc, mask);
         if (il->MaskBits) {
             PatBlt(dc, 0, 0, il->Cx, il->Cy, WHITENESS);
-            ImageList_Draw(himl, i, dc, 0, 0, (flags & ~ILD_TRANSPARENT) | ILD_MASK);
+            draw_slot(il, i, dc, (flags & ~ILD_TRANSPARENT) | ILD_MASK);
         } else {
             PatBlt(dc, 0, 0, il->Cx, il->Cy, alpha ? WHITENESS : BLACKNESS);
         }
@@ -1107,7 +1305,7 @@ WINCOMMCTRLAPI HICON WINAPI ImageList_GetIcon(HIMAGELIST himl, int i, UINT flags
             }
         } else {
             PatBlt(dc, 0, 0, il->Cx, il->Cy, BLACKNESS);
-            ImageList_Draw(himl, i, dc, 0, 0, flags | ILD_TRANSPARENT);
+            draw_slot(il, i, dc, flags | ILD_TRANSPARENT);
             DWORD *out = bits;
             for (SIZE_T k = 0; k < (SIZE_T)il->Cx * (SIZE_T)il->Cy; k++)
                 out[k] &= 0xFFFFFF;
@@ -1128,7 +1326,7 @@ WINCOMMCTRLAPI HICON WINAPI ImageList_GetIcon(HIMAGELIST himl, int i, UINT flags
 WINCOMMCTRLAPI BOOL WINAPI ImageList_GetImageInfo(HIMAGELIST himl, int i, IMAGEINFO *info)
 {
     IMAGELIST *il = get_list(himl);
-    if (!il || !info || i < 0 || i >= il->Count)
+    if (!il || !info || (i = slot_of(il, i, TRUE)) < 0)
         return FALSE;
     info->hbmImage = il->Image;
     info->hbmMask = il->Mask;
@@ -1142,7 +1340,7 @@ WINCOMMCTRLAPI BOOL WINAPI ImageList_GetImageInfo(HIMAGELIST himl, int i, IMAGEI
 WINCOMMCTRLAPI BOOL WINAPI ImageList_GetImageRect(HIMAGELIST himl, int i, RECT *rect)
 {
     IMAGELIST *il = get_list(himl);
-    if (!il || !rect || i < 0 || i >= il->Count)
+    if (!il || !rect || (i = slot_of(il, i, TRUE)) < 0)
         return FALSE;
     SetRect(rect, 0, i * il->Cy, il->Cx, (i + 1) * il->Cy);
     return TRUE;
@@ -1174,14 +1372,24 @@ WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_Duplicate(HIMAGELIST himl)
     memcpy(copy->Overlay, il->Overlay, sizeof(il->Overlay));
     memcpy(copy->OverlayBox, il->OverlayBox, sizeof(il->OverlayBox));
     memcpy(copy->OverlayOpaque, il->OverlayOpaque, sizeof(il->OverlayOpaque));
+    if (il->Sparse) {
+        copy->Sparse = TRUE;
+        if (!set_virtual_count(copy, il->VirtualCount)) {
+            free_list(copy);
+            return nullptr;
+        }
+        memcpy(copy->Virtual, il->Virtual, (SIZE_T)il->VirtualCount * sizeof(int));
+    }
     return copy;
 }
 
 WINCOMMCTRLAPI BOOL WINAPI ImageList_Copy(HIMAGELIST dst, int i_dst, HIMAGELIST src, int i_src, UINT flags)
 {
     IMAGELIST *il = get_list(dst);
-    if (!il || dst != src || (flags & ~ILCF_SWAP) || i_dst < 0 || i_dst >= il->Count || i_src < 0 ||
-        i_src >= il->Count)
+    if (!il || get_list(src) != il || (flags & ~ILCF_SWAP) || i_dst < 0 || i_dst >= image_count(il) ||
+        i_src < 0 || i_src >= image_count(il))
+        return FALSE;
+    if ((i_src = slot_of(il, i_src, TRUE)) < 0 || (i_dst = claim_slot(il, i_dst)) < 0)
         return FALSE;
     if (flags & ILCF_SWAP) {
         /* the spare slot past the last image holds one side of the swap. */
@@ -1259,7 +1467,7 @@ WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_Merge(HIMAGELIST himl1, int i1, HIMAG
     IMAGELIST *a = get_list(himl1), *b = get_list(himl2);
     if (!a || !b)
         return nullptr;
-    return merge(a, i1, b, i2, dx, dy, nullptr);
+    return merge(a, slot_of(a, i1, TRUE), b, slot_of(b, i2, TRUE), dx, dy, nullptr);
 }
 
 /* ordinal 84: stretches every image to a new size. */
@@ -1573,11 +1781,20 @@ WINCOMMCTRLAPI HIMAGELIST WINAPI ImageList_GetDragImage(POINT *pt, POINT *hot)
 
 /* ------------------------------------------------------------------ IImageList2 */
 
+MIME_DEFINE_GUID(IID_ILayerImageList_, 0x5A849419, 0xBDA3, 0x4A7A, 0x8E, 0x89, 0x11, 0x5F, 0x51, 0x91, 0x70, 0x94);
+
 /* the private decorator interface Replace2 and ReplaceFromImageList query their IUnknown for. */
 MIME_DEFINE_GUID(IID_IImageListImageDecorator_, 0xDEF20F93, 0x74E9, 0x4BEB, 0x9B, 0x81, 0x11, 0x00, 0x2E, 0x93, 0xA2,
                  0xD3);
 
+/* the list a method acts on: a layer list hands its calls to its first layer. */
 static inline IMAGELIST *impl(IImageList2 *iface)
+{
+    IMAGELIST *il = (IMAGELIST *)iface;
+    return il->Forward ? il->Forward : il;
+}
+
+static inline IMAGELIST *self(IImageList2 *iface)
 {
     return (IMAGELIST *)iface;
 }
@@ -1590,7 +1807,7 @@ static inline BOOL ready(const IMAGELIST *il)
 
 static inline BOOL valid_index(const IMAGELIST *il, int i)
 {
-    return i >= 0 && i < il->Count;
+    return i >= 0 && i < image_count(il);
 }
 
 /* the caller keeps its own reference on the interface. */
@@ -1624,9 +1841,15 @@ static HRESULT STDMETHODCALLTYPE il_QueryInterface(IImageList2 *iface, REFIID ri
 {
     if (!object)
         return E_POINTER;
+    IMAGELIST *il = self(iface);
     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IImageList) || IsEqualIID(riid, &IID_IImageList2)) {
-        InterlockedIncrement(&impl(iface)->Refs);
+        InterlockedIncrement(&il->Refs);
         *object = iface;
+        return S_OK;
+    }
+    if (il->LayerVtbl && IsEqualIID(riid, &IID_ILayerImageList_)) {
+        InterlockedIncrement(&il->Refs);
+        *object = &il->LayerVtbl;
         return S_OK;
     }
     *object = nullptr;
@@ -1635,12 +1858,12 @@ static HRESULT STDMETHODCALLTYPE il_QueryInterface(IImageList2 *iface, REFIID ri
 
 static ULONG STDMETHODCALLTYPE il_AddRef(IImageList2 *iface)
 {
-    return (ULONG)InterlockedIncrement(&impl(iface)->Refs);
+    return (ULONG)InterlockedIncrement(&self(iface)->Refs);
 }
 
 static ULONG STDMETHODCALLTYPE il_Release(IImageList2 *iface)
 {
-    IMAGELIST *il = impl(iface);
+    IMAGELIST *il = self(iface);
     LONG refs = InterlockedDecrement(&il->Refs);
     if (!refs)
         free_list(il);
@@ -1707,8 +1930,12 @@ static HRESULT STDMETHODCALLTYPE il_Draw(IImageList2 *iface, IMAGELISTDRAWPARAMS
         return E_INVALIDARG;
     if (params->cbSize != sizeof(IMAGELISTDRAWPARAMS) && params->cbSize != IMAGELISTDRAWPARAMS_V3_SIZE)
         return E_INVALIDARG;
+    IMAGELISTDRAWPARAMS p = *params;
+    /* an image a sparse list cannot make now is pending, as in CSparseImageList::Draw. */
+    if ((p.i = slot_of(il, params->i, !(params->fStyle & ILD_ASYNC))) < 0)
+        return E_PENDING;
     /* the list drawn is this one, whatever params->himl says. */
-    draw_image(il, params, params->cbSize == sizeof(IMAGELISTDRAWPARAMS), nullptr);
+    draw_image(il, &p, params->cbSize == sizeof(IMAGELISTDRAWPARAMS), nullptr);
     return S_OK;
 }
 
@@ -1765,7 +1992,7 @@ static HRESULT STDMETHODCALLTYPE il_Merge(IImageList2 *iface, int i1, IUnknown *
         return hr;
     if (!ready(il) || !ready(other))
         return E_FAIL;
-    IMAGELIST *m = merge(il, i1, other, i2, dx, dy, nullptr);
+    IMAGELIST *m = merge(il, slot_of(il, i1, TRUE), other, slot_of(other, i2, TRUE), dx, dy, nullptr);
     return m ? give_list(m, riid, object) : E_OUTOFMEMORY;
 }
 
@@ -1812,7 +2039,7 @@ static HRESULT STDMETHODCALLTYPE il_GetImageCount(IImageList2 *iface, int *count
 {
     if (!count)
         return E_INVALIDARG;
-    *count = impl(iface)->Count;
+    *count = image_count(impl(iface));
     return S_OK;
 }
 
@@ -1904,6 +2131,8 @@ static HRESULT STDMETHODCALLTYPE il_GetItemFlags(IImageList2 *iface, int i, DWOR
     IMAGELIST *il = impl(iface);
     if (!flags || !valid_index(il, i))
         return E_INVALIDARG;
+    if ((i = slot_of(il, i, TRUE)) < 0)
+        return E_PENDING;
     *flags = il->Items[i] & (ITEM_ALPHA | ITEM_RESIZED);
     return S_OK;
 }
@@ -1916,11 +2145,20 @@ static HRESULT STDMETHODCALLTYPE il_GetOverlayImage(IImageList2 *iface, int over
     return S_OK;
 }
 
+static void gang_select(IMAGELIST *il);
+
 static HRESULT STDMETHODCALLTYPE il_Resize(IImageList2 *iface, int cx, int cy)
 {
     IMAGELIST *il = impl(iface);
     if (cx <= 0 || cy <= 0)
         return E_INVALIDARG;
+    /* a gang picks the list of that size, the lists themselves keep theirs. */
+    if (self(iface)->Gang) {
+        self(iface)->Cx = cx;
+        self(iface)->Cy = cy;
+        gang_select(self(iface));
+        return S_OK;
+    }
     if (cx == il->Cx && cy == il->Cy)
         return S_FALSE;
     if (!ready(il))
@@ -1933,6 +2171,8 @@ static HRESULT STDMETHODCALLTYPE il_GetOriginalSize(IImageList2 *iface, int i, D
     IMAGELIST *il = impl(iface);
     if (!cx || !cy || !valid_index(il, i))
         return E_INVALIDARG;
+    if ((i = slot_of(il, i, TRUE)) < 0)
+        return E_FAIL;
     DWORD o = il->Original[i];
     if (!o)
         return E_FAIL;
@@ -1947,6 +2187,8 @@ static HRESULT STDMETHODCALLTYPE il_SetOriginalSize(IImageList2 *iface, int i, i
     IMAGELIST *il = impl(iface);
     if (!valid_index(il, i) || (UINT)cx > 0x7FFF || (UINT)cy > 0x7FFF || !cx != !cy)
         return E_INVALIDARG;
+    if ((i = claim_slot(il, i)) < 0)
+        return E_OUTOFMEMORY;
     il->Original[i] = (DWORD)cx | (DWORD)cy << 16;
     return S_OK;
 }
@@ -1954,25 +2196,40 @@ static HRESULT STDMETHODCALLTYPE il_SetOriginalSize(IImageList2 *iface, int i, i
 /* a plain list has no callback, and windows does not implement these for it. */
 static HRESULT STDMETHODCALLTYPE il_SetCallback(IImageList2 *iface, IUnknown *callback)
 {
-    return E_NOTIMPL;
+    IMAGELIST *il = impl(iface);
+    if (!il->Sparse)
+        return E_NOTIMPL;
+    if (callback)
+        callback->lpVtbl->AddRef(callback);
+    if (il->Callback)
+        il->Callback->lpVtbl->Release(il->Callback);
+    il->Callback = callback;
+    return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE il_GetCallback(IImageList2 *iface, REFIID riid, void **object)
 {
+    IMAGELIST *il = impl(iface);
     if (object)
         *object = nullptr;
-    return E_FAIL;
+    if (!object || !il->Callback)
+        return E_FAIL;
+    return il->Callback->lpVtbl->QueryInterface(il->Callback, riid, object);
 }
 
-/* every image of a plain list is always present. */
+/* every image of a plain list is always present; a sparse one makes it unless the caller only looks. */
 static HRESULT STDMETHODCALLTYPE il_ForceImagePresent(IImageList2 *iface, int i, DWORD flags)
 {
-    return valid_index(impl(iface), i) ? S_OK : E_INVALIDARG;
+    IMAGELIST *il = impl(iface);
+    if (!valid_index(il, i))
+        return E_INVALIDARG;
+    return slot_of(il, i, !(flags & ILFIP_FROMSTANDBY)) >= 0 ? S_OK : E_PENDING;
 }
 
+/* the images of a sparse list stay, which windows allows: discarding only frees memory. */
 static HRESULT STDMETHODCALLTYPE il_DiscardImages(IImageList2 *iface, int first, int last, DWORD flags)
 {
-    return E_NOTIMPL;
+    return impl(iface)->Sparse ? S_OK : E_NOTIMPL;
 }
 
 /* the images are always present, so nothing is drawn. */
@@ -2005,6 +2262,7 @@ static HRESULT STDMETHODCALLTYPE il_Initialize(IImageList2 *iface, int cx, int c
 {
     IMAGELIST *il = impl(iface);
     release_storage(il);
+    il->VirtualCount = 0;
     if (cx <= 0 || cy <= 0 || (flags & ILC_INVALID))
         return E_INVALIDARG;
     return init_list(il, cx, cy, flags, initial, grow) ? S_OK : E_OUTOFMEMORY;
@@ -2020,6 +2278,8 @@ static HRESULT STDMETHODCALLTYPE il_Replace2(IImageList2 *iface, int i, HBITMAP 
         return hr;
     if (!valid_index(il, i))
         return E_INVALIDARG;
+    if ((i = claim_slot(il, i)) < 0)
+        return E_OUTOFMEMORY;
     PIXELS pixels, mask_pixels = {};
     if (!read_bitmap(image, &pixels))
         return E_FAIL;
@@ -2052,8 +2312,10 @@ static HRESULT STDMETHODCALLTYPE il_ReplaceFromImageList(IImageList2 *iface, int
     hr = list_from_unknown((IUnknown *)source, &from);
     if (FAILED(hr))
         return hr;
-    if (!valid_index(from, src) || !from->Bits || !il->Bits)
+    if (!valid_index(from, src) || (src = slot_of(from, src, TRUE)) < 0 || !from->Bits || !il->Bits)
         return E_INVALIDARG;
+    if ((i = claim_slot(il, i)) < 0)
+        return E_OUTOFMEMORY;
     if (from->Cx == il->Cx && from->Cy == il->Cy) {
         for (int y = 0; y < il->Cy; y++) {
             memcpy(image_row(il, i * il->Cy + y), image_row(from, src * from->Cy + y), (SIZE_T)il->Cx * 4);
@@ -2132,11 +2394,126 @@ WINCOMMCTRLAPI HRESULT WINAPI HIMAGELIST_QueryInterface(HIMAGELIST himl, REFIID 
     if (!object)
         return E_POINTER;
     *object = nullptr;
-    IMAGELIST *il = get_list(himl);
+    IMAGELIST *il = find_list(himl);
     if (!il)
         return E_POINTER;
     return il_QueryInterface((IImageList2 *)il, riid, object);
 }
+
+/* ------------------------------------------------------------------ layer lists */
+
+/*
+ * ILayerImageList, private to comctl32 6, whose only use is the shell's jumbo list: the 256 pixel images in front of
+ * the 48 pixel ones. Mime's layer list answers with the first layer, whose callback makes every image at its size.
+ */
+typedef struct ILayerImageList_ ILayerImageList_;
+typedef struct ILayerImageList_Vtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(ILayerImageList_ *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(ILayerImageList_ *This);
+    ULONG(STDMETHODCALLTYPE *Release)(ILayerImageList_ *This);
+    HRESULT(STDMETHODCALLTYPE *SetImageLists)(ILayerImageList_ *This, int count, IImageList **lists);
+    HRESULT(STDMETHODCALLTYPE *GetImageList)(ILayerImageList_ *This, UINT index, REFIID riid, void **object);
+    HRESULT(STDMETHODCALLTYPE *SetLayered)(ILayerImageList_ *This, int image, int first, int second);
+    HRESULT(STDMETHODCALLTYPE *GetLayered)(ILayerImageList_ *This, int image, int *first, int *second);
+} ILayerImageList_Vtbl;
+
+static IMAGELIST *layer_list(ILayerImageList_ *This)
+{
+    return CONTAINING_RECORD((const void **)This, IMAGELIST, LayerVtbl);
+}
+
+static HRESULT STDMETHODCALLTYPE layer_QueryInterface(ILayerImageList_ *This, REFIID riid, void **object)
+{
+    return il_QueryInterface((IImageList2 *)layer_list(This), riid, object);
+}
+
+static ULONG STDMETHODCALLTYPE layer_AddRef(ILayerImageList_ *This)
+{
+    return il_AddRef((IImageList2 *)layer_list(This));
+}
+
+static ULONG STDMETHODCALLTYPE layer_Release(ILayerImageList_ *This)
+{
+    return il_Release((IImageList2 *)layer_list(This));
+}
+
+/* the list of a gang with the size asked for, else the smallest larger one, else the largest. */
+static void gang_select(IMAGELIST *il)
+{
+    IMAGELIST *best = nullptr;
+    for (int i = 0; i < il->LayerCount; i++) {
+        IMAGELIST *l = il->LayerLists[i];
+        if (l->Cx == il->Cx && l->Cy == il->Cy) {
+            best = l;
+            break;
+        }
+        BOOL larger = l->Cx >= il->Cx && l->Cy >= il->Cy;
+        if (!best || (larger && (best->Cx < il->Cx || l->Cx < best->Cx)) || (!larger && best->Cx < il->Cx && l->Cx > best->Cx))
+            best = l;
+    }
+    if (best)
+        il->Forward = best;
+}
+
+/* a layer list takes exactly two lists, as windows does; a gang the system's six. */
+static HRESULT STDMETHODCALLTYPE layer_SetImageLists(ILayerImageList_ *This, int count, IImageList **lists)
+{
+    IMAGELIST *il = layer_list(This);
+    IMAGELIST *found[6];
+    if (!lists || (il->Gang ? count < 1 || count > 6 : count != 2))
+        return E_INVALIDARG;
+    for (int i = 0; i < count; i++) {
+        if (!lists[i])
+            return E_INVALIDARG;
+        HRESULT hr = list_from_unknown((IUnknown *)lists[i], &found[i]);
+        if (FAILED(hr))
+            return hr;
+    }
+    for (int i = 0; i < 6; i++) {
+        if (i < count)
+            lists[i]->lpVtbl->AddRef(lists[i]);
+        if (il->Layers[i])
+            il->Layers[i]->lpVtbl->Release(il->Layers[i]);
+        il->Layers[i] = i < count ? (IUnknown *)lists[i] : nullptr;
+        il->LayerLists[i] = i < count ? found[i] : nullptr;
+    }
+    il->LayerCount = count;
+    il->Forward = found[0];
+    if (il->Gang)
+        gang_select(il);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE layer_GetImageList(ILayerImageList_ *This, UINT index, REFIID riid, void **object)
+{
+    IMAGELIST *il = layer_list(This);
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    if (index >= 6 || !il->Layers[index])
+        return E_INVALIDARG;
+    return il->Layers[index]->lpVtbl->QueryInterface(il->Layers[index], riid, object);
+}
+
+/* every image comes from the first layer, which makes it at its own size. */
+static HRESULT STDMETHODCALLTYPE layer_SetLayered(ILayerImageList_ *This, int image, int first, int second)
+{
+    return image >= 0 ? S_OK : E_INVALIDARG;
+}
+
+static HRESULT STDMETHODCALLTYPE layer_GetLayered(ILayerImageList_ *This, int image, int *first, int *second)
+{
+    if (!first || !second)
+        return E_POINTER;
+    *first = image;
+    *second = -1;
+    return image >= 0 ? S_OK : E_INVALIDARG;
+}
+
+static const ILayerImageList_Vtbl layer_vtbl = {
+    layer_QueryInterface, layer_AddRef,     layer_Release,    layer_SetImageLists,
+    layer_GetImageList,   layer_SetLayered, layer_GetLayered,
+};
 
 /* the list stays empty and without storage until IImageList2::Initialize. */
 WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const IUnknown *outer, REFIID riid,
@@ -2147,8 +2524,16 @@ WINCOMMCTRLAPI HRESULT WINAPI ImageList_CoCreateInstance(REFCLSID clsid, const I
     *object = nullptr;
     if (outer)
         return CLASS_E_NOAGGREGATION;
-    if (!IsEqualCLSID(clsid, &CLSID_ImageList))
+    BOOL sparse = IsEqualCLSID(clsid, &CLSID_SparseImageList), layer = IsEqualCLSID(clsid, &CLSID_LayerImageList);
+    BOOL gang = IsEqualCLSID(clsid, &CLSID_GangImageList);
+    if (!sparse && !layer && !gang && !IsEqualCLSID(clsid, &CLSID_ImageList))
         return REGDB_E_CLASSNOTREG;
     IMAGELIST *il = new_object();
-    return il ? give_list(il, riid, object) : E_OUTOFMEMORY;
+    if (!il)
+        return E_OUTOFMEMORY;
+    il->Sparse = sparse;
+    il->Gang = gang;
+    if (layer || gang)
+        il->LayerVtbl = &layer_vtbl;
+    return give_list(il, riid, object);
 }
