@@ -88,6 +88,20 @@ BOOLEAN WndCoversMonitor(WND *w)
 }
 
 /* coordinates between the awareness of a window and the one of the calling thread. */
+/*
+ * NeedsWindowEdge of win32kfull 26300: a modal dialog frame, a thick frame, a dialog frame or a caption raise the edge
+ * of a window, unless it has a static edge. the caption counts for programs made for windows 4 and later, which mime
+ * takes every program for.
+ */
+static BOOLEAN needs_window_edge(DWORD style, DWORD ex_style)
+{
+    if (ex_style & WS_EX_DLGMODALFRAME)
+        return TRUE;
+    if (ex_style & WS_EX_STATICEDGE)
+        return FALSE;
+    return (style & WS_THICKFRAME) || (style & WS_CAPTION) == WS_DLGFRAME || (style & WS_CAPTION) == WS_CAPTION;
+}
+
 static void rect_to_caller(const WND *w, RECT *r)
 {
     DpiRectConvert(r, w->Awareness, DpiCurrentAwareness());
@@ -2801,10 +2815,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
         if (!(style & WS_POPUP))
             style |= WS_CAPTION;
     }
-    if ((style & WS_CAPTION) == WS_CAPTION || (style & WS_THICKFRAME))
-        ex_style |= WS_EX_WINDOWEDGE;
-    if (ex_style & WS_EX_DLGMODALFRAME)
-        ex_style |= WS_EX_WINDOWEDGE;
+    ex_style = needs_window_edge(style, ex_style) ? ex_style | WS_EX_WINDOWEDGE : ex_style & ~WS_EX_WINDOWEDGE;
     w->Style = style & ~(WS_VISIBLE | WS_MINIMIZE | WS_MAXIMIZE);
     /* the structures of WM_NCCREATE and WM_CREATE carry the style the caller asked for. */
     w->CreateStyle = requested_style;
@@ -3645,6 +3656,8 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
              */
             BOOLEAN shown = !(w->Style & WS_VISIBLE) && (ss.styleNew & WS_VISIBLE);
             w->Style = ss.styleNew;
+            w->ExStyle = needs_window_edge(w->Style, w->ExStyle) ? w->ExStyle | WS_EX_WINDOWEDGE
+                                                                 : w->ExStyle & ~WS_EX_WINDOWEDGE;
             /* restoring the application frame ends its fullscreen host space. */
             if ((w->Flags & WNDF_APP_FULLSCREEN) &&
                 ((w->Style & WS_CAPTION) == WS_CAPTION || (w->Style & WS_THICKFRAME)))
@@ -3655,6 +3668,8 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
             border_taken(w);
         } else {
             w->ExStyle = (ss.styleNew & 0x7FFFFFFFu) | (w->ExStyle & 0x80000000u);
+            w->ExStyle = needs_window_edge(w->Style, w->ExStyle) ? w->ExStyle | WS_EX_WINDOWEDGE
+                                                                 : w->ExStyle & ~WS_EX_WINDOWEDGE;
             LayerStyleChanged(w);
             border_taken(w);
         }
