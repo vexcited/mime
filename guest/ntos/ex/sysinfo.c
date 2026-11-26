@@ -2496,7 +2496,7 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
     case 88: /* SystemProcessIdInformation */
         return query_process_id(info, length, returned);
     case 103: { /* SystemCodeIntegrityInformation */
-        /* like ci.dll: the caller sets the length, the options are code integrity on, no test or debug signing. measured with ci.exe. */
+        /* like ci.dll: the caller sets the length, the options are code integrity on, no test or debug signing. measured on windows. */
         ULONG ci[2];
         ULONG need = sizeof(ci);
         if (length != sizeof(ci)) {
@@ -2517,7 +2517,7 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
     }
     case 183: {
         /*
-         * SystemCodeIntegrityCertificateInformation, measured on windows 11 26100 with cicert.exe: a handle of a file
+         * SystemCodeIntegrityCertificateInformation, measured on windows 11 26100: a handle of a file
          * and a kind in a block of 16 bytes, which stays as it was, and a returned length of 0. kind 0 asks whether
          * windows itself signed the file: 0 for a file of the system, c0000428 for any other image, signed or not,
          * c000007b for a file that is no image. kind 1 is refused and kind 2 succeeds whatever the file. no signature
@@ -3353,8 +3353,8 @@ NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data
 
 /*
  * the secure settings of the security policies, which a device with virtualization based security keeps. measured on
- * windows 11 26300 with secpol.c of the research repository: no setting is there whatever its names, the size is read
- * and must not be 0, and the value and the type are left as they were.
+ * windows 11 26300: no setting is there whatever its names, the size is read and must not be 0, and the value and the
+ * type are left as they were.
  */
 NTSTATUS NTAPI NtQuerySecurityPolicy(PCUNICODE_STRING policy, PCUNICODE_STRING key, PCUNICODE_STRING value, PULONG type,
                                      PVOID data, PULONG size)
@@ -3372,7 +3372,7 @@ NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data)
 
 /*
  * no kernel debugger is attached, and windows 11 answers every command 0 to 0x2f with that before it looks at a
- * block, measured with sysdbg.exe. the two dump commands ask for the debug privilege first; what they answer with it
+ * block, measured on windows. the two dump commands ask for the debug privilege first; what they answer with it
  * was not measured.
  */
 NTSTATUS NTAPI NtSystemDebugControl(ULONG command, PVOID in, ULONG in_length, PVOID out, ULONG out_length, PULONG returned)

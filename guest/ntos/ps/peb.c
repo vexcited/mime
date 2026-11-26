@@ -323,7 +323,7 @@ NTSTATUS PspMapPebBlocks(PEPROCESS process, PPEB peb)
     peb->LeapSecondData = leap;
     /*
      * the header of the shim data the creator leaves: its size, its magic, its version and the machine. measured on
-     * windows 11 with shim64.c and peb32.c of scratch/dlls/wow, a wow64 child gets version 0 and the x86 machine.
+     * windows 11, a wow64 child gets version 0 and the x86 machine.
      */
     PULONG header = (PULONG)((PUCHAR)shim + 0x208);
     header[0] = 0x11c0;

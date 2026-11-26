@@ -1,7 +1,6 @@
 /*
- * the side of csrss a process of windows 11 26300 talks to while it starts, measured there with csrconn.c, csrdbg.c
- * and csrsd.c of scratch/dlls/probe in the research repository. mime has no csrss: the kernel names the section
- * and the port of each session and answers the port itself, on the thread of the caller.
+ * the side of csrss a process of windows 11 26300 talks to while it starts, measured there. mime has no csrss: the
+ * kernel names the section and the port of each session and answers the port itself, on the thread of the caller.
  *
  * a process opens \Sessions\n\Windows\SharedSection for SECTION_MAP_READ, makes a reserved section of 64 KB, and
  * connects to \Sessions\n\Windows\ApiPort with that section as its view and 0x30 bytes of connection information.

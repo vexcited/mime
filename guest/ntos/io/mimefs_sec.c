@@ -134,11 +134,10 @@ static void build_seeds(void)
                         {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
                         {ACE_OI_CI, FILE_ALL, user}};
     /*
-     * measured on windows 11 26100 with filesd.exe of scratch/dlls/probe in the research repository: the profile
-     * belongs to the system and its list is protected and not marked as inherited automatically. what the profile was
-     * made with, the hive of the user and its logs, AppData, Local, Temp and the desktop, belongs to the user and
-     * carries the same three entries as its own, not as inherited ones. the entry of the profile for the capability
-     * sid of an app container is left out.
+     * measured on windows 11 26100: the profile belongs to the system and its list is protected and not marked as
+     * inherited automatically. what the profile was made with, the hive of the user and its logs, AppData, Local, Temp
+     * and the desktop, belongs to the user and carries the same three entries as its own, not as inherited ones. the
+     * entry of the profile for the capability sid of an app container is left out.
      */
     SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_PROTECTED, profile, 3, &g_profile);
     SeSdBuild(user, none, 0, profile, 3, &g_profile_directory);
@@ -173,8 +172,8 @@ static void build_seeds(void)
               &g_network_service_profile);
 
     /*
-     * the list of nearly every file of System32, SysWOW64 and Boot on windows 11 26300 and in its image: protected,
-     * its own entries in this order. bootfiles/boot.c of scratch/dlls in the research repository reads it.
+     * the list of nearly every file of System32, SysWOW64 and Boot on windows 11 26300 and in its image: protected, its
+     * own entries in this order.
      */
     SD_ACE rom[] = {{0, FILE_ALL, SeSidTrustedInstaller},
                     {0, FILE_READ_EXECUTE, SeSidAdministrators},

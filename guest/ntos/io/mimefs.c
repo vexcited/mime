@@ -1179,8 +1179,7 @@ opened:
         }
     } else if ((action == FILE_OVERWRITTEN || action == FILE_SUPERSEDED) && !fcb->Directory) {
         /*
-         * measured on ntfs in scratch/bits/wire: an overwrite keeps the attributes the file had and adds those asked and
-         * the archive one.
+         * measured on ntfs: an overwrite keeps the attributes the file had and adds those asked and the archive one.
          */
         ULONG asked = stack->Parameters.Create.FileAttributes &
                       (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_TEMPORARY);
@@ -3001,8 +3000,8 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_SUCCESS, need);
     }
     default:
-        /* ntfs sends a control it does not know down the stack of the volume only for the volume itself, a handle of
-         * a file or directory gets STATUS_INVALID_PARAMETER, measured with gatt.c of scratch/g2/bth. */
+        /* ntfs sends a control it does not know down the stack of the volume only for the volume itself, a handle of a
+         * file or directory gets STATUS_INVALID_PARAMETER. */
         return complete(irp, stack->FileObject->FileName.Length ? STATUS_INVALID_PARAMETER : STATUS_INVALID_DEVICE_REQUEST,
                         0);
     }
@@ -3369,8 +3368,8 @@ static NTSTATUS query_usn_journal(PIRP irp, MIMEFS_VOLUME *vol, ULONG length)
  * FSCTL_CREATE_OR_GET_OBJECT_ID and FSCTL_GET_OBJECT_ID: ntfs gives a file a guid of its own the first time one is
  * asked for, and tells it with the volume's as the one it was born on. the id is drawn from the volume and the file,
  * shaped like the time based guid ntfs draws, and the host stores it in an attribute of the file. asking without
- * creating finds none on a file that was never given one, as on ntfs. the layout and the statuses are those of
- * windows 11 26300, measured with scratch/dlls/probe/objid.c of the research repository.
+ * creating finds none on a file that was never given one, as on ntfs. the layout and the statuses are those of windows
+ * 11 26300.
  */
 #define FSCTL_GET_OBJECT_ID 0x0009009Cu
 #define FSCTL_CREATE_OR_GET_OBJECT_ID 0x000900C0u
@@ -3453,7 +3452,7 @@ static NTSTATUS object_id(PIRP irp, MIMEFS_VOLUME *vol, PFILE_OBJECT file, ULONG
     out[23] = (UCHAR)((out[23] & 0x0F) | 0x40);
     out[24] = (UCHAR)((out[24] & 0x3F) | 0x80);
     memcpy(out + 32, out, 16);
-    /* the domain id stays zero, as windows 11 26300 answers in scratch/dlls/probe/win-objid.txt. */
+    /* the domain id stays zero, as windows 11 26300 answers. */
     return complete(irp, STATUS_SUCCESS, 64);
 }
 
@@ -3513,9 +3512,9 @@ static void add_attributes(PFILE_OBJECT file, MIMEFS_FCB *fcb, ULONG attributes)
 }
 
 /*
- * FSCTL_SET_SPARSE, measured in scratch/sparse on windows 11: a handle that writes data or attributes, a file and not a
- * directory, and a FILE_SET_SPARSE_BUFFER or nothing, which sets. a file that stops or starts being sparse is whole,
- * as a file that is not sparse always is on ntfs.
+ * FSCTL_SET_SPARSE, measured on windows 11: a handle that writes data or attributes, a file and not a directory, and a
+ * FILE_SET_SPARSE_BUFFER or nothing, which sets. a file that stops or starts being sparse is whole, as a file that is
+ * not sparse always is on ntfs.
  */
 static NTSTATUS set_sparse(PIRP irp, PFILE_OBJECT file, MIMEFS_FCB *fcb, ULONG in_length)
 {

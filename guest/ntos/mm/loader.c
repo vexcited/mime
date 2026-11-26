@@ -787,8 +787,8 @@ NTSTATUS PspInitializeSystemDll(void)
 
 /*
  * PS_SYSTEM_DLL_INIT_BLOCK, the export LdrSystemDllInitBlock of ntdll that the kernel fills in each process, read from
- * PspPrepareSystemDllInitBlock of ntoskrnl 26300 and measured on windows 11 with initblk.c of
- * scratch/dlls/wow in the research repository. the 32-bit ntdll of a wow64 process has a block of the same layout.
+ * PspPrepareSystemDllInitBlock of ntoskrnl 26300 and measured on windows 11. the 32-bit ntdll of a wow64 process has a
+ * block of the same layout.
  */
 typedef struct {
     ULONG Size;

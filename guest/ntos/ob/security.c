@@ -144,8 +144,8 @@ NTSTATUS ObComputeSecurity(POBJECT_TYPE type_object, const OBJECT_ATTRIBUTES *at
 /* takes ownership of a descriptor made by ObComputeSecurity. */
 /*
  * a token carries its integrity level as a label, a process and a thread the level of the token of the process,
- * measured on windows 11 with label.c of the research repository: no write up for a token, no write up and no read
- * up for the two others. chromium reads the label of its own token without asking whether there is one.
+ * measured on windows 11: no write up for a token, no write up and no read up for the two others. chromium reads the
+ * label of its own token without asking whether there is one.
  */
 static SD_BLOB *with_object_label(PVOID object, SD_BLOB *sd)
 {

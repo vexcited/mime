@@ -192,9 +192,8 @@ static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
     memset(f->Xmm, 0, 6 * sizeof(f->Xmm[0]));
 }
 /*
- * the return of a system service through the instrumentation callback, measured on windows 11 26300 with
- * scratch/dlls/probe/icb.c of the research repository: the callback is what sysret returns to, so rcx holds it too,
- * and r10 where the service was going.
+ * the return of a system service through the instrumentation callback, measured on windows 11 26300: the callback is
+ * what sysret returns to, so rcx holds it too, and r10 where the service was going.
  */
 static inline void KiInstrumentServiceReturn(PKTRAP_FRAME f, PVOID callback)
 {

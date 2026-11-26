@@ -274,7 +274,7 @@ static PTOKEN make_system_token(void)
 /* the logged on user: filtered when limited, whole when elevated. */
 static PTOKEN make_user_token(BOOLEAN elevated)
 {
-    /* as windows 11 26300 makes it for a local administrator, measured with scratch/dlls/probe/token.c. */
+    /* as windows 11 26300 makes it for a local administrator. */
     GROUP_SPEC common[] = {
         {5, 5, {21, HalBootInfo->user_sid[0], HalBootInfo->user_sid[1], HalBootInfo->user_sid[2], 513},
          SE_GROUP_NORMAL},                                              /* None, the group of the machine's users */

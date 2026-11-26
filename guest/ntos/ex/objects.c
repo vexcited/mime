@@ -478,8 +478,8 @@ NTSTATUS NTAPI NtOpenTimer(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
 }
 
 /*
- * SetWaitableTimer and CancelWaitableTimer take the high resolution timers of CreateWaitableTimerEx, which are of
- * the other type: measured with hrt2.c of the research repository.
+ * SetWaitableTimer and CancelWaitableTimer take the high resolution timers of CreateWaitableTimerEx, which are of the
+ * other type: measured on windows.
  */
 static NTSTATUS reference_timer(HANDLE handle, ETIMER **timer)
 {
@@ -521,10 +521,10 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
 }
 
 /*
- * the timers of the thread pool, measured on windows 11 26300 with scratch/dlls/probe/t2.c of the research
- * repository. they are of a type of their own, IRTimer, have no name, and are waited on: bit 31 of the attributes
- * makes one that stays signaled, bits 2 and 3 are taken, bit 1 is refused, and any other bit or bit 1 with bit 2 or 3
- * is an invalid fourth parameter. the second parameter must be null, and so must the attributes of the object.
+ * the timers of the thread pool, measured on windows 11 26300. they are of a type of their own, IRTimer, have no name,
+ * and are waited on: bit 31 of the attributes makes one that stays signaled, bits 2 and 3 are taken, bit 1 is refused,
+ * and any other bit or bit 1 with bit 2 or 3 is an invalid fourth parameter. the second parameter must be null, and so
+ * must the attributes of the object.
  */
 NTSTATUS NTAPI NtCreateTimer2(PHANDLE handle, PVOID reserved, POBJECT_ATTRIBUTES attributes, ULONG flags, ACCESS_MASK access)
 {

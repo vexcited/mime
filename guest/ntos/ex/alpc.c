@@ -1,8 +1,7 @@
 /*
  * advanced local procedure calls, the transport of ncalrpc: connection ports with a name, the pair of communication
- * ports a connection makes, and the messages between them with their attributes. what a message carries and how it
- * is told to the receiver was measured on windows 11 26300 with scratch/dlls/com/alpcp.c of the research
- * repository, the use rpcrt4 makes of it read from its 26300 build.
+ * ports a connection makes, and the messages between them with their attributes. what a message carries and how it is
+ * told to the receiver was measured on windows 11 26300, the use rpcrt4 makes of it read from its 26300 build.
  *
  * a client sends on its communication port, and the message lands in the queue of the connection port, where the
  * server receives every client's messages with the context it gave the connection. what the server sends on its

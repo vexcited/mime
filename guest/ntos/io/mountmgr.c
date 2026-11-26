@@ -18,7 +18,7 @@ static NTSTATUS complete(PIRP irp, NTSTATUS status, ULONG_PTR information)
  * which drive letters and volume names point at which volume, what kernelbase builds GetFinalPathNameByHandle,
  * GetVolumeNameForVolumeMountPoint and GetVolumePathName on. mime's volumes are fixed by their letter: volume 1 is C:,
  * 2 is Z:, a host drive of letter L is volume L - 'A'. the answers are laid out as the mount manager of windows 11 lays
- * them out, measured with scratch/dlls/com/mm.c of the research repository.
+ * them out.
  */
 
 /* the letter of a volume number, or 0 when that volume has none. */

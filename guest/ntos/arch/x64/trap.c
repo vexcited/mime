@@ -62,10 +62,9 @@ static NTSTATUS x87_status(void)
 }
 
 /*
- * the instructions windows 11 answers with STATUS_PRIVILEGED_INSTRUCTION instead of an access violation, measured
- * with scratch/dlls/probe/excodes.c of the research repository: hlt, cli, sti, in, out and their string forms,
- * lldt, ltr, lgdt, lidt, lmsw, invlpg, swapgs, clts, sysret, invd, wbinvd, the moves of control and debug
- * registers, wrmsr, rdmsr, rdpmc and sysexit. vmcall and xsetbv are plain access violations.
+ * the instructions windows 11 answers with STATUS_PRIVILEGED_INSTRUCTION instead of an access violation: hlt, cli, sti,
+ * in, out and their string forms, lldt, ltr, lgdt, lidt, lmsw, invlpg, swapgs, clts, sysret, invd, wbinvd, the moves of
+ * control and debug registers, wrmsr, rdmsr, rdpmc and sysexit. vmcall and xsetbv are plain access violations.
  */
 static BOOLEAN privileged_instruction(ULONG64 rip)
 {
@@ -141,8 +140,7 @@ static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
     case 3:
         /*
          * int3 leaves rip after itself; windows reports and resumes at the breakpoint. the trap flag stays in the
-         * context, so a handler that continues is stepped one instruction later. measured on windows 11 with
-         * scratch/dlls/crash3/sysflags.c and scratch/dlls/probe/step.c of the research repository.
+         * context, so a handler that continues is stepped one instruction later. measured on windows 11.
          */
         frame->Rip--;
         record->ExceptionAddress = (PVOID)frame->Rip;
@@ -216,9 +214,8 @@ static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
         break;
     }
     /*
-     * a trap taken in the 32 bit code segment carries the wx86 codes, measured on windows 11 26300 with
-     * scratch/dlls/probe/gate32tf.c of the research repository. a program that steps through a far jump into
-     * that segment waits for these and ignores the 64 bit ones.
+     * a trap taken in the 32 bit code segment carries the wx86 codes, measured on windows 11 26300. a program that
+     * steps through a far jump into that segment waits for these and ignores the 64 bit ones.
      */
     if ((frame->Cs & 0xFFF8) == 0x20) {
         if (record->ExceptionCode == STATUS_SINGLE_STEP_CODE)

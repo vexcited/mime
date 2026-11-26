@@ -110,8 +110,7 @@ NTSTATUS CmpMapRegistryView(CM_KEY_BODY *root, ULONG view, PWCHAR path, ULONG *l
     /*
      * windows keeps a link below Wow6432Node for each subtree the views share, which leads to the one key both have,
      * however the node was reached: the wow64 of a 32-bit program writes the node into every path below SOFTWARE and
-     * leaves the rest to the kernel. measured with reg32.c and nt32.c of the research repository. the classes have
-     * a node of their own.
+     * leaves the rest to the kernel. measured on windows. the classes have a node of their own.
      */
     BOOLEAN link = FALSE;
     if (named && !classes) {

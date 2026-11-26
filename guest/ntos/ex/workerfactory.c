@@ -1,10 +1,9 @@
 /*
- * the worker factory the thread pool of the system dll stands on, measured on windows 11 26300 with
- * scratch/dlls/probe/wf.c of the research repository. a factory is bound to a completion port and a process, and
- * starts the threads that wait on the port: up to its minimum at once, one more when a packet comes while the binding
- * count is not zero and no worker waits, and one for a release that finds no waiter. a worker counts as pending until
- * it says it is ready, a waiter over the minimum leaves with STATUS_TIMEOUT once idle, and a thread that returns from
- * its routine without that is counted on, as windows counts it.
+ * the worker factory the thread pool of the system dll stands on, measured on windows 11 26300. a factory is bound to a
+ * completion port and a process, and starts the threads that wait on the port: up to its minimum at once, one more when
+ * a packet comes while the binding count is not zero and no worker waits, and one for a release that finds no waiter. a
+ * worker counts as pending until it says it is ready, a waiter over the minimum leaves with STATUS_TIMEOUT once idle,
+ * and a thread that returns from its routine without that is counted on, as windows counts it.
  */
 #include "../ntos.h"
 

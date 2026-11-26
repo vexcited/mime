@@ -816,9 +816,9 @@ static ULONG out_sid_hash(OUTPUT *o, const SEP_GROUP *groups, ULONG count)
 }
 
 /*
- * TokenAccessInformation as windows 11 26300 lays it out, measured with scratch/dlls/probe/token.c of the research
- * repository: the head, the hash of the groups with 0x30 bytes to spare behind the sids, the empty hashes of the
- * restricted sids and the capabilities, the security attributes as the kernel links them, then the privileges.
+ * TokenAccessInformation as windows 11 26300 lays it out: the head, the hash of the groups with 0x30 bytes to spare
+ * behind the sids, the empty hashes of the restricted sids and the capabilities, the security attributes as the kernel
+ * links them, then the privileges.
  */
 static void out_access_information(OUTPUT *o, const TOKEN *t)
 {
@@ -1151,9 +1151,8 @@ static BOOLEAN query_class_known(ULONG klass)
 }
 
 /*
- * the order of the checks is that of windows 11 26300, measured with scratch/dlls/probe/token.c of the research
- * repository: the buffer's boundary, the returned length, the class, the audit privilege and the exact length of
- * the elevation, and only then the handle.
+ * the order of the checks is that of windows 11 26300: the buffer's boundary, the returned length, the class, the audit
+ * privilege and the exact length of the elevation, and only then the handle.
  */
 NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned)
 {
@@ -1228,10 +1227,10 @@ NTSTATUS NTAPI NtQueryInformationToken(HANDLE handle, ULONG klass, PVOID info, U
 }
 
 /*
- * the security attributes of a token by name, as windows 11 26300 answers, measured with scratch/dlls/com/tokattr.c
- * of the research repository. no names ask for them all. a name matches without regard to case, and one the token
- * does not carry fails the whole query with STATUS_NOT_FOUND and a length of 0. each name asked for gets its own
- * entry: the array first, then the name and the values of each entry. the rest of the buffer is cleared.
+ * the security attributes of a token by name, as windows 11 26300 answers. no names ask for them all. a name matches
+ * without regard to case, and one the token does not carry fails the whole query with STATUS_NOT_FOUND and a length of
+ * 0. each name asked for gets its own entry: the array first, then the name and the values of each entry. the rest of
+ * the buffer is cleared.
  */
 NTSTATUS NTAPI NtQuerySecurityAttributesToken(HANDLE handle, PUNICODE_STRING names, ULONG count, PVOID info,
                                               ULONG length, PULONG returned)

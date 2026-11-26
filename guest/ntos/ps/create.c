@@ -313,12 +313,11 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     pp->FillAttribute = p->FillAttribute;
     PCUNICODE_STRING title = p->WindowTitle.Length ? &p->WindowTitle : image;
     /*
-     * measured on windows 11 26300 in a suspended child, scratch/dlls/probe/ppchild.c of the research repository: the
-     * block starts its allocation and is one piece. the strings follow the structure with nothing between them, the
-     * current directory first with the room of a whole path, and both lengths tell the structure and the strings.
-     * the dll path is empty, a program without runtime data has no buffer for it, and the environment begins where
-     * the block ends. the loader of windows copies as many bytes as the length tells to its heap, moves each string
-     * by the same step and frees the allocation.
+     * measured on windows 11 26300 in a suspended child: the block starts its allocation and is one piece. the strings follow the structure with nothing between them, the
+     * current directory first with the room of a whole path, and both lengths tell the structure and the strings. the
+     * dll path is empty, a program without runtime data has no buffer for it, and the environment begins where the
+     * block ends. the loader of windows copies as many bytes as the length tells to its heap, moves each string by the
+     * same step and frees the allocation.
      */
     /* like windows, the current directory always ends with a backslash. */
     WCHAR dir[MIME_IMAGE_NAME_CHARS + 2];

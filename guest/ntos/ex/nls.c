@@ -121,10 +121,10 @@ NTSTATUS NTAPI NtManageHotPatch(ULONG klass, PVOID data, ULONG length, PULONG re
 /*
  * the block is a header of 0xa8 bytes whose pointers are offsets, then the installed languages, the pool of their
  * names, the list of language configurations and the languages of the licence, each on 8 bytes. the system dll turns
- * the offsets back into pointers and makes the same block from the registry itself when the kernel gives none.
- * measured on windows 11 26300 with scratch/dlls/probe/muilist.c of the research repository: the list has room for a
- * number of languages that is a multiple of 4, the pool for 4 names or as many as it holds, and for 40 characters or
- * one less than it uses, since a name sits one character after the one before.
+ * the offsets back into pointers and makes the same block from the registry itself when the kernel gives none. measured
+ * on windows 11 26300: the list has room for a number of languages that is a multiple of 4, the pool for 4 names or as
+ * many as it holds, and for 40 characters or one less than it uses, since a name sits one character after the one
+ * before.
  */
 #define MUI_HEADER 0xA8
 #define MUI_LANGUAGE_STEP 4

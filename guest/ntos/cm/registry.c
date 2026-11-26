@@ -1074,9 +1074,8 @@ NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PUL
     ULONG fixed;
     if (klass >= 6 && klass <= 8) {
         /*
-         * measured on windows 11 with keytags.exe of scratch/dlls/evr: a virtualization state of zero, the KEY_WOW64
-         * bits the handle was opened with, and a trust class of one. the KernelBase of windows asks for the tags of every
-         * key it opens.
+         * measured on windows 11: a virtualization state of zero, the KEY_WOW64 bits the handle was opened with, and a
+         * trust class of one. the KernelBase of windows asks for the tags of every key it opens.
          */
         fixed = 4;
         status = out_init(&o, 4) ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
@@ -1092,9 +1091,9 @@ NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PUL
 }
 
 /*
- * measured on windows 11 with keyset.exe of scratch/dlls/evr: the write time takes eight bytes and the other classes
- * four, checked before anything else; the handle tags need no right and keep their low sixteen bits, the rest need the
- * right to set values, and the wow64 flags are refused even then.
+ * measured on windows 11: the write time takes eight bytes and the other classes four, checked before anything else;
+ * the handle tags need no right and keep their low sixteen bits, the rest need the right to set values, and the wow64
+ * flags are refused even then.
  */
 NTSTATUS NTAPI NtSetInformationKey(HANDLE key, ULONG klass, PVOID info, ULONG length)
 {
@@ -1214,10 +1213,10 @@ static NTSTATUS probe_write(PVOID user, SIZE_T length, ULONG alignment)
 }
 
 /*
- * measured on windows 11 with qmvk.exe of scratch/dlls/wstorage: at most 0x10000 entries, the entries and the buffer
- * on a boundary of four, the data of each value on a boundary of four with the bytes between them zeroed. a value that
- * does not fit leaves its entry zero and the call answers an overflow with the bytes used and the bytes needed. a
- * missing value writes a needed length of zero and nothing else. no entries writes the needed length alone.
+ * measured on windows 11: at most 0x10000 entries, the entries and the buffer on a boundary of four, the data of each
+ * value on a boundary of four with the bytes between them zeroed. a value that does not fit leaves its entry zero and
+ * the call answers an overflow with the bytes used and the bytes needed. a missing value writes a needed length of zero
+ * and nothing else. no entries writes the needed length alone.
  */
 NTSTATUS NTAPI NtQueryMultipleValueKey(HANDLE key, KEY_VALUE_ENTRY *entries, ULONG count, PVOID buffer,
                                        PULONG buffer_length, PULONG required_length)
@@ -1699,11 +1698,10 @@ static void link_key(PCWSTR path, PCWSTR target)
 }
 
 /*
- * the files of the hive of the user in its profile. measured on windows 11 26100 with deskowner.exe of
- * scratch/dlls/probe in the research repository: NTUSER.DAT and its two logs are there, hidden, and the registry
- * holds them open and shares nothing, so that a program opens them for their attributes and gets
- * STATUS_SHARING_VIOLATION when it asks to read. mime keeps the hive of the user as the default one and the journal,
- * so the file is a copy of the default hive that is made once and never read back.
+ * the files of the hive of the user in its profile. measured on windows 11 26100: NTUSER.DAT and its two logs are
+ * there, hidden, and the registry holds them open and shares nothing, so that a program opens them for their attributes
+ * and gets STATUS_SHARING_VIOLATION when it asks to read. mime keeps the hive of the user as the default one and the
+ * journal, so the file is a copy of the default hive that is made once and never read back.
  */
 static PFILE_OBJECT g_user_hive_files[3];
 static HANDLE g_user_hive_handles[3]; /* the share of a file ends with its handle, so each stays open. */

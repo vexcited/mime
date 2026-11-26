@@ -555,8 +555,8 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
 
     /*
      * initial context consumed by LdrInitializeThunk, then NtContinue'd into RtlUserThreadStart. windows 11 starts a
-     * thread 0x28 bytes under the top of its stack and a random number of 16 byte steps more, 0 to 127, measured
-     * with scratch/dlls/crash3/rsp2.c of the research repository. the context goes under that.
+     * thread 0x28 bytes under the top of its stack and a random number of 16 byte steps more, 0 to 127. the context
+     * goes under that.
      */
     ULONG64 start_sp = stack_base - 0x20 - ((ULONG64)(MiRandom() & 127) << 4);
     ULONG64 ctx_va = (start_sp - sizeof(CONTEXT)) & ~15ull;
@@ -1511,9 +1511,8 @@ NTSTATUS NTAPI NtAlertThreadByThreadId(HANDLE id)
 }
 
 /*
- * the locks of the ntdll of windows 11 wake with this one and name the lock. measured on windows 11 26300 with
- * scratch/dlls/probe/alertex.c of the research repository: the pointer is never read, not even a bad one, and
- * the rest is NtAlertThreadByThreadId.
+ * the locks of the ntdll of windows 11 wake with this one and name the lock. measured on windows 11 26300: the pointer
+ * is never read, not even a bad one, and the rest is NtAlertThreadByThreadId.
  */
 NTSTATUS NTAPI NtAlertThreadByThreadIdEx(HANDLE id, PVOID lock)
 {

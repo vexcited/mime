@@ -757,7 +757,7 @@ static NTSTATUS query_process(HANDLE handle, PROCESSINFOCLASS klass, PVOID info,
     case ProcessImageInformation:
         if (!process->ImageSection) {
             /* a live process without a user image, like System or the memory compression process, answers the way
-               windows 11 26300 does, measured with scratch/dlls/probe/pimg.c: invalid parameter, not terminating. */
+               windows 11 26300 does: invalid parameter, not terminating. */
             status = process->Terminating || process->ExitStatusReady ? STATUS_PROCESS_IS_TERMINATING
                                                                       : STATUS_INVALID_PARAMETER;
             break;
@@ -1018,13 +1018,12 @@ static NTSTATUS set_instrumentation_callback(HANDLE handle, PVOID info, ULONG le
 }
 
 /*
- * ProcessTlsInformation, measured on windows 11 26300 with scratch/dlls/probe/tlsinfo.c of the research repository.
- * the loader gives one entry for each of its threads when a dll with thread local storage arrives after they
- * started. operation 0 puts the block of each entry in a slot of the vector the teb of a thread points to, operation 1
- * replaces the vector itself and brings over its first slots, as many as the header tells. the threads are taken
- * in the order they were made, as many as there are entries; one that has no vector yet, because it never ran, is
- * passed over and uses no entry. an entry that was used tells 2 in its flags and what was there before, and the id
- * of the thread when the vector was replaced.
+ * ProcessTlsInformation, measured on windows 11 26300. the loader gives one entry for each of its threads when a dll
+ * with thread local storage arrives after they started. operation 0 puts the block of each entry in a slot of the
+ * vector the teb of a thread points to, operation 1 replaces the vector itself and brings over its first slots, as many
+ * as the header tells. the threads are taken in the order they were made, as many as there are entries; one that has no
+ * vector yet, because it never ran, is passed over and uses no entry. an entry that was used tells 2 in its flags and
+ * what was there before, and the id of the thread when the vector was replaced.
  */
 static NTSTATUS set_tls_information(HANDLE handle, PVOID info, ULONG length)
 {
@@ -1621,7 +1620,7 @@ void PspCreateSubsystemProcess(void)
     if (parent)
         PspFreeId(parent);
     PsSubsystemProcess = process;
-    /* measured with prebox.exe: a program of the user does not open the system process either, c0000022 at the limited query right. */
+    /* measured on windows: a program of the user does not open the system process either, c0000022 at the limited query right. */
     if (NT_SUCCESS(SeSdFromBytes(system_only, sizeof(system_only), &sd)))
         ObAttachSecurity(PsInitialSystemProcess, sd);
 }

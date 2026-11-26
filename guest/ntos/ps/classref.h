@@ -1,8 +1,7 @@
 /*
- * what windows 11 26300 answers to each process and thread information class at each length, measured with
- * scratch/dlls/probe/infoclass.c of the research repository on the caller's own process and thread. a class has
- * runs of lengths that got the same status and the same returned length: one exact length, a few of them, every
- * length from one on, or one status whatever the length.
+ * what windows 11 26300 answers to each process and thread information class at each length, measured on the caller's
+ * own process and thread. a class has runs of lengths that got the same status and the same returned length: one exact
+ * length, a few of them, every length from one on, or one status whatever the length.
  */
 #ifndef MIME_PS_CLASSREF_H
 #define MIME_PS_CLASSREF_H

@@ -2,8 +2,7 @@
  * \Device\KsecDD and \Device\CNG, the kernel security support and cryptography devices. genuine bcryptprimitives seeds
  * from them, cryptbase's RtlEncryptMemory keys its blocks there, and genuine bcrypt asks KsecDD for the cng
  * configuration: which provider serves an algorithm and from which image. bcrypt cannot load when its first request,
- * the configuration change notification, fails. what each request answers was measured on windows 11, see
- * scratch/dlls/gaps/ksec of the research repository.
+ * the configuration change notification, fails. what each request answers was measured on windows 11.
  */
 #include "../ntos.h"
 #include <crypto/crypto.h>
@@ -222,8 +221,7 @@ static ULONG put_string(CNG_OUT *o, PCWSTR text, BOOLEAN padded)
 /*
  * The configuration is the registry's: Configuration\Local\<context>\<interface> lists the functions of an interface in
  * the context's order, each function key the providers that serve it and its properties, and Providers\<name> registers
- * an image per mode with the functions it has per interface. Measured with rp.c of scratch/g2/ncrypt of the
- * research repository.
+ * an image per mode with the functions it has per interface. Measured.
  */
 #define CNG_KEY L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Cryptography"
 #define CNG_DEFAULT_CONTEXT CNG_KEY L"\\Configuration\\Local\\Default"
@@ -772,8 +770,8 @@ static BOOLEAN has_image(PCWSTR provider, PCWSTR mode)
 }
 
 /*
- * BCryptQueryProviderRegistration: the aliases of a provider and what its images register. mode 4 takes the images there
- * are, the other modes need theirs. measured with cf.c of scratch/g2/lsa of the research repository.
+ * BCryptQueryProviderRegistration: the aliases of a provider and what its images register. mode 4 takes the images
+ * there are, the other modes need theirs. measured on windows.
  */
 static NTSTATUS registration(const UCHAR *in, ULONG in_len, CNG_OUT *o)
 {

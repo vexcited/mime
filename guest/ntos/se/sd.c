@@ -728,8 +728,8 @@ NTSTATUS SeSdBootDefault(SD_MAPPING mapping, BOOLEAN container, ULONG kind, SD_B
 {
     if (kind == SE_BOOT_RPC_CONTROL) {
         /*
-         * measured on windows 11 with rpcdir.c of scratch/procsd in the research repository. an endpoint made without a
-         * descriptor takes the inheritable entries, so that everyone may connect to it.
+         * measured on windows 11. an endpoint made without a descriptor takes the inheritable entries, so that everyone
+         * may connect to it.
          */
         static const UCHAR restricted[12] = {1, 1, 0, 0, 0, 0, 0, 5, 12, 0, 0, 0};
         const UCHAR inherit = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE;
@@ -861,7 +861,7 @@ NTSTATUS SeSdSet(ULONG info, const SD_BLOB *modification, const SD_BLOB *old, SD
         MimeRtlFree(work);
         return status;
     }
-    /* a sacl that is set stays marked inherited only when its setter asks so, measured with label.c. */
+    /* a sacl that is set stays marked inherited only when its setter asks so, measured on windows. */
     USHORT asked = ((const SECURITY_DESCRIPTOR_RELATIVE *)modification->Data)->Control;
     if ((parts & 0x1F8) && (asked & (SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED)) !=
                                (SE_SACL_AUTO_INHERIT_REQ | SE_SACL_AUTO_INHERITED))

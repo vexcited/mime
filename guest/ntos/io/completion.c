@@ -471,12 +471,11 @@ void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_ST
 /* ------------------------------------------------------------ wait completion packets */
 
 /*
- * a packet ties the wait on an object to a port: once the object is signalled, a completion is queued to the port.
- * a system thread does the wait. a packet is idle, waiting, or queued in the port until a thread takes its
- * completion, and only an idle one takes a new wait. measured on windows 11 with wcp.c of the research repository:
- * a second wait is c00000ef, cancelling a wait is success, cancelling a queued completion is pending unless it is
- * asked to be removed, and cancelling an idle packet is c0000120. the thread pool of ntdll waits for the callback
- * of a wait it could not cancel, so each answer matters.
+ * a packet ties the wait on an object to a port: once the object is signalled, a completion is queued to the port. a
+ * system thread does the wait. a packet is idle, waiting, or queued in the port until a thread takes its completion,
+ * and only an idle one takes a new wait. measured on windows 11: a second wait is c00000ef, cancelling a wait is
+ * success, cancelling a queued completion is pending unless it is asked to be removed, and cancelling an idle packet is
+ * c0000120. the thread pool of ntdll waits for the callback of a wait it could not cancel, so each answer matters.
  */
 typedef struct WAIT_PACKET WAIT_PACKET;
 

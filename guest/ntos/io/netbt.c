@@ -38,11 +38,10 @@ BOOLEAN IopIsNetbt(PFILE_OBJECT file)
 }
 
 /*
- * Measured on Windows 11 26100 with scratch/g2/net2/nbt.c of the research repository. The control is of
- * method out direct and the driver writes through the mdl, so the caller is told a length of zero whatever was
- * written. A buffer shorter than the two servers of the first version is an invalid device request. One shorter than
- * 60 bytes gets those two only. The three bytes after the netbios flag are left as they were. A failure does not
- * reach the status block.
+ * Measured on Windows 11 26100. The control is of method out direct and the driver writes through the mdl, so the
+ * caller is told a length of zero whatever was written. A buffer shorter than the two servers of the first version is
+ * an invalid device request. One shorter than 60 bytes gets those two only. The three bytes after the netbios flag are
+ * left as they were. A failure does not reach the status block.
  */
 static NTSTATUS wins_settings(const NETBT_DEVICE *d, PVOID output, ULONG out_len)
 {

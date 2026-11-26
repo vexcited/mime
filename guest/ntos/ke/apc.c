@@ -100,8 +100,8 @@ void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame)
 
 #ifdef __x86_64__
 /*
- * the x64 contexts follow windows 11 26300 field by field, measured across threads with scratch/dlls/probe/xctx.c
- * of the research repository: see KiContextRequest, KiCaptureThreadContext and KiApplyThreadContext.
+ * the x64 contexts follow windows 11 26300 field by field, measured across threads: see KiContextRequest,
+ * KiCaptureThreadContext and KiApplyThreadContext.
  */
 NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
 {
@@ -355,9 +355,9 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
     if (!NT_SUCCESS(status))
         return status;
     /*
-     * the caller's own context is the frame of this service, measured on windows 11 26300 with
-     * scratch/dlls/probe/icb.c of the research repository: it returns there with its status in rax and what a
-     * service leaves in the volatile registers, through the instrumentation callback, and a trap flag steps at once.
+     * the caller's own context is the frame of this service, measured on windows 11 26300: it returns there with its
+     * status in rax and what a service leaves in the volatile registers, through the instrumentation callback, and a
+     * trap flag steps at once.
      */
     status = set_context(thread, context);
     ObDereferenceObject(thread);

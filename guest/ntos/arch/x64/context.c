@@ -154,11 +154,10 @@ void KiCaptureDebugStatus(PKTHREAD thread)
 }
 
 /*
- * a load of ss holds a data breakpoint it hits back, with the single step, until the instruction after it is done,
- * and the processor then reports both. when that instruction is a cpuid the hypervisor runs it and raises the step
- * itself: kvm reports the step alone and the breakpoint the processor held is lost. it is put back here, from the
- * instructions before the trap. measured with tfprobe of the research repository: behind a mov to ss a nop or an
- * rdtsc gives both bits, a cpuid the step only.
+ * a load of ss holds a data breakpoint it hits back, with the single step, until the instruction after it is done, and
+ * the processor then reports both. when that instruction is a cpuid the hypervisor runs it and raises the step itself:
+ * kvm reports the step alone and the breakpoint the processor held is lost. it is put back here, from the instructions
+ * before the trap. measured on windows: behind a mov to ss a nop or an rdtsc gives both bits, a cpuid the step only.
  */
 void KiRestoreHeldBreakpoint(PKTHREAD thread, PKTRAP_FRAME frame)
 {
@@ -591,11 +590,10 @@ void KiRestoreXstate(PKTHREAD thread, const UCHAR *in)
 }
 
 /*
- * the extended state area a user context names in the CONTEXT_EX behind it, as windows 11 26300 takes it, measured
- * with scratch/dlls/probe/xctx.c of the research repository. both chunks start at the context, the legacy one
- * holds it all, the area lies behind the CONTEXT_EX and inside the whole, on a 64 byte boundary, and has room for
- * its header. the header names the layout: the compaction bit, enabled features alone, and no feature in the mask
- * that the layout lacks.
+ * the extended state area a user context names in the CONTEXT_EX behind it, as windows 11 26300 takes it. both chunks
+ * start at the context, the legacy one holds it all, the area lies behind the CONTEXT_EX and inside the whole, on a 64
+ * byte boundary, and has room for its header. the header names the layout: the compaction bit, enabled features alone,
+ * and no feature in the mask that the layout lacks.
  */
 NTSTATUS KiProbeUserXstate(PCONTEXT context, KI_USER_XSTATE *where)
 {
@@ -788,7 +786,7 @@ void KiInitializeProcessorArch(void)
     __asm__ volatile("movq %0, %%cr4" ::"r"(cr4) : "memory");
     /*
      * windows checks alignment in user mode: a thread that sets the flag faults on a misaligned access, and its
-     * exception dispatcher runs with the flag still set. measured with scratch/dlls/crash3/ac.c.
+     * exception dispatcher runs with the flag still set. measured on windows.
      */
     ULONG64 cr0;
     __asm__ volatile("movq %%cr0, %0" : "=r"(cr0));
@@ -970,10 +968,10 @@ void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
 }
 
 /*
- * the whole user context of a thread from the frame it entered the kernel with, as windows 11 26300 reads it,
- * measured with scratch/dlls/probe/xctx.c of the research repository. a system service saves rax, its first two
- * arguments as rcx and rdx and the nonvolatile registers: r8 to r11 and xmm0 to xmm5 read as what the last
- * interrupt or context left in the frame, see KiNoteUserTrap. the x87 state of another thread is what it saved.
+ * the whole user context of a thread from the frame it entered the kernel with, as windows 11 26300 reads it. a system
+ * service saves rax, its first two arguments as rcx and rdx and the nonvolatile registers: r8 to r11 and xmm0 to xmm5
+ * read as what the last interrupt or context left in the frame, see KiNoteUserTrap. the x87 state of another thread is
+ * what it saved.
  */
 void KiCaptureThreadContext(PKTHREAD thread, PKTRAP_FRAME frame, BOOLEAN in_service, CONTEXT *ctx)
 {
@@ -1016,9 +1014,8 @@ void KiNoteUserTrap(PKTHREAD thread, const KTRAP_FRAME *frame)
 
 /*
  * a context never takes a native thread into 32-bit code, whoever sets it and through whichever service: measured on
- * windows 11 26300 with scratch/dlls/probe/gate32res.c of the research repository, a handler that continues from a
- * fault of 32-bit code with the selector as delivered resumes in the 64-bit segment at the same address. only the
- * thread of a 32-bit program keeps the selector.
+ * windows 11 26300, a handler that continues from a fault of 32-bit code with the selector as delivered resumes in the
+ * 64-bit segment at the same address. only the thread of a 32-bit program keeps the selector.
  */
 void KiNativeCodeSegment(PKTHREAD thread, PKTRAP_FRAME frame, ULONG parts)
 {
@@ -1168,10 +1165,10 @@ void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, K
 }
 
 /*
- * the layout of windows 11 26300 for KiUserApcDispatcher, measured with scratch/dlls/probe/icb.c of the research
- * repository: the interrupted CONTEXT at its sp with the breakpoints, the routine and its arguments in the home
- * slots, and 0x530 above a machine frame that ends at the interrupted sp, of which the rip and rsp alone are
- * written. the instrumentation callback is the business of the service that returns here, see KiExitToUserMode.
+ * the layout of windows 11 26300 for KiUserApcDispatcher: the interrupted CONTEXT at its sp with the breakpoints, the
+ * routine and its arguments in the home slots, and 0x530 above a machine frame that ends at the interrupted sp, of
+ * which the rip and rsp alone are written. the instrumentation callback is the business of the service that returns
+ * here, see KiExitToUserMode.
  */
 BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE routine, PVOID context, PVOID arg1,
                        PVOID arg2)
@@ -1199,12 +1196,11 @@ BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE ro
 }
 
 /*
- * windows' layout for KiUserExceptionDispatcher, measured on windows 11 26300 with scratch/dlls/probe/xctx.c of the
- * research repository: at its sp the CONTEXT and its CONTEXT_EX, the EXCEPTION_RECORD at 0x4F0, at 0x590 a machine
- * frame of which the faulting rip and rsp alone are written, and at 0x5C0 the extended state beyond sse. that area
- * is the first 64 byte boundary with room for the state below the faulting sp, the frame hangs under it, and the
- * CONTEXT_EX gives the area the length up to the faulting sp. the home slots that open the context are left as they
- * were. it takes nothing in registers.
+ * windows' layout for KiUserExceptionDispatcher, measured on windows 11 26300: at its sp the CONTEXT and its
+ * CONTEXT_EX, the EXCEPTION_RECORD at 0x4F0, at 0x590 a machine frame of which the faulting rip and rsp alone are
+ * written, and at 0x5C0 the extended state beyond sse. that area is the first 64 byte boundary with room for the state
+ * below the faulting sp, the frame hangs under it, and the CONTEXT_EX gives the area the length up to the faulting sp.
+ * the home slots that open the context are left as they were. it takes nothing in registers.
  */
 BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record)
 {

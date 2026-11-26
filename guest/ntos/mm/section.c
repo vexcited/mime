@@ -493,7 +493,7 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     if (dos->e_lfanew < 0 || (SIZE_T)dos->e_lfanew > length || length - dos->e_lfanew < nt_offset)
         return STATUS_INVALID_IMAGE_FORMAT;
     const IMAGE_NT_HEADERS64 *nt = (const void *)((const UCHAR *)headers + dos->e_lfanew);
-    /* windows answers a missing PE signature this way, measured with badexe.c of scratch/dlls/shellexec. */
+    /* windows answers a missing PE signature this way. */
     if (nt->Signature != IMAGE_NT_SIGNATURE)
         return STATUS_INVALID_IMAGE_PROTECT;
     BOOLEAN pe32 = nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386;
@@ -609,10 +609,10 @@ BOOLEAN MiImageIsPortableIl(PSECTION s)
 }
 
 /*
- * windows' protection of an image section by its shared, execute, read and write bits, bit 28 up: a section that
- * names none of them cannot be touched, one that only executes is execute only. measured on windows 11 with
- * scratch/dlls/crash3/imgpages.c of the research repository, on a code section without the execute and read bits.
- * a writable section is copy on write, which mime keeps as read-write here, see MiMapViewOfSectionEx.
+ * windows' protection of an image section by its shared, execute, read and write bits, bit 28 up: a section that names
+ * none of them cannot be touched, one that only executes is execute only. measured on windows 11, on a code section
+ * without the execute and read bits. a writable section is copy on write, which mime keeps as read-write here, see
+ * MiMapViewOfSectionEx.
  */
 static UCHAR protect_of(ULONG chars)
 {
@@ -694,9 +694,9 @@ static NTSTATUS image_protections(PSECTION s, const IMAGE_NT_HEADERS64 *nt)
 
 /*
  * where windows 11 loads an image that lets the system choose, one marked IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE whose
- * relocations are not stripped. measured on build 26300 over several boots with scratch/dlls/probe/imgreloc.c of
- * the research repository. the base belongs to the image, not to a process: it is drawn when the section is made,
- * every process maps the image there, and the headers of the image name it.
+ * relocations are not stripped. measured on build 26300 over several boots. the base belongs to the image, not to a
+ * process: it is drawn when the section is made, every process maps the image there, and the headers of the image name
+ * it.
  *
  * a program goes to a 64 KiB step drawn in [0x7FF6'00000000, 0x7FF8'00000000), the same each time its file runs and
  * another after a boot. one built for a base below 4 GiB stays below it, up to 16 MiB under that base.
@@ -1691,7 +1691,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     if (!image || va == s->BasedAddress)
         return STATUS_SUCCESS;
     /*
-     * measured on windows 11 with collide.exe: a caller that lets the kernel move the image is told the view is
+     * measured on windows 11: a caller that lets the kernel move the image is told the view is
      * already fixed for where it is, and ntdll then leaves its relocations alone. any other caller is told to fix it.
      */
     return allocation_type & 0x800000 /* MEM_DIFFERENT_IMAGE_BASE_OK */ ? STATUS_IMAGE_AT_DIFFERENT_BASE
@@ -2118,9 +2118,9 @@ NTSTATUS NTAPI NtUnmapViewOfSection(HANDLE process_handle, PVOID base)
 
 /*
  * whether two addresses of the caller show the same file, which the loader and updaters ask to tell a library that is
- * already mapped. measured on windows 11 26300 with same.c of the research repository: an address that nothing is
- * mapped at is invalid, two addresses of one allocation are the same whatever it is, memory with no file behind it
- * conflicts, and the answer is yes only when the first address is in an image of the file the second one shows.
+ * already mapped. measured on windows 11 26300: an address that nothing is mapped at is invalid, two addresses of one
+ * allocation are the same whatever it is, memory with no file behind it conflicts, and the answer is yes only when the
+ * first address is in an image of the file the second one shows.
  */
 NTSTATUS NTAPI NtAreMappedFilesTheSame(PVOID first, PVOID second)
 {
@@ -2191,8 +2191,8 @@ void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image)
     image->DllCharacteristics = s->Image.DllCharacteristics;
     image->Machine = s->Image.Machine;
     image->ImageContainsCode = TRUE;
-    /* measured on windows 11 26100 with prebox.exe of scratch/dlls/probe: the version of the system the image asks
-       for, the size of its file, and the flag of an image that is not at the base its headers name. */
+    /* measured on windows 11 26100: the version of the system the image asks for, the size of its file, and the flag
+       of an image that is not at the base its headers name. */
     image->MajorOperatingSystemVersion = s->Image.OsMajor;
     image->MinorOperatingSystemVersion = s->Image.OsMinor;
     image->LoaderFlags = s->Image.LoaderFlags;

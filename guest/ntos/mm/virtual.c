@@ -81,8 +81,7 @@ BOOLEAN MiProtectionIsValid(ULONG protect)
 
 /*
  * whether a view may be mapped with a protection from its section's, or a page of a view take one from the view's.
- * measured on windows 11 with scratch/dlls/crash3/protmx.c and commit.c of the research repository: a view that
- * cannot write may still copy on write, and only an executable one executes.
+ * measured on windows 11: a view that cannot write may still copy on write, and only an executable one executes.
  */
 BOOLEAN MiProtectionCompatible(ULONG granted, ULONG wanted)
 {
@@ -335,11 +334,11 @@ static void vad_destroy(PMMVAD vad)
 
 /*
  * where windows 11 puts the memory of a 64-bit program whose image is marked for high entropy address space layout,
- * measured over forty processes of build 26300 with scratch/dlls/probe/lowmap.c of the research repository. a search
- * from below starts at a base drawn for the process between 1 and 3 TiB, on a 64 KiB boundary: heaps, allocations at
- * no address and views all sit there, first fit. stacks, the peb and the tebs start at another base drawn below
- * 1 TiB. the low 4 GiB holds nothing but the shared user page, and a program can count on that. a search that must
- * end below 2 GiB, the one ceiling measured, starts at a third base, drawn below 1 GiB.
+ * measured over forty processes of build 26300. a search from below starts at a base drawn for the process between 1
+ * and 3 TiB, on a 64 KiB boundary: heaps, allocations at no address and views all sit there, first fit. stacks, the peb
+ * and the tebs start at another base drawn below 1 TiB. the low 4 GiB holds nothing but the shared user page, and a
+ * program can count on that. a search that must end below 2 GiB, the one ceiling measured, starts at a third base,
+ * drawn below 1 GiB.
  */
 /* splitmix64 over the counter: a layout to draw, not a secret to keep. */
 ULONG64 MiRandom(void)
@@ -366,11 +365,10 @@ void MiRandomizeAddressSpace(PMMADDRESS_SPACE as)
 }
 
 /*
- * where a search from above starts in a program whose image allows a base of the system's choice: up to 4 GiB under
- * the programs, on a 64 KiB boundary. windows 11 puts the leap second data of the process there first, then what
- * its ntdll reserves, 4 GiB of it, which is why a program sees its own searches land near 0x7FF4'00000000. a program
- * that keeps its base starts right under the programs. measured on build 26300 with scratch/dlls/probe/pebteb.c of
- * the research repository.
+ * where a search from above starts in a program whose image allows a base of the system's choice: up to 4 GiB under the
+ * programs, on a 64 KiB boundary. windows 11 puts the leap second data of the process there first, then what its ntdll
+ * reserves, 4 GiB of it, which is why a program sees its own searches land near 0x7FF4'00000000. a program that keeps
+ * its base starts right under the programs. measured on build 26300.
  */
 void MiRandomizeTopDown(PMMADDRESS_SPACE as)
 {
@@ -523,9 +521,8 @@ static SIZE_T count_committed(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR en
 }
 
 /*
- * the commit a view charges, as MemoryRegionInformation reports it on windows 11, measured with
- * scratch/dlls/crash3/region.c of the research repository: a page that may still be copied on write and a page
- * already copied. shared pages a view writes in place charge nothing.
+ * the commit a view charges, as MemoryRegionInformation reports it on windows 11: a page that may still be copied on
+ * write and a page already copied. shared pages a view writes in place charge nothing.
  */
 static SIZE_T count_view_commit(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
@@ -1143,12 +1140,11 @@ NTSTATUS MiAllocateThreadMemory(PEPROCESS process, PVOID *base, SIZE_T *size, UL
 }
 
 /*
- * where windows 11 keeps the peb and the tebs of a 64-bit process, measured on build 26300 with
- * scratch/dlls/probe/pebteb.c of the research repository: in one reservation of 2 MiB, on a 2 MiB boundary, found
- * like a stack is. the peb is one page of it, drawn anywhere in it, and the teb of the first thread is the two pages
- * that follow. each later teb takes the next two pages, and the pages of a thread that ended are given back but
- * only taken again once the search has gone round the reservation. a process with more threads than one reservation
- * holds, 255 or so, gets another, started at a page drawn in it too.
+ * where windows 11 keeps the peb and the tebs of a 64-bit process, measured on build 26300: in one reservation of 2
+ * MiB, on a 2 MiB boundary, found like a stack is. the peb is one page of it, drawn anywhere in it, and the teb of the
+ * first thread is the two pages that follow. each later teb takes the next two pages, and the pages of a thread that
+ * ended are given back but only taken again once the search has gone round the reservation. a process with more threads
+ * than one reservation holds, 255 or so, gets another, started at a page drawn in it too.
  */
 #define MI_TEB_REGION_SIZE 0x200000ull
 #define MI_TEB_REGION_PAGES (MI_TEB_REGION_SIZE >> PAGE_SHIFT)
@@ -2147,11 +2143,11 @@ NTSTATUS NTAPI NtAllocateVirtualMemory(HANDLE process_handle, PVOID *base, ULONG
 }
 
 /*
- * what the 64-bit service does for a 32-bit program, measured on windows 11 26300 with scratch/dlls/probe/avm32.c of
- * the research repository. the space of such a program is what lies under its limit and what lies over 4 GiB, never
- * between the two. a search with no highest address stays under the limit, and a lowest address at or over it is
- * refused. a highest address under 4 GiB is brought down to the limit. the highest address of all asks for the space
- * over 4 GiB alone, and any other one over 4 GiB for both parts, the one the search starts in first.
+ * what the 64-bit service does for a 32-bit program, measured on windows 11 26300. the space of such a program is what
+ * lies under its limit and what lies over 4 GiB, never between the two. a search with no highest address stays under
+ * the limit, and a lowest address at or over it is refused. a highest address under 4 GiB is brought down to the limit.
+ * the highest address of all asks for the space over 4 GiB alone, and any other one over 4 GiB for both parts, the one
+ * the search starts in first.
  */
 static NTSTATUS allocate_in_32bit(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG type, ULONG protect, MI_EXTENDED *ext)
 {
@@ -2567,8 +2563,8 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
                                     SIZE_T length, PSIZE_T returned)
 {
     /*
-     * class 8 answers as the basic class does: WriteProcessMemory asks it to learn whether the pages take a write.
-     * both ask no more of the handle than the limited query right, measured with qvm.c of the research repository.
+     * class 8 answers as the basic class does: WriteProcessMemory asks it to learn whether the pages take a write. both
+     * ask no more of the handle than the limited query right.
      */
     BOOLEAN basic = klass == MemoryBasicInformation || (ULONG)klass == 8;
     PEPROCESS process;
@@ -2605,10 +2601,10 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
             } else if (vad->Type == MiVadImage && vad->Section) {
                 mi.ImageBase = (PVOID)vad->StartVa;
                 /*
-                 * measured on windows 11 26100 with imgsig.exe and imgsig2.exe of scratch/dlls/probe in the research
-                 * repository: the size is the one of the headers, and the flags hold the signing level of the image
-                 * from bit 2 up. a file of windows reads 0x70, the level of windows with the bit above it, and a
-                 * program from elsewhere 0x08, signed or not. the files the system came with stand for the first.
+                 * measured on windows 11 26100: the size is the one of the headers, and the flags hold the signing
+                 * level of the image from bit 2 up. a file of windows reads 0x70, the level of windows with the bit
+                 * above it, and a program from elsewhere 0x08, signed or not. the files the system came with stand for
+                 * the first.
                  */
                 mi.SizeOfImage = vad->Section->Image.SizeOfImage ? vad->Section->Image.SizeOfImage : (SIZE_T)vad->Section->Size;
                 mi.ImageFlags |= vad->Section->SystemImage ? 0x70 : 0x08;
@@ -2625,10 +2621,9 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         }
     } else if ((ULONG)klass == 14) {
         /*
-         * MemoryImageExtensionInformation, measured on windows 11 with scratch/dlls/probe/qvm14.c of the research
-         * repository: the kind asked, no flags, and what the kernel mapped after the image, its offset from the base and
-         * its size, for any address of the image. an image that got none answers zeros. the loader asks it of every
-         * image it starts, and a failure ends the process.
+         * MemoryImageExtensionInformation, measured on windows 11: the kind asked, no flags, and what the kernel mapped
+         * after the image, its offset from the base and its size, for any address of the image. an image that got none
+         * answers zeros. the loader asks it of every image it starts, and a failure ends the process.
          */
         struct {
             ULONG ExtensionType, Flags;
@@ -2667,12 +2662,11 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         }
     } else if (klass == MemoryRegionInformation || (ULONG)klass == 7) {
         /*
-         * measured on windows 11 26100 with region.exe of scratch/assets2/probe in the research repository: the whole
-         * allocation, its first protection and its type, then the committed bytes it charges, a partition and a node
-         * preference of -1. any length from 0x18 gets as much of the 0x30 bytes as it holds. the loader asks it of the
-         * views of a .mun file before it takes resources from it. the type is MEM_PRIVATE, MEM_IMAGE, MEM_MAPPED for a
-         * file's data and SEC_COMMIT for a view of the paging file, and the extended class 7 has flags instead:
-         * private 1, file data 2, image 4, paging file 8. measured with scratch/dlls/crash3/region.c.
+         * measured on windows 11 26100: the whole allocation, its first protection and its type, then the committed
+         * bytes it charges, a partition and a node preference of -1. any length from 0x18 gets as much of the 0x30
+         * bytes as it holds. the loader asks it of the views of a.mun file before it takes resources from it. the type
+         * is MEM_PRIVATE, MEM_IMAGE, MEM_MAPPED for a file's data and SEC_COMMIT for a view of the paging file, and the
+         * extended class 7 has flags instead: private 1, file data 2, image 4, paging file 8. measured on windows.
          */
         struct {
             PVOID AllocationBase;
@@ -2749,7 +2743,7 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
         if (!section) {
             status = STATUS_INVALID_ADDRESS;
         } else if (!section->FileName.Buffer) {
-            /* a view of the paging file has no file to name, measured on windows 11 with scratch/dlls/crash3/remap.c. */
+            /* a view of the paging file has no file to name, measured on windows 11. */
             status = (NTSTATUS)0xC0000098L; /* STATUS_FILE_INVALID */
         } else {
             /* the name is the one of the file object: its volume, \Device\HarddiskVolumeN, then its path. */
@@ -3037,9 +3031,9 @@ NTSTATUS NTAPI NtReadVirtualMemory(HANDLE process_handle, PVOID base, PVOID buff
         status = MmCopyVirtualMemory(process, base, PsCurrentProcess(), buffer, size, UserMode, &done);
     }
     /*
-     * measured on windows 11 26300 with scratch/dlls/probe/gate32res.c of the research repository: a read that
-     * stops, at the source or at a buffer that is missing or read only, is a partial copy with the bytes it got, and
-     * a source outside user space is an access violation that leaves the count alone.
+     * measured on windows 11 26300: a read that stops, at the source or at a buffer that is missing or read only, is a
+     * partial copy with the bytes it got, and a source outside user space is an access violation that leaves the count
+     * alone.
      */
     if (status == STATUS_ACCESS_VIOLATION)
         status = (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY. */;
