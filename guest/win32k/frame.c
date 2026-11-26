@@ -25,6 +25,8 @@ enum {
     WP_SMALLCLOSEBUTTON = 19,
     WP_RESTOREBUTTON = 21,
     WP_HELPBUTTON = 23,
+    WP_CAPTIONSIZINGTEMPLATE = 30,
+    WP_SMALLCAPTIONSIZINGTEMPLATE = 31,
 };
 
 static LONG scale(LONG v, UINT dpi)
@@ -430,14 +432,14 @@ void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info)
 /* ------------------------------------------------------------------ hit testing */
 
 /*
- * the caption of a child window, _GetNcBtnHitTestRect of uxtheme 26300: the buttons from the frame to the last line
+ * the buttons of the caption of a child window, _GetNcBtnHitTestRect of uxtheme 26300: from the frame to the last line
  * of the caption, the close button out to the frame, the minimize and help buttons a pixel to the left, the maximize
- * and help buttons one to the right, and the system menu from the frame through the icon.
+ * and help buttons one to the right, and the system menu from the frame through the icon. HTNOWHERE off them.
  */
-static LRESULT child_caption_hit(WND *w, POINT wp, const FRAME_METRICS *m)
+static LRESULT child_button_hit(WND *w, POINT wp, const FRAME_METRICS *m)
 {
     if (wp.y < m->Border || wp.y >= m->Top - 1)
-        return HTCAPTION;
+        return HTNOWHERE;
     LONG width = w->WindowRect.right - w->WindowRect.left;
     static const struct {
         int Button;
@@ -458,8 +460,10 @@ static LRESULT child_caption_hit(WND *w, POINT wp, const FRAME_METRICS *m)
     FrameGetButtonRect(w, CAPTION_HELP, &help);
     if (!RectEmpty(&help) && wp.x >= help.left - 1 && wp.x <= help.right)
         return HTHELP;
-    return HTCAPTION;
+    return HTNOWHERE;
 }
+
+static LRESULT themed_child_hit(WND *w, POINT wp, const FRAME_METRICS *m, UINT dpi);
 
 LRESULT FrameHitTest(WND *w, POINT pt)
 {
@@ -489,11 +493,16 @@ LRESULT FrameHitTest(WND *w, POINT pt)
             return HTHSCROLL;
     }
 
+    if (!is_top_frame(w->Style) && FrameHasCaption(w->Style, w->ExStyle) && FrameThemed()) {
+        LRESULT hit = themed_child_hit(w, wp, &m, dpi);
+        if (hit != HTNOWHERE)
+            return hit;
+    }
+
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MAXIMIZE)) {
         LONG edge = m.Border;
         LONG corner = scale(16, dpi);
-        /* the top resize strip of the dwm, or the top row of the nine grid of the caption of uxtheme. */
-        LONG top_edge = is_top_frame(w->Style) ? scale(4, dpi) : m.Border + scale(1, dpi);
+        LONG top_edge = scale(4, dpi);
         BOOLEAN left = wp.x < edge, right = wp.x >= width - edge;
         BOOLEAN top = wp.y < top_edge, bottom = wp.y >= height - edge;
         if (top || bottom || left || right) {
@@ -516,8 +525,10 @@ LRESULT FrameHitTest(WND *w, POINT pt)
     }
 
     if (FrameHasCaption(w->Style, w->ExStyle) && wp.y < m.Top) {
-        if (!is_top_frame(w->Style))
-            return child_caption_hit(w, wp, &m);
+        if (!is_top_frame(w->Style)) {
+            LRESULT hit = child_button_hit(w, wp, &m);
+            return hit != HTNOWHERE ? hit : HTCAPTION;
+        }
         RECT vis;
         FrameGetVisibleRect(w, &vis);
         switch (button_at(w, wp)) {
@@ -1158,6 +1169,106 @@ static BOOLEAN draw_window_part(SURFACE *s, const REGION *clip, int part, int st
                                 r->bottom - r->top, MIME_MSSTYLES_GLYPH, &img))
         draw_image(s, clip, &img, &content, TRUE);
     return TRUE;
+}
+
+/* where a point of a stretched or tiled image falls in its frame, along one axis. */
+static LONG grid_source(LONG d, LONG size, LONG from, LONG to, LONG a, LONG b, BOOLEAN tile)
+{
+    LONG span = to - from, sa = a, sb = b;
+    if (a + b > size) {
+        a = size * a / (a + b);
+        b = size - a;
+    }
+    if (d < a)
+        return from + d * sa / W32Max(a, 1);
+    if (d >= size - b)
+        return to - 1 - (size - 1 - d) * sb / W32Max(b, 1);
+    LONG mid = span - sa - sb, room = size - a - b;
+    if (mid <= 0 || room <= 0)
+        return from + sa;
+    return from + sa + (tile ? (d - a) % mid : (d - a) * mid / room);
+}
+
+/*
+ * HitTest9Grid of uxtheme 26300 for a fixed frame: on the border of a box less its margins, inclusive at the left
+ * and the top. a left margin of 0 beside a right one, or a top margin of 0 above a bottom one, has no edge.
+ */
+static BOOLEAN grid_border(POINT p, LONG width, LONG height, const MimeMsstylesMargins *mm)
+{
+    if (!(mm->left == 0 && mm->right != 0) && p.x <= mm->left)
+        return TRUE;
+    if (p.x >= width - mm->right)
+        return TRUE;
+    if ((mm->top != 0 || mm->bottom == 0) && p.y <= mm->top)
+        return TRUE;
+    return p.y >= height - mm->bottom;
+}
+
+/*
+ * a sizable caption, HitTestTemplate and _HitTestResizingTemplate of uxtheme 26300: the opaque pixels of the sizing
+ * template of the style, laid over the caption as it is drawn, resize the window, by the content margins of the
+ * template from its edges, inclusive at the left and the top. anywhere else is the caption.
+ */
+static LRESULT caption_template_hit(POINT wp, LONG width, LONG top, BOOLEAN tool, UINT dpi)
+{
+    MimeMsstylesImage img;
+    RECT caption = {0, 0, width, top};
+    if (!window_part_image(tool ? WP_SMALLCAPTIONSIZINGTEMPLATE : WP_CAPTIONSIZINGTEMPLATE, 1, dpi, &caption, &img))
+        return HTCAPTION;
+    SURFACE *src = image_surface(&img);
+    if (!src)
+        return HTCAPTION;
+    LONG k = img.margin_scale > 0 ? img.margin_scale : 1;
+    BOOLEAN tile = img.sizing_type == MIME_ST_TILE;
+    LONG sx = grid_source(wp.x, width, img.src.left, img.src.right, img.sizing_margins.left * k,
+                          img.sizing_margins.right * k, tile);
+    LONG sy = grid_source(wp.y, top, img.src.top, img.src.bottom, img.sizing_margins.top * k,
+                          img.sizing_margins.bottom * k, tile);
+    if (!(SurfaceGetPixel(src, sx, sy) >> 24))
+        return HTCAPTION;
+    LONG left = W32MulDiv(img.content_margins.left, (LONG)dpi, 96), right = W32MulDiv(img.content_margins.right, (LONG)dpi, 96);
+    LONG up = W32MulDiv(img.content_margins.top, (LONG)dpi, 96);
+    BOOLEAN on_left = wp.x <= left, on_right = !on_left && wp.x >= width - right;
+    if (wp.y <= up)
+        return on_left ? HTTOPLEFT : on_right ? HTTOPRIGHT : HTTOP;
+    return on_left ? HTLEFT : on_right ? HTRIGHT : HTCAPTION;
+}
+
+/*
+ * CThemeWnd::NcHitTest and NcBackgroundHitTest of uxtheme 26300 for a child window with a caption: the buttons and the
+ * system menu, then the part of the frame under the point. a sizable caption follows its template, the sides are
+ * the edges whole and the bottom has corners as wide as a scroll bar. a fixed frame is a border on the sizing
+ * margins of its part laid over the window and a client area inside them, and its caption is the caption all over.
+ * HTNOWHERE inside the frame, which user32 answers as for any window.
+ */
+static LRESULT themed_child_hit(WND *w, POINT wp, const FRAME_METRICS *m, UINT dpi)
+{
+    LONG width = w->WindowRect.right - w->WindowRect.left, height = w->WindowRect.bottom - w->WindowRect.top;
+    BOOLEAN tool = (w->ExStyle & WS_EX_TOOLWINDOW) != 0;
+    BOOLEAN sizable = (w->Style & WS_THICKFRAME) && !(w->Style & (WS_MINIMIZE | WS_MAXIMIZE));
+    LRESULT hit = child_button_hit(w, wp, m);
+    if (hit != HTNOWHERE)
+        return hit;
+    RECT inner = {m->Border, m->Top, width - m->Border, height - m->Border};
+    if (RectContains(&inner, wp.x, wp.y))
+        return HTNOWHERE;
+    if (wp.y < m->Top)
+        return sizable ? caption_template_hit(wp, width, m->Top, tool, dpi) : HTCAPTION;
+    if (sizable) {
+        if (wp.y >= height - m->Border) {
+            LONG corner = MetricsGet(SM_CXVSCROLL, dpi);
+            return wp.x <= corner ? HTBOTTOMLEFT : wp.x >= width - corner ? HTBOTTOMRIGHT : HTBOTTOM;
+        }
+        return wp.x < m->Border ? HTLEFT : HTRIGHT;
+    }
+    int part = wp.y >= height - m->Border ? WP_FRAMELEFT + 2 : wp.x < m->Border ? WP_FRAMELEFT : WP_FRAMELEFT + 1;
+    MimeMsstylesImage img;
+    if (!window_part_image(tool ? part - WP_FRAMELEFT + WP_SMALLFRAMELEFT : part, 1, dpi, nullptr, &img))
+        return HTBORDER;
+    LONG k = img.margin_scale > 0 ? img.margin_scale : 1;
+    MimeMsstylesMargins mm = {img.sizing_margins.left * k, img.sizing_margins.right * k, img.sizing_margins.top * k,
+                              img.sizing_margins.bottom * k};
+    return grid_border(wp, width, height, &mm) ? HTBORDER : HTCLIENT;
 }
 
 /*
