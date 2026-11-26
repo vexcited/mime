@@ -47,24 +47,64 @@ static void make_machine_uuid(char *out, size_t size)
 
 #ifdef __linux__
 
-/* on PCs, exposes the host processor and firmware tables to the guest. */
+/* a line of the kernel's view of the firmware, which every user can read; empty when the firmware has none. */
+static void dmi_text(const char *name, char *out, size_t size)
+{
+    char path[96];
+    snprintf(path, sizeof(path), "/sys/class/dmi/id/%s", name);
+    out[0] = 0;
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return;
+    if (!fgets(out, (int)size, f))
+        out[0] = 0;
+    fclose(f);
+    out[strcspn(out, "\n")] = 0;
+}
+
+/*
+ * the machine mime runs on: its maker, model and firmware, as the dmi table names them. the reference laptop's
+ * strings stand in for what the firmware leaves blank, and the processor is the reference one.
+ */
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
-    static const MimeHardwareProfile profile = {
+    static char manufacturer[64], product[64], family[64], sku[64], bios_vendor[64], bios_version[64], bios_date[16];
+    static MimeHardwareProfile profile = {
         .cpu_name = "AMD Ryzen 7 7435HS",
         .cpu_vendor = "AuthenticAMD",
         .cpu_mhz = 4100,
         .cpu_family = 0x19,
         .cpu_model = 0x44,
         .cpu_stepping = 1,
-        .manufacturer = "Microsoft Corporation",
-        .product = "Microsoft Surface Laptop 6 for Business",
-        .family = "Surface",
-        .sku = "Surface_Laptop_6_for_Business_2033",
-        .bios_vendor = "Microsoft Corporation",
-        .bios_version = "1.11.138.0",
-        .bios_date = "03/12/2024",
+        .manufacturer = manufacturer,
+        .product = product,
+        .family = family,
+        .sku = sku,
+        .bios_vendor = bios_vendor,
+        .bios_version = bios_version,
+        .bios_date = bios_date,
     };
+    if (manufacturer[0])
+        return &profile;
+    static const struct {
+        const char *file;
+        char *out;
+        size_t size;
+        const char *reference;
+    } fields[] = {
+        {"sys_vendor", manufacturer, sizeof(manufacturer), "Microsoft Corporation"},
+        {"product_name", product, sizeof(product), "Microsoft Surface Laptop 6 for Business"},
+        {"product_family", family, sizeof(family), "Surface"},
+        {"product_sku", sku, sizeof(sku), "Surface_Laptop_6_for_Business_2033"},
+        {"bios_vendor", bios_vendor, sizeof(bios_vendor), "Microsoft Corporation"},
+        {"bios_version", bios_version, sizeof(bios_version), "1.11.138.0"},
+        {"bios_date", bios_date, sizeof(bios_date), "03/12/2024"},
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+        dmi_text(fields[i].file, fields[i].out, fields[i].size);
+        if (!fields[i].out[0])
+            mime_strlcpy(fields[i].out, fields[i].reference, fields[i].size);
+    }
     return &profile;
 }
 #else
