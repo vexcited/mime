@@ -595,6 +595,7 @@ typedef struct W32PROCESS {
     DWORD StartupFlags; /* NtUserModifyUserStartupInfoFlags. */
     HICON ExeIcon;      /* the first icon of the program's file, for a window that has none. */
     BOOLEAN ExeIconTried;
+    BOOLEAN ApiHookTried, ApiHookLoaded; /* the api hook of the themes, usershared.c. */
     ULONG RotationPreference; /* ORIENTATION_PREFERENCE of SetDisplayAutoRotationPreferences, display.c. */
     struct W32GPU *Gpu; /* gpu.c. */
     struct W32VK *Vk;   /* vulkan.c. */
@@ -780,6 +781,7 @@ void DeskClassFreed(struct WND_CLASS *c);
 /* client.c: the calls into the genuine user32 of the program. */
 void ClientThreadSetup(void);
 ULONG64 ClientPfn(ULONG index);
+HMODULE ClientLoadLibrary(PCWSTR library, PCWSTR init);
 PVOID ClientAllocExtraBytes(ULONG size);
 void ClientFreeExtraBytes(struct WND *w, PVOID bytes);
 BOOL ClientMonitorEnumProc(HMONITOR monitor, HDC dc, const RECT *rect, LPARAM lparam, ULONG64 proc);

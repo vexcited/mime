@@ -264,8 +264,8 @@ static NTSTATUS build(void)
     UserSharedKeysChanged();
     /* GetCapture answers no window with no call while this count of captures is zero. it is kept at one: user32 asks. */
     *(PULONG)(psi + 0x1b50) = 1;
-    /* the reference had the api hook of the themes registered. mime registers none, and user32 asks for none. */
-    *(PULONG)psi &= ~PSI_FLAG_API_HOOK;
+    /* the api hook of the themes is registered, as on windows: user32 asks to load it, see NtUserLoadUserApiHook. */
+    *(PULONG)psi |= PSI_FLAG_API_HOOK;
     /* every entry with pages is counted, and all but the monitors are free. */
     *(PULONG64)(psi + PSI_HANDLE_ENTRIES) = USER_HANDLES_COMMITTED / USER_HANDLE_ENTRY;
     ULONG64 pfn[MIME_NTUSER_PFN_COUNT];
@@ -335,10 +335,29 @@ void UserSharedInitialize(void)
 
 /*
  * user32 asks for the library of the registered api hook before it calls a hooked function, while the server
- * information says one is registered. windows 11 26100 answers 1 with the hook of the themes loaded. no hook is
- * registered in mime, so nothing is loaded.
+ * information says one is registered, xxxLoadUserApiHook of win32kfull 26300. the hook is the one of the themes,
+ * ThemeInitApiHook of uxtheme in the system directory, which ClientLoadLibrary has user32 load and call. a process
+ * is asked once: a second thread that asks while the first loads it gets FALSE and calls the functions unhooked.
  */
 BOOL NTAPI NtUserLoadUserApiHook(void)
 {
-    return FALSE;
+    UserEnter();
+    W32PROCESS *p = W32GetProcess();
+    BOOLEAN load = p && !p->ApiHookTried;
+    if (p)
+        p->ApiHookTried = TRUE;
+    BOOL loaded = p && p->ApiHookLoaded;
+    UserLeave();
+    if (!load)
+        return loaded;
+    WCHAR root[RTL_NUMBER_OF(USER_SHARED_DATA->NtSystemRoot)], path[RTL_NUMBER_OF(root) + 32];
+    for (ULONG i = 0; i < RTL_NUMBER_OF(root); i++)
+        root[i] = i + 1 < RTL_NUMBER_OF(root) ? USER_SHARED_DATA->NtSystemRoot[i] : 0;
+    _snwprintf(path, RTL_NUMBER_OF(path) - 1, L"%ws\\System32\\uxtheme.dll", root);
+    path[RTL_NUMBER_OF(path) - 1] = 0;
+    loaded = ClientLoadLibrary(path, L"ThemeInitApiHook") != 0;
+    UserEnter();
+    p->ApiHookLoaded = (BOOLEAN)loaded;
+    UserLeave();
+    return loaded;
 }

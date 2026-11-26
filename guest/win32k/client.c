@@ -27,6 +27,7 @@
 
 /* the indexes of apfnDispatch. */
 enum {
+    FI_CLIENTLOADLIBRARY = 75,
     FI_COPYDATA = 0,
     FI_DWORD = 2,
     FI_NCDESTROY = 3,
@@ -334,6 +335,34 @@ static void capture_end(CAPTURE *c)
     }
     if (c->Message != c->Inline)
         W32Free(c->Message);
+}
+
+/* ------------------------------------------------------------------ libraries */
+
+/*
+ * ClientLoadLibrary of win32kfull 26300: user32 loads a library and, given the name of a function, calls it as the
+ * initialization of an api hook. two counted strings follow the capture buffer, the path of the library and the name
+ * of the function; the answer is the module, or 0 when the library or the hook failed.
+ */
+HMODULE ClientLoadLibrary(PCWSTR library, PCWSTR init)
+{
+    enum { LIBRARY = 40, INIT = 56, HEAD = 72 };
+    ULONG lib_bytes = (ULONG)(wcslen(library) + 1) * sizeof(WCHAR), init_bytes = (ULONG)(wcslen(init) + 1) * sizeof(WCHAR);
+    CAPTURE c;
+    if (!capture_begin(&c, HEAD, 2, lib_bytes + init_bytes))
+        return nullptr;
+    PUCHAR m = c.Message;
+    *(PUSHORT)(m + LIBRARY) = (USHORT)(lib_bytes - sizeof(WCHAR));
+    *(PUSHORT)(m + LIBRARY + 2) = (USHORT)lib_bytes;
+    *(PUSHORT)(m + INIT) = (USHORT)(init_bytes - sizeof(WCHAR));
+    *(PUSHORT)(m + INIT + 2) = (USHORT)init_bytes;
+    HMODULE module = nullptr;
+    CALLBACK_RESULT r;
+    if (capture_put(&c, LIBRARY + 8, library, lib_bytes) && capture_put(&c, INIT + 8, init, init_bytes) &&
+        NT_SUCCESS(call_client(nullptr, FI_CLIENTLOADLIBRARY, m, c.Length, &r)))
+        module = (HMODULE)(ULONG_PTR)r.Result;
+    capture_end(&c);
+    return module;
 }
 
 /* ------------------------------------------------------------------ window procedures */
