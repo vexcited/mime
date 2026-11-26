@@ -236,6 +236,11 @@
         v[0] = (LONG64)(LONG)a[0];
         v[1] = a[1];
         return MxCallService(number, v);
+    case MIME_SVC_NtUserShowCursor:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserDisableProcessWindowsGhosting:
+        return MxCallService(number, v);
     case MIME_SVC_NtUserGetForegroundWindow:
         return MxCallService(number, v);
     case MIME_SVC_NtUserSetCapture:

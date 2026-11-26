@@ -30,6 +30,16 @@ static ULONG queue_status(W32THREAD *t, ULONG flags, BOOL clear)
 #define QS_VALID 0x5DFF
 
 /* the service genuine user32 calls for GetQueueStatus; the readonly one leaves the change bits as they are. */
+static int show_cursor(W32THREAD *t, BOOL show)
+{
+    t->CursorShowCount += show ? 1 : -1;
+    if (t->CursorShowCount < 0)
+        HostSetCursor(MIME_CURSOR_HIDDEN);
+    else
+        CursorSet(t->Cursor);
+    return t->CursorShowCount;
+}
+
 DWORD NTAPI NtUserGetQueueStatus(UINT flags)
 {
     if (flags & ~QS_VALID) {
@@ -139,14 +149,8 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
             r = queue_status(t, (ULONG)param, TRUE);
         break;
     case MIME_ONEPARAM_SHOWCURSOR:
-        if (t) {
-            t->CursorShowCount += param ? 1 : -1;
-            r = (ULONG_PTR)(LONG_PTR)t->CursorShowCount;
-            if (t->CursorShowCount < 0)
-                HostSetCursor(MIME_CURSOR_HIDDEN);
-            else
-                CursorSet(t->Cursor);
-        }
+        if (t)
+            r = (ULONG_PTR)(LONG_PTR)show_cursor(t, param != 0);
         break;
     case MIME_ONEPARAM_SETPROCESSDPIAWARENESS:
         /* a call is refused once the awareness was chosen, what the manifest says is forced. */
@@ -296,6 +300,21 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
     }
     UserLeave();
     return r;
+}
+
+/* ShowCursor: the count the cursor is shown at 0 and above, and the count after the call. */
+int NTAPI NtUserShowCursor(BOOL show)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    int count = t ? show_cursor(t, show != 0) : (show ? 0 : -1);
+    UserLeave();
+    return count;
+}
+
+/* no window is replaced by a ghost when its thread stops answering, so there is nothing to turn off. */
+void NTAPI NtUserDisableProcessWindowsGhosting(void)
+{
 }
 
 BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)

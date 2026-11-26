@@ -32,6 +32,8 @@ void NtGdiDdDDIOpenAdapterFromDeviceName(void);
 void NtGdiDdDDIEnumAdapters2(void);
 void NtUserSetShellWindowEx(void);
 void NtUserGetTitleBarInfo(void);
+void NtUserShowCursor(void);
+void NtUserDisableProcessWindowsGhosting(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2822,5 +2824,15 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserGetTitleBarInfo & 0xFFF] = (SERVICE){(void *)NtUserGetTitleBarInfo, STACK_ARGS(2), 2, 0};
 #else
 #warning "NtUserGetTitleBarInfo has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserShowCursor
+    table[MIME_SVC_NtUserShowCursor & 0xFFF] = (SERVICE){(void *)NtUserShowCursor, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserShowCursor has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserDisableProcessWindowsGhosting
+    table[MIME_SVC_NtUserDisableProcessWindowsGhosting & 0xFFF] = (SERVICE){(void *)NtUserDisableProcessWindowsGhosting, STACK_ARGS(0), 1, 0};
+#else
+#warning "NtUserDisableProcessWindowsGhosting has no syscall number"
 #endif
 }
