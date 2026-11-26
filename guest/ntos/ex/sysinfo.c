@@ -1839,9 +1839,10 @@ static NTSTATUS query_late_class(ULONG klass, PVOID info, ULONG length, PULONG r
 /* ------------------------------------------------------------------ processor topology */
 
 /*
- * the machine as cpuid presents it: one package of single thread cores in one group and one numa node, each core
- * with the caches KiQueryCaches finds. the layouts and the order of the records are the ones windows 11 26300 gives
- * for four such processors.
+ * the machine as cpuid presents it: one package in one group and one numa node. the apic id of a processor is its
+ * index, so the thread bits of leaf 0xB tell which processors are one core and the sharing field of a cache which
+ * processors have it. the layouts and the order of the records are the ones windows 11 gives, measured on 26300 for
+ * four single thread processors and on 26100 for four cores of two threads.
  */
 #define TOPO_MAX_CACHES 8
 
@@ -1849,6 +1850,30 @@ static ULONG64 topo_all(void)
 {
     ULONG n = HalBootInfo->cpu_count;
     return n >= 64 ? ~0ull : (1ull << n) - 1;
+}
+
+/* the processors whose apic ids differ from i's in the low bits only. */
+static ULONG64 topo_sharing(ULONG i, ULONG bits)
+{
+    ULONG count = HalBootInfo->cpu_count;
+    ULONG64 mask = 0;
+    for (ULONG j = 0; j < count && j < 64; j++)
+        if (bits >= 32 || j >> bits == i >> bits)
+            mask |= 1ull << j;
+    return mask;
+}
+
+static ULONG64 topo_cache_mask(ULONG i, const KI_CACHE *cache)
+{
+    if (!cache->Shared)
+        return 1ull << i;
+    return cache->ShareBits ? topo_sharing(i, cache->ShareBits) : topo_all();
+}
+
+/* the first processor of a set is the one its records are told with. */
+static BOOLEAN topo_first(ULONG i, ULONG64 mask)
+{
+    return (mask & ((1ull << i) - 1)) == 0;
 }
 
 /* SYSTEM_LOGICAL_PROCESSOR_INFORMATION: the mask, the relationship, then the cache or the node. */
@@ -1867,27 +1892,39 @@ static PUCHAR topo_old_record(PUCHAR at, ULONG64 mask, ULONG relationship, const
     return at + 32;
 }
 
-/* class 73. the package comes before the records of the last processor, the node closes the list. */
+/*
+ * class 73. each core with the caches that are its own, the package before the records of the last core, then the
+ * caches several cores share, and the node closes the list.
+ */
 static NTSTATUS query_logical_processors(PVOID info, ULONG length, PULONG returned)
 {
     KI_CACHE caches[TOPO_MAX_CACHES];
     ULONG count = HalBootInfo->cpu_count, cache_count = KiQueryCaches(caches, TOPO_MAX_CACHES);
-    ULONG need = (count * (1 + cache_count) + cache_count + 2) * 32;
+    ULONG smt = KiProcessorSmtBits();
+    ULONG need = (count * (1 + 2 * cache_count) + 2) * 32;
     PUCHAR out = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('T', 'o', 'p', 'o'));
     if (!out)
         return STATUS_INSUFFICIENT_RESOURCES;
     PUCHAR at = out;
     for (ULONG i = 0; i < count; i++) {
-        if (i == count - 1)
+        ULONG64 core = topo_sharing(i, smt);
+        if (!topo_first(i, core))
+            continue;
+        if (!(topo_all() & ~core & ~((1ull << i) - 1)))
             at = topo_old_record(at, topo_all(), 3, nullptr);
-        at = topo_old_record(at, 1ull << i, 0, nullptr);
+        PUCHAR record = at;
+        at = topo_old_record(at, core, 0, nullptr);
+        record[16] = (core & (core - 1)) != 0; /* LTP_PC_SMT */
         for (ULONG k = 0; k < cache_count; k++)
-            if (!caches[k].Shared)
-                at = topo_old_record(at, 1ull << i, 2, &caches[k]);
+            if (!(topo_cache_mask(i, &caches[k]) & ~core))
+                at = topo_old_record(at, core, 2, &caches[k]);
     }
-    for (ULONG k = 0; k < cache_count; k++)
-        if (caches[k].Shared)
-            at = topo_old_record(at, topo_all(), 2, &caches[k]);
+    for (ULONG i = 0; i < count; i++)
+        for (ULONG k = 0; k < cache_count; k++) {
+            ULONG64 mask = topo_cache_mask(i, &caches[k]);
+            if ((mask & ~topo_sharing(i, smt)) && topo_first(i, mask))
+                at = topo_old_record(at, mask, 2, &caches[k]);
+        }
     at = topo_old_record(at, topo_all(), 1, nullptr);
     need = (ULONG)(at - out);
     if (returned)
@@ -1932,8 +1969,8 @@ static PUCHAR topo_ex_cache(PUCHAR at, const KI_CACHE *cache, ULONG64 mask)
 }
 
 /*
- * class 107, asked with a relationship. everything is the package, then the core, the module and the caches of each
- * processor, the node and the group; the die is only told when asked for, and a node asked as 6 answers as 1.
+ * class 107, asked with a relationship. everything is the package, then the core, the module and the caches first met
+ * with each core, the node and the group; the die is only told when asked for, and a node asked as 6 answers as 1.
  */
 static NTSTATUS query_logical_processors_ex(ULONG relationship, PVOID info, ULONG length, PULONG returned)
 {
@@ -1946,6 +1983,7 @@ static NTSTATUS query_logical_processors_ex(ULONG relationship, PVOID info, ULON
     }
     KI_CACHE caches[TOPO_MAX_CACHES];
     ULONG count = HalBootInfo->cpu_count, cache_count = KiQueryCaches(caches, TOPO_MAX_CACHES);
+    ULONG smt = KiProcessorSmtBits();
     ULONG need = count * (0x60 + cache_count * 0x38) + cache_count * 0x38 + 0x100;
     PUCHAR out = ExAllocatePool2(POOL_FLAG_NON_PAGED, need, KI_TAG('T', 'o', 'p', 'o'));
     if (!out)
@@ -1958,17 +1996,22 @@ static NTSTATUS query_logical_processors_ex(ULONG relationship, PVOID info, ULON
     if (relationship == DIE)
         at = topo_ex_record(at, DIE, 0x30, 30, everyone);
     for (ULONG i = 0; i < count; i++) {
-        if (all || relationship == CORE)
-            at = topo_ex_record(at, CORE, 0x30, 30, 1ull << i);
-        if (all || relationship == MODULE)
-            at = topo_ex_record(at, MODULE, 0x30, 30, 1ull << i);
-        for (ULONG k = 0; k < cache_count && (all || relationship == CACHE); k++)
-            if (!caches[k].Shared)
-                at = topo_ex_cache(at, &caches[k], 1ull << i);
+        ULONG64 core = topo_sharing(i, smt);
+        if (topo_first(i, core)) {
+            if (all || relationship == CORE) {
+                PUCHAR record = at;
+                at = topo_ex_record(at, CORE, 0x30, 30, core);
+                record[8] = (core & (core - 1)) != 0; /* LTP_PC_SMT */
+            }
+            if (all || relationship == MODULE)
+                at = topo_ex_record(at, MODULE, 0x30, 30, core);
+        }
+        for (ULONG k = 0; k < cache_count && (all || relationship == CACHE); k++) {
+            ULONG64 mask = topo_cache_mask(i, &caches[k]);
+            if (topo_first(i, mask))
+                at = topo_ex_cache(at, &caches[k], mask);
+        }
     }
-    for (ULONG k = 0; k < cache_count && (all || relationship == CACHE); k++)
-        if (caches[k].Shared)
-            at = topo_ex_cache(at, &caches[k], everyone);
     if (all || relationship == NODE || relationship == NODE_EX)
         at = topo_ex_record(at, NODE, 0x30, 30, everyone);
     if (all || relationship == GROUP) {
@@ -1986,7 +2029,8 @@ static NTSTATUS query_logical_processors_ex(ULONG relationship, PVOID info, ULON
     return status;
 }
 
-/* class 175, SYSTEM_CPU_SET_INFORMATION: a set for each processor, each its own core and its own last level cache. */
+/* class 175, SYSTEM_CPU_SET_INFORMATION: a set for each processor, with the first processor of its core and of its
+   last level cache. */
 static NTSTATUS query_cpu_sets(PVOID info, ULONG length, PULONG returned)
 {
     struct {
@@ -1996,11 +2040,17 @@ static NTSTATUS query_cpu_sets(PVOID info, ULONG length, PULONG returned)
         ULONG SchedulingClass;
         ULONG64 AllocationTag;
     } sets[MAXIMUM_PROCESSORS] = {};
+    KI_CACHE caches[TOPO_MAX_CACHES];
     ULONG count = HalBootInfo->cpu_count, need = count * sizeof(sets[0]);
+    ULONG cache_count = KiQueryCaches(caches, TOPO_MAX_CACHES), smt = KiProcessorSmtBits();
     for (ULONG i = 0; i < count; i++) {
+        ULONG64 core = topo_sharing(i, smt);
+        ULONG64 last = cache_count ? topo_cache_mask(i, &caches[cache_count - 1]) : 1ull << i;
         sets[i].Size = sizeof(sets[0]);
         sets[i].Id = 0x100 + i;
-        sets[i].LogicalProcessorIndex = sets[i].CoreIndex = sets[i].LastLevelCacheIndex = (UCHAR)i;
+        sets[i].LogicalProcessorIndex = (UCHAR)i;
+        sets[i].CoreIndex = (UCHAR)__builtin_ctzll(core);
+        sets[i].LastLevelCacheIndex = (UCHAR)__builtin_ctzll(last);
     }
     if (returned)
         KiCopyToUser(returned, &need, sizeof(need));

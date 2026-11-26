@@ -307,10 +307,26 @@ static ULONG deterministic_caches(ULONG leaf, KI_CACHE *caches, ULONG room)
         caches[n].LineSize = (USHORT)line;
         caches[n].Size = ways * partitions * line * (regs[2] + 1);
         caches[n].Type = type == 1 ? 2 : type == 2 ? 1 : 0;
-        caches[n].Shared = FALSE;
+        /* as windows reads it: a cache whose sharing field reaches other processors' ids is theirs too. */
+        ULONG sharing = regs[0] >> 14 & 0xFFF;
+        caches[n].Shared = sharing != 0;
+        caches[n].ShareBits = 0;
+        while ((1u << caches[n].ShareBits) <= sharing)
+            caches[n].ShareBits++;
         n++;
     }
     return n;
+}
+
+/* the thread level of leaf 0xB: how many low bits of the apic id tell the threads of one core apart. */
+ULONG KiProcessorSmtBits(void)
+{
+    ULONG regs[4];
+    KiCpuid(0, 0, regs);
+    if (regs[0] < 0xB)
+        return 0;
+    KiCpuid(0xB, 0, regs);
+    return (regs[1] & 0xFFFF) && (regs[2] >> 8 & 0xFF) == 1 ? regs[0] & 0x1F : 0;
 }
 
 /*

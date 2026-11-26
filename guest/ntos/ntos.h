@@ -667,8 +667,10 @@ typedef struct KI_CACHE {
     ULONG Size;
     ULONG Type;
     BOOLEAN Shared;
+    UCHAR ShareBits; /* the low bits of the apic id that number the processors sharing it; 0 with Shared is everyone. */
 } KI_CACHE;
 ULONG KiQueryCaches(KI_CACHE *caches, ULONG room);
+ULONG KiProcessorSmtBits(void); /* the low bits of the apic id that number the threads of a core. */
 
 /* user memory access with recovery from faults. */
 /* a copy made while another is under way, by the fault the other took, gives the other its recovery back. */

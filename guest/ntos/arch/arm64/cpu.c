@@ -194,6 +194,11 @@ void KiIdentifyToHypervisor(void)
     HalHyperVCall(input, HalPhysicalOf(request), 0);
 }
 
+ULONG KiProcessorSmtBits(void)
+{
+    return 0;
+}
+
 /* two l1 caches for each core and an l2 for the package. */
 ULONG KiQueryCaches(KI_CACHE *caches, ULONG room)
 {
