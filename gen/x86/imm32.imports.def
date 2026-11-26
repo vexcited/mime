@@ -18,6 +18,7 @@ EXPORTS
     ImmGetContext@4
     ImmGetConversionStatus@12
     ImmGetDefaultIMEWnd@4
+    ImmGetDescriptionA@12
     ImmGetDescriptionW@12
     ImmGetGuideLineW@16
     ImmGetIMEFileNameA@12

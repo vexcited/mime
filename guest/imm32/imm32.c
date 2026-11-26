@@ -481,10 +481,14 @@ IMMAPI BOOL WINAPI ImmIsUIMessageA(HWND ime, UINT msg, WPARAM wparam, LPARAM lpa
     return ImmIsUIMessageW(ime, msg, wparam, lparam);
 }
 
+/* a layout without an input method has no description: 0, and the buffer is left as it was, measured on windows 11. */
 IMMAPI UINT WINAPI ImmGetDescriptionW(HKL hkl, LPWSTR buffer, UINT size)
 {
-    if (buffer && size)
-        buffer[0] = 0;
+    return 0;
+}
+
+IMMAPI UINT WINAPI ImmGetDescriptionA(HKL hkl, LPSTR buffer, UINT size)
+{
     return 0;
 }
 
