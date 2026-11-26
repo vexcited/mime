@@ -311,9 +311,9 @@ static void draw_system_glyph(WND *w, SURFACE *s, const REGION *clip, ULONG_PTR 
     ULONG pixel = ColorToPixel(color);
     switch (kind) {
     case 1: {
-        /* the icon of the window, in the size of a small icon. */
+        /* GetWindowSmIcon: the small icon of the window, else of its class. */
         LONG icon_size = MetricsGet(SM_CXSMICON, dpi);
-        HICON icon = w->IconSmall ? w->IconSmall : w->Icon;
+        HICON icon = w->IconSmall ? w->IconSmall : w->Class ? w->Class->IconSmall : nullptr;
         if (!icon)
             return;
         HDC hdc = PaintGetDC(w, nullptr, DCX_WINDOW);

@@ -782,6 +782,7 @@ void DeskClassFreed(struct WND_CLASS *c);
 void ClientThreadSetup(void);
 ULONG64 ClientPfn(ULONG index);
 HMODULE ClientLoadLibrary(PCWSTR library, PCWSTR init);
+HANDLE ClientCopyImage(HANDLE image, UINT type, int cx, int cy, UINT flags);
 PVOID ClientAllocExtraBytes(ULONG size);
 void ClientFreeExtraBytes(struct WND *w, PVOID bytes);
 BOOL ClientMonitorEnumProc(HMONITOR monitor, HDC dc, const RECT *rect, LPARAM lparam, ULONG64 proc);
@@ -1511,6 +1512,9 @@ void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT f
 void CursorSet(HCURSOR cursor);
 HCURSOR CursorSystem(ULONG idc);
 HICON CursorSystemIcon(ULONG idi);
+HICON CursorSmallCopy(HICON icon, BOOLEAN window);
+BOOLEAN CursorIsSmallCopy(HICON icon);
+void CursorDestroySmallCopy(HICON icon);
 SURFACE *CursorIconImage(HICON icon);
 BOOLEAN CursorValid(HICON icon);
 SURFACE *CursorImage(HICON cursor);
@@ -1527,6 +1531,10 @@ BOOLEAN WinStaOnInputDesktop(void);
 
 /* callbacks into user32 for the system classes. */
 WNDPROC ClassProc(const WND_CLASS *c, W32PROCESS *p);
+void ClassMakeSmallIcon(WND_CLASS *c);
+void ClassRemakeSmallIcon(WND_CLASS *c);
+HICON WndGetIcon(WND *w, WPARAM kind);
+HICON WndSetIcon(WND *w, WPARAM kind, HICON icon, BOOLEAN *redraw);
 WND_CLASS *ClassFind(W32PROCESS *p, PCWSTR name, ATOM atom, HINSTANCE instance);
 ATOM ClassIntegerAtom(PCWSTR name);
 void ClassInitialize(void);

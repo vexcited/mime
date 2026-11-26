@@ -27,6 +27,7 @@
 
 /* the indexes of apfnDispatch. */
 enum {
+    FI_CLIENTCOPYIMAGE = 64,
     FI_CLIENTLOADLIBRARY = 75,
     FI_COPYDATA = 0,
     FI_DWORD = 2,
@@ -240,6 +241,22 @@ BOOL ClientMonitorEnumProc(HMONITOR monitor, HDC dc, const RECT *rect, LPARAM lp
     if (!NT_SUCCESS(call_client(nullptr, FI_CLIENTMONITORENUMPROC, &m, sizeof(m), &r)))
         return FALSE;
     return (BOOL)r.Result;
+}
+
+/* __ClientCopyImage of user32: InternalCopyImage of an image at a size, with the LR_ flags given. */
+HANDLE ClientCopyImage(HANDLE image, UINT type, int cx, int cy, UINT flags)
+{
+    struct {
+        ULONG64 Image;
+        ULONG Type;
+        LONG Cx, Cy;
+        ULONG Flags;
+    } m = {(ULONG64)(ULONG_PTR)image, type, cx, cy, flags};
+    MIME_STATIC_ASSERT(sizeof(m) == 24, "copy image message");
+    CALLBACK_RESULT r;
+    if (!NT_SUCCESS(call_client(nullptr, FI_CLIENTCOPYIMAGE, &m, sizeof(m), &r)))
+        return nullptr;
+    return (HANDLE)(ULONG_PTR)r.Result;
 }
 
 /* ------------------------------------------------------------------ strings */

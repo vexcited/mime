@@ -2272,19 +2272,14 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         return 0;
 
     case WM_GETICON:
-        return (LRESULT)(wparam == ICON_BIG ? w->Icon : wparam == ICON_SMALL ? w->IconSmall
-                                                                              : (w->IconSmall ? w->IconSmall : w->Icon));
+        return (LRESULT)WndGetIcon(w, wparam);
 
     case WM_SETICON: {
-        HICON old;
-        if (wparam == ICON_BIG) {
-            old = w->Icon;
-            w->Icon = (HICON)lparam;
-        } else {
-            old = w->IconSmall;
-            w->IconSmall = (HICON)lparam;
-        }
-        if (FrameHasCaption(w->Style, w->ExStyle)) {
+        BOOLEAN redraw;
+        HICON old = WndSetIcon(w, wparam, (HICON)lparam, &redraw);
+        if (w->Header.Destroyed)
+            return (LRESULT)old;
+        if (redraw && FrameHasCaption(w->Style, w->ExStyle)) {
             w->Flags |= WNDF_FRAME_DIRTY;
             if (w->Thread)
                 QueueWake(w->Thread, QS_PAINT);

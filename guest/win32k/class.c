@@ -234,8 +234,46 @@ WNDPROC ClassProc(const WND_CLASS *c, W32PROCESS *p)
     return c->Proc;
 }
 
+#define CSF_CACHEDSMICON 0x0020
+
+/* DestroyClassSmIcon of win32kfull 26300: only the copy win32k made goes. */
+static BOOLEAN destroy_small_icon(WND_CLASS *c)
+{
+    if (!(c->CsfFlags & CSF_CACHEDSMICON))
+        return FALSE;
+    HICON icon = c->IconSmall;
+    c->IconSmall = nullptr;
+    c->CsfFlags &= ~CSF_CACHEDSMICON;
+    CursorDestroySmallCopy(icon);
+    return TRUE;
+}
+
+/* xxxCreateClassSmIcon of win32kfull 26300: a class with only a large icon gets a small copy of it. */
+void ClassMakeSmallIcon(WND_CLASS *c)
+{
+    if (!c->Icon || c->IconSmall)
+        return;
+    HICON icon = CursorSmallCopy(c->Icon, FALSE);
+    if (!icon)
+        return;
+    if (c->IconSmall) {
+        CursorDestroySmallCopy(icon);
+        return;
+    }
+    c->IconSmall = icon;
+    c->CsfFlags |= CSF_CACHEDSMICON;
+}
+
+/* xxxRecreateSmallIcons: the copy is made again at the small size of now. */
+void ClassRemakeSmallIcon(WND_CLASS *c)
+{
+    if (destroy_small_icon(c))
+        ClassMakeSmallIcon(c);
+}
+
 static void free_class(WND_CLASS *c)
 {
+    destroy_small_icon(c);
     DeskClassFreed(c);
     RemoveEntryList(&c->Links);
     W32Free(c->Name);
@@ -639,11 +677,21 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
         break;
     case GCLP_HICON:
     case GCLP_HICONSM:
+        /* xxxSetClassIcon: a new icon drops the small copy, which is made again from the large one. */
         old = (ULONG_PTR)(index == GCLP_HICON ? c->Icon : c->IconSmall);
-        if (index == GCLP_HICON)
+        if (old == value)
+            break;
+        if (index == GCLP_HICON) {
+            destroy_small_icon(c);
             c->Icon = (HICON)value;
-        else
+        } else {
+            if (destroy_small_icon(c))
+                old = 0;
             c->IconSmall = (HICON)value;
+        }
+        UserReference(&w->Header);
+        ClassMakeSmallIcon(c);
+        UserDereference(&w->Header);
         break;
     case GCLP_HMODULE:
         old = (ULONG_PTR)c->Instance;

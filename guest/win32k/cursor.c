@@ -1491,6 +1491,40 @@ HICON CursorSystemIcon(ULONG idi)
     return nullptr;
 }
 
+/*
+ * xxxCreateClassSmIcon and xxxCreateWindowSmIcon of win32kfull 26300: user32 copies an icon at the small size of the
+ * system dpi, from its resource when it has one. the copy of a window is marked as the one win32k made.
+ */
+HICON CursorSmallCopy(HICON icon, BOOLEAN window)
+{
+    CURICON *c = lookup(icon);
+    if (!c)
+        return nullptr;
+    UINT dpi = W32SystemDpi();
+    HICON copy = ClientCopyImage(icon, c->Type != 3 ? IMAGE_CURSOR : IMAGE_ICON, MetricsGet(SM_CXSMICON, dpi),
+                                 MetricsGet(SM_CYSMICON, dpi), LR_COPYFROMRESOURCE);
+    CURICON *made = lookup(copy);
+    if (!made)
+        return nullptr;
+    if (window)
+        made->Flags |= CURSORF_SECRET;
+    return copy;
+}
+
+/* a copy win32k made for a window, which nobody else may destroy. */
+BOOLEAN CursorIsSmallCopy(HICON icon)
+{
+    CURICON *c = lookup(icon);
+    return c && (c->Flags & CURSORF_SECRET);
+}
+
+void CursorDestroySmallCopy(HICON icon)
+{
+    CURICON *c = lookup(icon);
+    if (c)
+        destroy_now(c, 0);
+}
+
 /* ------------------------------------------------------------------ reading them */
 
 /* the bitmaps GetIconInfo hands out, owned by the caller: see _InternalGetIconInfo. */

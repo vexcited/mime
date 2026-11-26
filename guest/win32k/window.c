@@ -2380,6 +2380,9 @@ static void free_window(WND *w)
     for (WND *c = g_desktop ? g_desktop->FirstChild : nullptr; c; c = c->Next)
         if (c->HostOwner == w)
             c->HostOwner = nullptr;
+    if (w->IconSmall && CursorIsSmallCopy(w->IconSmall))
+        CursorDestroySmallCopy(w->IconSmall);
+    w->IconSmall = w->Icon = nullptr;
     if (w->Class)
         w->Class->Windows--;
     W32Free(w->Text);
@@ -2804,8 +2807,6 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     w->Dpi = parent != desktop && w->Awareness == parent->Awareness ? parent->Dpi : DpiScaleOf(w->Awareness);
     if (w->Awareness == DPI_AWARE_PER_MONITOR_V2)
         w->Flags |= WNDF_DPI_CHILDREN;
-    w->Icon = cls->Icon;
-    w->IconSmall = cls->IconSmall;
     if (cls->Fnid == FNID_DIALOG)
         w->Flags |= WNDF_DIALOG;
     if (message_only)
@@ -2879,6 +2880,10 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     if (parent == desktop && w->Awareness >= DPI_AWARE_PER_MONITOR && !message_only)
         w->Dpi = w->MonitorDpi = MonitorDpiOfRect(&rect);
     UserReference(&w->Header);
+
+    ClassMakeSmallIcon(cls);
+    if (!alive(w))
+        goto fail;
 
     if (HookActive(WH_CBT, t)) {
         PCWSTR hook_class = class_name ? class_name : (PCWSTR)(ULONG_PTR)atom;
@@ -4477,6 +4482,78 @@ HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
     return found;
 }
 
+/* DWP_GetIcon of win32kfull 26300: the window's own icons, ICON_SMALL without the copy win32k made. */
+HICON WndGetIcon(WND *w, WPARAM kind)
+{
+    if (kind > 2) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    if (kind == ICON_BIG)
+        return w->Icon;
+    if (kind == ICON_SMALL && w->IconSmall && CursorIsSmallCopy(w->IconSmall))
+        return nullptr;
+    return w->IconSmall;
+}
+
+static BOOLEAN destroy_small_copy(WND *w)
+{
+    if (!w->IconSmall || !CursorIsSmallCopy(w->IconSmall))
+        return FALSE;
+    CursorDestroySmallCopy(w->IconSmall);
+    w->IconSmall = nullptr;
+    return TRUE;
+}
+
+static void make_small_copy(WND *w)
+{
+    if (!w->Icon || w->IconSmall)
+        return;
+    UserReference(&w->Header);
+    HICON copy = CursorSmallCopy(w->Icon, TRUE);
+    if (copy && (w->Header.Destroyed || w->IconSmall))
+        CursorDestroySmallCopy(copy);
+    else
+        w->IconSmall = copy;
+    UserDereference(&w->Header);
+}
+
+/*
+ * xxxDWP_SetIcon of win32kfull 26300: ICON_SMALL sets the small icon and the others the large one. a large icon
+ * without a small one gets a copy at the small size, which the window owns; 3 makes both copies again.
+ */
+HICON WndSetIcon(WND *w, WPARAM kind, HICON icon, BOOLEAN *redraw)
+{
+    *redraw = FALSE;
+    if (kind > 3) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    if (kind == 3) {
+        if (w->Class)
+            ClassRemakeSmallIcon(w->Class);
+        if (destroy_small_copy(w))
+            make_small_copy(w);
+        return nullptr;
+    }
+    HICON old = kind == ICON_SMALL ? w->IconSmall : w->Icon;
+    if (old == icon)
+        return old;
+    BOOLEAN copy = destroy_small_copy(w);
+    *redraw = TRUE;
+    if (kind != ICON_SMALL) {
+        if (w->IconSmall)
+            *redraw = FALSE;
+        w->Icon = icon;
+    } else {
+        w->IconSmall = icon;
+        if (copy)
+            old = nullptr;
+    }
+    make_small_copy(w);
+    return old;
+}
+
 /* HasCaptionIcon of win32kfull 26300: any caption but a tool window's, a dialog frame only with an icon of its own. */
 static BOOLEAN caption_icon(const WND *w)
 {
@@ -5046,24 +5123,18 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     }
     case MIME_HWNDPARAM_SETICON: {
         MIME_SET_ICON si;
+        BOOLEAN redraw;
         if (!NT_SUCCESS(MimeCopyFromUser(&si, (PVOID)param, sizeof(si))))
             break;
-        if (si.Which == ICON_BIG) {
-            r = (ULONG_PTR)w->Icon;
-            w->Icon = si.Icon;
-        } else {
-            r = (ULONG_PTR)w->IconSmall;
-            w->IconSmall = si.Icon;
-        }
-        if (FrameHasCaption(w->Style, w->ExStyle)) {
+        r = (ULONG_PTR)WndSetIcon(w, si.Which, si.Icon, &redraw);
+        if (redraw && !w->Header.Destroyed && FrameHasCaption(w->Style, w->ExStyle)) {
             w->Flags |= WNDF_FRAME_DIRTY;
             wake_paint(w);
         }
         break;
     }
     case MIME_HWNDPARAM_GETICON:
-        r = (ULONG_PTR)(param == ICON_BIG ? w->Icon : param == ICON_SMALL ? w->IconSmall
-                                                                           : (w->IconSmall ? w->IconSmall : w->Icon));
+        r = (ULONG_PTR)WndGetIcon(w, param);
         break;
     case MIME_HWNDPARAM_SETDIALOGINFO:
         if (param)
