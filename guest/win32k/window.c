@@ -557,6 +557,70 @@ void WndUpdateHostConfig(WND *w, BOOLEAN activate)
     HostConfigure(w, activate);
 }
 
+/* a border of its own, measured with unpainted4.c of scratch/pr17 in the research repository. */
+static BOOLEAN has_border(const WND *w)
+{
+    return (w->Style & (WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) ||
+           (w->ExStyle & (WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_DLGMODALFRAME));
+}
+
+/* pixels as gdi would leave them: alpha 255 in a device surface, alpha 0 in one the dwm composes by its alpha. */
+static void fill_surface(SURFACE *s, const RECT *r, ULONG pixel)
+{
+    if (!(s->Flags & SURF_DEVICE))
+        pixel &= 0xFFFFFF;
+    for (LONG y = r->top; y < r->bottom; y++) {
+        PULONG row = (PULONG)(s->Bits + (SIZE_T)y * s->Stride);
+        for (LONG x = r->left; x < r->right; x++)
+            row[x] = pixel;
+        SurfaceSetAlpha(s, r->left, y, r->right - r->left, 0);
+    }
+}
+
+static REGION *unpainted(SURFACE *s)
+{
+    if (!s->Unpainted && (s->Unpainted = W32Alloc(sizeof(REGION))))
+        RgnInit(s->Unpainted);
+    return s->Unpainted;
+}
+
+/*
+ * what a new redirection surface holds on windows 11, measured with unpainted.c to unpainted4.c of scratch/pr17 in the
+ * research repository: gdi's white over the whole of a window with a border, nothing of one without, which shows what
+ * is under it but for the rectangles gdi draws, see SurfaceMarkDrawn. windows makes a new one each time a hidden window
+ * is shown again.
+ */
+static void start_surface(WND *w, SURFACE *s)
+{
+    RECT all = {0, 0, s->Width, s->Height};
+    W32Free(s->Alpha);
+    s->Alpha = nullptr;
+    if (has_border(w)) {
+        SurfaceForgetWindow(s);
+        fill_surface(s, &all, 0xFFFFFFFFu);
+    } else {
+        memset(s->Bits, 0, (SIZE_T)s->Stride * (SIZE_T)s->Height);
+        if (unpainted(s))
+            RgnSetRect(s->Unpainted, &all);
+    }
+    s->Dirty = all;
+}
+
+/* a window that takes a border shows all of itself, black where it was never drawn. */
+static void border_taken(WND *w)
+{
+    SURFACE *s = w->Surface;
+    if (!s || !s->Unpainted || !has_border(w))
+        return;
+    for (ULONG i = 0; i < s->Unpainted->Count; i++)
+        fill_surface(s, &s->Unpainted->Rects[i], 0xFF000000u);
+    RgnFree(s->Unpainted);
+    W32Free(s->Unpainted);
+    s->Unpainted = nullptr;
+    RECT all = {0, 0, s->Width, s->Height};
+    SurfaceMarkDirty(s, &all);
+}
+
 /* top level windows render into a surface the size of their window rectangle. */
 void WndEnsureSurface(WND *w)
 {
@@ -568,34 +632,64 @@ void WndEnsureSurface(WND *w)
         width = 1;
     if (height <= 0)
         height = 1;
-    if (w->Surface && w->Surface->Width == width && w->Surface->Height == height)
+    SURFACE *old = w->Surface;
+    if (old && old->Width == width && old->Height == height)
         return;
-    SURFACE *s = SurfaceCreate(width, height, 32, SURF_DEVICE | SURF_CONTIGUOUS | SURF_TOPDOWN);
+    SURFACE *s = SurfaceCreate(width, height, 32,
+                               (!old || (old->Flags & SURF_DEVICE) ? SURF_DEVICE : 0) | SURF_CONTIGUOUS | SURF_TOPDOWN);
     if (!s)
         return;
     s->Window = w;
-    LONG copy_width = 0, copy_height = 0;
-    if (w->Surface) {
-        copy_width = W32Min(width, w->Surface->Width);
-        copy_height = W32Min(height, w->Surface->Height);
-        for (LONG y = 0; y < copy_height; y++)
-            memcpy(s->Bits + (SIZE_T)y * s->Stride, w->Surface->Bits + (SIZE_T)y * w->Surface->Stride,
-                   (SIZE_T)copy_width * 4);
-        PaintRetireSurface(w->Surface);
-    }
-    /* the host blends by alpha, so what was never painted is black as on Windows and not see-through. */
-    if (!(w->ExStyle & WS_EX_LAYERED))
-        for (LONG y = 0; y < height; y++) {
-            PULONG row = (PULONG)(s->Bits + (SIZE_T)y * s->Stride);
-            for (LONG x = y < copy_height ? copy_width : 0; x < width; x++)
-                row[x] = 0xFF000000u;
+    RECT all = {0, 0, width, height};
+    if (old) {
+        RECT kept = {0, 0, W32Min(width, old->Width), W32Min(height, old->Height)};
+        PUCHAR alpha = old->Alpha ? SurfaceAlphaPlane(s) : nullptr;
+        for (LONG y = 0; y < kept.bottom; y++) {
+            memcpy(s->Bits + (SIZE_T)y * s->Stride, old->Bits + (SIZE_T)y * old->Stride, (SIZE_T)kept.right * 4);
+            if (alpha)
+                memcpy(alpha + (SIZE_T)y * width, old->Alpha + (SIZE_T)y * old->Width, (SIZE_T)kept.right);
         }
+        /* what the window grew by is black on windows, or not there yet in one that started without a border. */
+        REGION grown;
+        RgnInit(&grown);
+        RgnSetRect(&grown, &all);
+        RgnCombineRect(&grown, &grown, &kept, RGN_DIFF);
+        if (w->LayerFlags & MIME_LAYER_UPDATE) {
+            /* UpdateLayeredWindow gives the pixels of what grew. */
+        } else if (old->Unpainted && unpainted(s)) {
+            RgnCombineRect(s->Unpainted, old->Unpainted, &all, RGN_AND);
+            RgnCombine(s->Unpainted, s->Unpainted, &grown, RGN_OR);
+        } else {
+            for (ULONG i = 0; i < grown.Count; i++)
+                fill_surface(s, &grown.Rects[i], 0xFF000000u);
+        }
+        RgnFree(&grown);
+        PaintRetireSurface(old);
+    } else {
+        start_surface(w, s);
+    }
     w->Surface = s;
-    s->Dirty = (RECT){0, 0, width, height};
+    s->Dirty = all;
     FrameSurfaceAlpha(w);
     if (!(w->Flags & WNDF_HOST_WINDOW)) {
         HostWindowCreate(w);
         w->Flags |= WNDF_HOST_WINDOW;
+    }
+}
+
+/*
+ * a window hidden by ShowWindow or SetWindowPos and shown again starts over, as windows frees the redirection surface of
+ * a hidden window. clearing WS_VISIBLE with SetWindowLong keeps it.
+ */
+void WndEnsureSurfaceShown(WND *w)
+{
+    WndEnsureSurface(w);
+    if (!(w->Flags & WNDF_SURFACE_GONE))
+        return;
+    w->Flags &= ~WNDF_SURFACE_GONE;
+    if (w->Surface && !(w->LayerFlags & MIME_LAYER_UPDATE)) {
+        start_surface(w, w->Surface);
+        FrameSurfaceAlpha(w);
     }
 }
 
@@ -743,9 +837,12 @@ static void copy_surface_bits(SURFACE *s, const REGION *dst, LONG dx, LONG dy)
             LONG y = dy > 0 ? r->bottom - 1 - row : r->top + row;
             memmove(s->Bits + (SIZE_T)y * s->Stride + (SIZE_T)r->left * 4,
                     s->Bits + (SIZE_T)(y - dy) * s->Stride + (SIZE_T)(r->left - dx) * 4, bytes);
+            if (s->Alpha)
+                memmove(s->Alpha + (SIZE_T)y * s->Width + (SIZE_T)r->left,
+                        s->Alpha + (SIZE_T)(y - dy) * s->Width + (SIZE_T)(r->left - dx), bytes / 4);
         }
     }
-    SurfaceMarkDirty(s, &dst->Extents);
+    SurfaceMarkDrawn(s, &dst->Extents, dst);
 }
 
 /* the window DestroyWindow hides, whose activation and focus leave it after it is hidden. */
@@ -868,8 +965,10 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     BOOLEAN visible = WndIsVisible(w);
 
     if (WndIsTopLevel(w)) {
+        if ((pos.flags & SWP_HIDEWINDOW) && w->Surface)
+            w->Flags |= WNDF_SURFACE_GONE;
         if (visible && !(w->Style & WS_MINIMIZE))
-            WndEnsureSurface(w);
+            WndEnsureSurfaceShown(w);
         if ((sized || (pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW))) && visible && !(w->Style & WS_MINIMIZE)) {
             w->Flags |= WNDF_FRAME_DIRTY;
             WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
@@ -3313,10 +3412,12 @@ static LONG_PTR set_long(WND *w, int index, LONG_PTR value, BOOL ansi, SIZE_T si
                 w->Flags &= ~(WNDF_FULLSCREEN | WNDF_APP_FULLSCREEN);
             /* a top level window shown this way is composed as one shown by ShowWindow. */
             if (shown && WndIsTopLevel(w) && WndIsVisible(w) && !(w->Style & WS_MINIMIZE))
-                WndEnsureSurface(w);
+                WndEnsureSurfaceShown(w);
+            border_taken(w);
         } else {
             w->ExStyle = (ss.styleNew & 0x7FFFFFFFu) | (w->ExStyle & 0x80000000u);
             LayerStyleChanged(w);
+            border_taken(w);
         }
         if (alive(w))
             MsgSendKernel(w, WM_STYLECHANGED, (WPARAM)index, (LPARAM)&ss, MIME_LPARAM_IN, sizeof(ss));

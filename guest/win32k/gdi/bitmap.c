@@ -106,6 +106,7 @@ void SurfaceDestroy(SURFACE *s)
         return;
     if (s->Header.Handle)
         GdiFreeHandle(&s->Header);
+    SurfaceForgetWindow(s);
     if (s->Flags & SURF_OWNS_BITS) {
         if (s->Flags & SURF_CONTIGUOUS)
             MmFreeContiguousMemory(s->Bits);
@@ -131,12 +132,44 @@ void SurfaceDestroy(SURFACE *s)
     W32Free(s);
 }
 
-/* the draw touched the part of r inside the clip, all of r without one. */
-void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip)
+/*
+ * the rectangles gdi draws are what the dwm shows of a window made without a border, measured with unpainted.c of
+ * scratch/pr17 in the research repository: all of each one, clipped, black where the draw left no pixel.
+ */
+static void drawn_on_window(SURFACE *s, const RECT *r, const REGION *clip)
+{
+    REGION *unpainted = s->Unpainted;
+    RECT overlap;
+    if (!unpainted || !RectIntersect(&overlap, r, &unpainted->Extents))
+        return;
+    REGION drawn, hit;
+    RgnInit(&drawn);
+    RgnInit(&hit);
+    RgnSetRect(&drawn, r);
+    if (clip)
+        RgnCombine(&drawn, &drawn, clip, RGN_AND);
+    RgnCombine(&hit, unpainted, &drawn, RGN_AND);
+    /* gdi writes alpha 255 into a device surface, so alpha 0 there is a pixel the draw left. */
+    if ((s->Flags & SURF_DEVICE) && s->Bpp == 32)
+        for (ULONG i = 0; i < hit.Count; i++)
+            for (LONG y = hit.Rects[i].top; y < hit.Rects[i].bottom; y++) {
+                PULONG row = (PULONG)(s->Bits + (LONG_PTR)y * s->Stride);
+                for (LONG x = hit.Rects[i].left; x < hit.Rects[i].right; x++)
+                    if (!(row[x] >> 24))
+                        row[x] = 0xFF000000u;
+            }
+    RgnCombine(unpainted, unpainted, &drawn, RGN_DIFF);
+    RgnFree(&hit);
+    RgnFree(&drawn);
+}
+
+static void mark(SURFACE *s, const RECT *r, const REGION *clip, BOOLEAN drawn)
 {
     RECT clipped, bounds = {0, 0, s->Width, s->Height};
     if (!RectIntersect(&clipped, r, &bounds))
         return;
+    if (drawn)
+        drawn_on_window(s, &clipped, clip);
     RectUnion(&s->Dirty, &s->Dirty, &clipped);
     if (ScreenHeldCount && s->Window) {
         RECT part;
@@ -153,9 +186,79 @@ void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip)
         ScreenKeep(&clipped);
 }
 
+/* the draw touched the part of r inside the clip, all of r without one. */
+void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip)
+{
+    mark(s, r, clip, TRUE);
+}
+
+/* the pixels of r changed for the host without a draw, as when the dwm composes them anew. */
 void SurfaceMarkDirty(SURFACE *s, const RECT *r)
 {
-    SurfaceMarkDrawn(s, r, nullptr);
+    mark(s, r, nullptr, FALSE);
+}
+
+/* drops what a window surface keeps beside its pixels, as when UpdateLayeredWindow gives all of them with their alpha. */
+void SurfaceForgetWindow(SURFACE *s)
+{
+    if (s->Unpainted) {
+        RgnFree(s->Unpainted);
+        W32Free(s->Unpainted);
+        s->Unpainted = nullptr;
+    }
+    W32Free(s->Alpha);
+    s->Alpha = nullptr;
+}
+
+PUCHAR SurfaceAlphaPlane(SURFACE *s)
+{
+    if (!s->Alpha)
+        s->Alpha = W32Alloc((SIZE_T)s->Width * (SIZE_T)s->Height);
+    return s->Alpha;
+}
+
+UCHAR SurfaceAlphaAt(const SURFACE *s, LONG x, LONG y)
+{
+    return s->Alpha ? s->Alpha[(SIZE_T)y * (SIZE_T)s->Width + (SIZE_T)x] : 0;
+}
+
+/*
+ * a run of 32-bit pixels copied as they are, already in place at x, y of dst: a window surface keeps their alpha aside
+ * and holds them opaque, and a copy out of one takes the alpha windows keeps there.
+ */
+void SurfaceCopiedAlpha(SURFACE *dst, LONG x, LONG y, const SURFACE *src, LONG sx, LONG sy, LONG count)
+{
+    PULONG d = (PULONG)(dst->Bits + (LONG_PTR)y * dst->Stride) + x;
+    if (!(dst->Flags & SURF_DEVICE)) {
+        if (src->Flags & SURF_DEVICE)
+            for (LONG j = 0; j < count; j++)
+                d[j] = (d[j] & 0xFFFFFF) | (ULONG)SurfaceAlphaAt(src, sx + j, sy) << 24;
+        return;
+    }
+    if (src->Flags & SURF_DEVICE) {
+        if (src->Alpha && SurfaceAlphaPlane(dst))
+            memmove(dst->Alpha + (SIZE_T)y * (SIZE_T)dst->Width + (SIZE_T)x,
+                    src->Alpha + (SIZE_T)sy * (SIZE_T)src->Width + (SIZE_T)sx, (SIZE_T)count);
+        else if (dst->Alpha)
+            memset(dst->Alpha + (SIZE_T)y * (SIZE_T)dst->Width + (SIZE_T)x, 0, (SIZE_T)count);
+    } else {
+        BOOLEAN any = dst->Alpha != nullptr;
+        for (LONG j = 0; !any && j < count; j++)
+            any = (d[j] >> 24) != 0;
+        if (any && SurfaceAlphaPlane(dst))
+            for (LONG j = 0; j < count; j++)
+                dst->Alpha[(SIZE_T)y * (SIZE_T)dst->Width + (SIZE_T)(x + j)] = (UCHAR)(d[j] >> 24);
+    }
+    for (LONG j = 0; j < count; j++)
+        d[j] |= 0xFF000000u;
+}
+
+/* what windows keeps as the alpha of count pixels of a window surface from x, y. */
+void SurfaceSetAlpha(SURFACE *s, LONG x, LONG y, LONG count, UCHAR alpha)
+{
+    if (count <= 0 || (!alpha && !s->Alpha) || !SurfaceAlphaPlane(s))
+        return;
+    memset(s->Alpha + (SIZE_T)y * (SIZE_T)s->Width + (SIZE_T)x, alpha, (SIZE_T)count);
 }
 
 SURFACE *SurfaceLookup(HBITMAP bitmap)
@@ -213,6 +316,8 @@ ULONG SurfaceGetPixel(SURFACE *s, LONG x, LONG y)
     PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
     switch (s->Bpp) {
     case 32:
+        if (s->Flags & SURF_DEVICE)
+            return (((PULONG)row)[x] & 0xFFFFFF) | (ULONG)SurfaceAlphaAt(s, x, y) << 24;
         return ((PULONG)row)[x];
     case 24: {
         PUCHAR p = row + x * 3;
@@ -263,6 +368,8 @@ ULONG SurfaceGetRaw(SURFACE *s, LONG x, LONG y)
     PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
     switch (s->Bpp) {
     case 32:
+        if (s->Flags & SURF_DEVICE)
+            return (((PULONG)row)[x] & 0xFFFFFF) | (ULONG)SurfaceAlphaAt(s, x, y) << 24;
         return ((PULONG)row)[x];
     case 24:
         return (ULONG)row[x * 3] | (ULONG)row[x * 3 + 1] << 8 | (ULONG)row[x * 3 + 2] << 16;
@@ -283,7 +390,11 @@ void SurfacePutRaw(SURFACE *s, LONG x, LONG y, ULONG raw)
     PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
     switch (s->Bpp) {
     case 32:
-        ((PULONG)row)[x] = (s->Flags & SURF_DEVICE) ? raw | 0xFF000000u : raw;
+        if (s->Flags & SURF_DEVICE) {
+            SurfaceSetAlpha(s, x, y, 1, (UCHAR)(raw >> 24));
+            raw |= 0xFF000000u;
+        }
+        ((PULONG)row)[x] = raw;
         break;
     case 24:
         row[x * 3] = (UCHAR)raw;
@@ -316,7 +427,11 @@ void SurfacePutPixel(SURFACE *s, LONG x, LONG y, ULONG pixel)
     PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
     switch (s->Bpp) {
     case 32:
-        ((PULONG)row)[x] = (s->Flags & SURF_DEVICE) ? pixel | 0xFF000000u : pixel;
+        if (s->Flags & SURF_DEVICE) {
+            SurfaceSetAlpha(s, x, y, 1, (UCHAR)(pixel >> 24));
+            pixel |= 0xFF000000u;
+        }
+        ((PULONG)row)[x] = pixel;
         break;
     case 24: {
         PUCHAR p = row + x * 3;

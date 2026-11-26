@@ -237,6 +237,12 @@ static BOOLEAN see_through(const WND *w)
            (w->Surface && !(w->Surface->Flags & SURF_DEVICE));
 }
 
+/* what was never drawn of a window without a border is clear, see SurfaceMarkDrawn. */
+static BOOLEAN has_holes(const SURFACE *s)
+{
+    return s->Unpainted && !RgnIsEmpty(s->Unpainted);
+}
+
 /* the physical screen rectangle a window shows in, without the invisible resize border, as the host draws it. */
 static void shown_rect(WND *w, RECT *out)
 {
@@ -259,6 +265,8 @@ static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r
     LONG ox = place->Origin.x, oy = place->Origin.y;
     /* plain windows are opaque regardless of GDI alpha; layered and shaped windows retain their alpha. */
     BOOLEAN blend = see_through(w);
+    /* the pixels drawn in a device surface have alpha 255, the ones never drawn are clear. */
+    BOOLEAN holes = !blend && has_holes(s);
     LONG x0 = W32Max(r->left, ox), x1 = W32Min(r->right, ox + placed(s->Width, place));
     for (LONG y = r->top; y < r->bottom; y++) {
         LONG sy = (LONG)((LONG64)(y - oy) * place->Den / place->Num);
@@ -268,7 +276,7 @@ static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r
         ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (x0 - shift.x);
         if (place->Num == place->Den) {
             const ULONG *src = row + (x0 - ox);
-            if (blend)
+            if (blend || holes)
                 for (LONG x = x0; x < x1; x++, src++, dst++)
                     *dst = over(*src, *dst);
             else
@@ -278,7 +286,7 @@ static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r
         }
         for (LONG x = x0; x < x1; x++, dst++) {
             ULONG pixel = row[(LONG)((LONG64)(x - ox) * place->Den / place->Num)];
-            *dst = blend ? over(pixel, *dst) : pixel | 0xFF000000;
+            *dst = blend || holes ? over(pixel, *dst) : pixel | 0xFF000000;
         }
     }
 }
@@ -575,7 +583,7 @@ static BOOLEAN window_covers(WND *w, RECT *out)
         return TRUE;
     }
     SURFACE *s = w->Present ? w->Present : w->Surface;
-    if (!s || see_through(w))
+    if (!s || see_through(w) || has_holes(s))
         return FALSE;
     shown_rect(w, &window);
     PLACE place = place_on_screen(w);

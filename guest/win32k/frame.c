@@ -1191,6 +1191,9 @@ void FrameCompose(WND *w, SURFACE *dst, const RECT *area)
     } else {
         RgnCombine(&opaque, &opaque, &ext, RGN_DIFF);
     }
+    /* what was never drawn of a window without a border shows what is under it. */
+    if (w->Surface && w->Surface->Unpainted)
+        RgnCombine(&opaque, &opaque, w->Surface->Unpainted, RGN_DIFF);
     for (ULONG i = 0; i < opaque.Count; i++) {
         const RECT *r = &opaque.Rects[i];
         for (LONG y = r->top; y < r->bottom; y++) {
@@ -1221,12 +1224,11 @@ void FrameCompose(WND *w, SURFACE *dst, const RECT *area)
 }
 
 /*
- * gdi leaves alpha 0 in a window that extended its frame or asked for blur behind, as windows' redirection surfaces
- * have it, so the black a program paints there shows what is under it. other windows take what gdi draws as opaque.
- * the surface of an opaque window holds alpha 255, which the host needs. when the dwm starts composing it by alpha, what
- * gdi drew and what was never painted gets the alpha 0 of windows, where a redirection surface starts cleared and a
- * swap chain of the bitblt model writes its own alpha. an opaque 32-bit image drawn before is lost that way, windows
- * keeps it opaque, until the program paints again. when the dwm stops, it takes every pixel as opaque again.
+ * the pixels of a window keep the alpha windows' redirection surfaces have, so the black gdi paints with alpha 0 shows
+ * what is under it in a window that extended its frame or asked for blur behind. the surface of another window holds
+ * alpha 255 for the host, which composes by alpha, and keeps windows' alpha aside, see SurfaceSetAlpha. when the dwm
+ * starts or stops composing a window by its alpha, the pixels take the one or the other. what was never drawn stays
+ * clear either way.
  */
 void FrameSurfaceAlpha(WND *w)
 {
@@ -1236,16 +1238,32 @@ void FrameSurfaceAlpha(WND *w)
     BOOLEAN device = !FrameComposesAlpha(w);
     if (device == ((s->Flags & SURF_DEVICE) != 0))
         return;
-    if (device)
-        s->Flags |= SURF_DEVICE;
-    else
-        s->Flags &= ~SURF_DEVICE;
-    if (s->Bpp != 32 || (w->LayerFlags & MIME_LAYER_UPDATE))
+    if (s->Bpp != 32 || (w->LayerFlags & MIME_LAYER_UPDATE)) {
+        s->Flags = device ? s->Flags | SURF_DEVICE : s->Flags & ~SURF_DEVICE;
         return;
+    }
     for (LONG y = 0; y < s->Height; y++) {
         ULONG *row = (ULONG *)(s->Bits + (LONG_PTR)y * s->Stride);
-        for (LONG x = 0; x < s->Width; x++)
-            row[x] = device ? row[x] | 0xFF000000u : (row[x] >> 24) == 0xFF ? row[x] & 0xFFFFFF : row[x];
+        for (LONG x = 0; x < s->Width; x++) {
+            if (device) {
+                SurfaceSetAlpha(s, x, y, 1, (UCHAR)(row[x] >> 24));
+                row[x] |= 0xFF000000u;
+            } else {
+                row[x] = (row[x] & 0xFFFFFF) | (ULONG)SurfaceAlphaAt(s, x, y) << 24;
+            }
+        }
+    }
+    if (device) {
+        s->Flags |= SURF_DEVICE;
+        for (ULONG i = 0; s->Unpainted && i < s->Unpainted->Count; i++) {
+            const RECT *r = &s->Unpainted->Rects[i];
+            for (LONG y = r->top; y < r->bottom; y++)
+                memset(s->Bits + (LONG_PTR)y * s->Stride + (LONG_PTR)r->left * 4, 0, (SIZE_T)(r->right - r->left) * 4);
+        }
+    } else {
+        s->Flags &= ~SURF_DEVICE;
+        W32Free(s->Alpha);
+        s->Alpha = nullptr;
     }
     RECT all = {0, 0, s->Width, s->Height};
     SurfaceMarkDirty(s, &all);

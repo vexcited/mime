@@ -202,6 +202,13 @@ typedef struct SURFACE {
     BITMAPINFOHEADER Info; /* as created, for GetObject. */
     RECT Dirty;      /* device surfaces: area changed since the last present. */
     struct WND *Window;
+    /*
+     * window surfaces. Unpainted: what was never drawn of a window made without a border, which shows what is under it,
+     * null for a window that had one. Alpha: what windows' redirection surface keeps as alpha for each pixel while
+     * SURF_DEVICE holds 255 there, null while all of it is 0.
+     */
+    REGION *Unpainted;
+    PUCHAR Alpha;
 } SURFACE;
 
 SURFACE *SurfaceCreate(LONG width, LONG height, UCHAR bpp, ULONG flags);
@@ -209,6 +216,11 @@ SURFACE *SurfaceWrap(LONG width, LONG height, UCHAR bpp, PVOID bits, LONG stride
 void SurfaceDestroy(SURFACE *s);
 void SurfaceMarkDirty(SURFACE *s, const RECT *r);
 void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip);
+void SurfaceSetAlpha(SURFACE *s, LONG x, LONG y, LONG count, UCHAR alpha);
+void SurfaceCopiedAlpha(SURFACE *dst, LONG x, LONG y, const SURFACE *src, LONG sx, LONG sy, LONG count);
+UCHAR SurfaceAlphaAt(const SURFACE *s, LONG x, LONG y);
+PUCHAR SurfaceAlphaPlane(SURFACE *s); /* made on first use, width bytes a row. */
+void SurfaceForgetWindow(SURFACE *s);
 ULONG SurfaceRawOf(SURFACE *s, ULONG pixel);
 ULONG SurfaceGetRaw(SURFACE *s, LONG x, LONG y);
 void SurfacePutRaw(SURFACE *s, LONG x, LONG y, ULONG raw);
@@ -904,6 +916,7 @@ typedef struct WND_CLASS {
 #define WNDF_DLGPOINTER 0x10000000 /* user32 gave its dialog structure, WNDS_DIALOGWINDOW. */
 #define WNDF_MSGBOX 0x20000000     /* NtUserSetMsgBox, WNDS_MSGBOX. */
 #define WNDF_HIDDENPOPUP 0x40000000 /* hidden with its owner and shown again with it, WNDS_HIDDENPOPUP. */
+#define WNDF_SURFACE_GONE 0x80000000u /* hidden: windows freed its redirection surface, the next show starts over. */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -1054,6 +1067,7 @@ void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags);
 void WndValidate(WND *w, const RECT *client_rect);
 void WndUpdateHostConfig(WND *w, BOOLEAN activate);
 void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surface and the host window. */
+void WndEnsureSurfaceShown(WND *w); /* the same, starting over after a hide. */
 BOOLEAN WndLayerRects(WND *w, const POINT *pos, const SIZE *size);
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);

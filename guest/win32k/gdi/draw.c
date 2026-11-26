@@ -86,8 +86,10 @@ static ULONG rop2_apply(int rop2, ULONG pen, ULONG d)
 static void fill_span32(SURFACE *s, LONG y, LONG x0, LONG x1, ULONG pixel)
 {
     PULONG row = (PULONG)(s->Bits + (LONG_PTR)y * s->Stride);
-    if (s->Flags & SURF_DEVICE)
+    if (s->Flags & SURF_DEVICE) {
+        SurfaceSetAlpha(s, x0, y, x1 - x0, (UCHAR)(pixel >> 24));
         pixel |= 0xFF000000u;
+    }
     for (LONG x = x0; x < x1; x++)
         row[x] = pixel;
 }
@@ -230,9 +232,8 @@ BOOLEAN BltSurface(SURFACE *dst, const REGION *clip, LONG dx, LONG dy, LONG widt
                 PULONG s = (PULONG)(src->Bits + (LONG_PTR)syy * src->Stride) + sx + (r.left - dx);
                 SIZE_T n = (SIZE_T)(r.right - r.left);
                 memmove(d, s, n * 4);
-                if (dst->Flags & SURF_DEVICE)
-                    for (SIZE_T j = 0; j < n; j++)
-                        d[j] |= 0xFF000000u;
+                if ((dst->Flags | src->Flags) & SURF_DEVICE)
+                    SurfaceCopiedAlpha(dst, r.left, y, src, sx + (r.left - dx), syy, (LONG)n);
                 continue;
             }
             for (LONG x = r.left; x < r.right; x++) {
