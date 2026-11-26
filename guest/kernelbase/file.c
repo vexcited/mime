@@ -142,10 +142,14 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
         options |= FILE_DELETE_ON_CLOSE;
         access |= DELETE;
     }
-    if (flags & FILE_FLAG_BACKUP_SEMANTICS)
+    if (flags & FILE_FLAG_BACKUP_SEMANTICS) {
         options |= FILE_OPEN_FOR_BACKUP_INTENT;
-    else
+        /* like CreateFileInternal, a posix create of a directory attribute makes a directory. */
+        if ((flags & FILE_FLAG_POSIX_SEMANTICS) && (flags & FILE_ATTRIBUTE_DIRECTORY) && nt_disposition == FILE_CREATE)
+            options |= FILE_DIRECTORY_FILE;
+    } else {
         options |= FILE_NON_DIRECTORY_FILE;
+    }
     if (flags & FILE_FLAG_OPEN_REPARSE_POINT)
         options |= FILE_OPEN_REPARSE_POINT;
 
