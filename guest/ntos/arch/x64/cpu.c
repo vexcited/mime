@@ -262,7 +262,17 @@ void KiSetProcessorRegistryValues(PCWSTR key, KI_SET_REGISTRY_VALUE set)
 
 UCHAR KiProcessorSmbiosType(void)
 {
-    return strcmp(g_vendor, "GenuineIntel") ? 0x6B : 0xC6; /* amd zen family, intel core i7 */
+    /* for the smbios the kernel builds when the firmware's own was not read: the family by the marketing name. */
+    PCSTR name = KiProcessorBrand();
+    if (strstr(name, "i3"))
+        return 0xCE;
+    if (strstr(name, "i5"))
+        return 0xCD;
+    if (strstr(name, "i9"))
+        return 0xCF;
+    if (strstr(name, "i7"))
+        return 0xC6;
+    return 0x6B; /* the zen family */
 }
 
 PCSTR KiProcessorSmbiosManufacturer(void)

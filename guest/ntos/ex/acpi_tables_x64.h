@@ -145,7 +145,7 @@ static const UCHAR mime_smbios_raw[] = {
     0x6f,0x77,0x6e,0x00,0x30,0x32,0x2f,0x30,0x32,0x2f,0x32,0x30,
     0x32,0x32,0x00,0x00,0x7f,0x04,0xff,0xfe,0x00,0x00,
 };
-#define MIME_SMBIOS_RAW mime_smbios_raw
-#define MIME_SMBIOS_RAW_SIZE (sizeof(mime_smbios_raw))
+/* the smbios is built at run time from the identity, so its processor entry follows the machine; the reference
+   bytes above stay for the record. */
 
 #endif
