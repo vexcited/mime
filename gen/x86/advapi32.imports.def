@@ -671,3 +671,7 @@ EXPORTS
     RegRenameKey@12
     CryptDuplicateHash@16
     GetEventLogInformation@20
+    CloseThreadWaitChainSession@4
+    GetThreadWaitChain@28
+    OpenThreadWaitChainSession@8
+    RegisterWaitChainCOMCallback@8
