@@ -724,6 +724,7 @@ typedef struct W32THREAD {
     struct CURICON *CursorLock; /* the object of Cursor, which stays alive while the thread shows it. */
     LONG CursorShowCount;
     BOOLEAN CursorMade; /* Cursor was set: before, the queue of a thread has the wait cursor of the system. */
+    BOOLEAN MovingOrSizing; /* in the loop of a move or a size, movesize.c. */
     struct W32DESKTOP *Desktop;  /* referenced, winsta.c. */
     HANDLE DesktopHandle;
     HWND TsfSink;          /* text services window for host input methods, ime.c. */
@@ -1522,6 +1523,7 @@ void CursorDetached(W32THREAD *gone, W32THREAD *asked);
 void CursorHeir(W32THREAD *from, W32THREAD *heir);
 void InputCursorTarget(W32THREAD *t);
 HWND InputTopAt(POINT physical);
+void InputMouseRefresh(void);
 void InputCursorThreadGone(W32THREAD *t);
 BOOLEAN RawInputCapturesMouse(const struct W32PROCESS *p);
 HCURSOR CursorSystem(ULONG idc);

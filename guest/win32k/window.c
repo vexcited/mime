@@ -1294,6 +1294,9 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
                    !(pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_HIDEWINDOW));
     if (!same && (!(pos.flags & SWP_NOSENDCHANGING) || moved || sized || (pos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW))))
         send_kernel(w, WM_WINDOWPOSCHANGED, 0, &pos, MIME_LPARAM_IN, sizeof(pos));
+    W32THREAD *self = W32GetThread();
+    if (!same && (visible || was_visible) && !(self && self->MovingOrSizing))
+        InputMouseRefresh();
     if ((moved || sized) && alive(w))
         WndCheckMonitorDpi(w);
     if (alive(w))

@@ -37,6 +37,9 @@ void InputSetForeground(WND *w)
         InputForegroundChanged();
 }
 
+/* the host pointer left the windows of the guest, and is not over what the window under the cursor shows. */
+static BOOLEAN g_pointer_away;
+
 static void queue_mouse_refresh(void);
 
 void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit)
@@ -111,6 +114,7 @@ BOOL NTAPI NtUserGetGUIThreadInfo(DWORD thread_id, GUITHREADINFO *user_info)
  */
 void InputSetCursorPos(POINT physical)
 {
+    g_pointer_away = FALSE;
     InputCursorPos = physical;
     InputCursorMoved();
     queue_mouse_refresh();
@@ -321,6 +325,17 @@ static void mouse_goes_to(W32THREAD *t)
 static void queue_mouse_refresh(void);
 
 /*
+ * a window changed place, size, order or visibility: the window under the cursor may be another one, so it has a mouse
+ * move the hardware did not make, as GenerateMouseMove after xxxEndDeferWindowPosEx. measured on windows. not while the
+ * host pointer is over another program's window.
+ */
+void InputMouseRefresh(void)
+{
+    if (!g_pointer_away)
+        queue_mouse_refresh();
+}
+
+/*
  * a thread ends. when it was the last of the queue that has the cursor, no queue has it and a mouse move that the
  * hardware did not make finds the next one, as zzzDestroyQueue does.
  */
@@ -505,6 +520,7 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
          * a program put the cursor where it is, and a host window that the pointer enters without moving does not
          * take it back: hardware that does not move changes nothing on windows.
          */
+        g_pointer_away = FALSE;
         if (injected)
             InputCursorByProgram = TRUE;
         else if (copy.type == MIME_INPUT_MOUSE_MOVE && !(copy.flags & 4) && !copy.dx && !copy.dy && InputCursorByProgram)
@@ -530,6 +546,8 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         break;
     }
     }
+    if (ev->type == MIME_INPUT_MOUSE_LEAVE)
+        g_pointer_away = TRUE;
     if (ev->type == MIME_INPUT_CLIPBOARD) {
         ClipboardHostChanged((ULONG)ev->x, (ULONG)ev->y);
         return;

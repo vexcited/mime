@@ -283,6 +283,7 @@ static void move_size(WND *w, WPARAM command, BOOLEAN pressed, POINT press)
 
     InputSetCapture(t, w, 0);
     set_cursor(&ms);
+    t->MovingOrSizing = TRUE;
     MsgSend(w, WM_ENTERSIZEMOVE, 0, 0);
     if (size)
         host_takes_over(&ms, ms.Origin);
@@ -380,6 +381,7 @@ static void move_size(WND *w, WPARAM command, BOOLEAN pressed, POINT press)
                       SWP_NOZORDER | SWP_NOACTIVATE);
         }
     }
+    t->MovingOrSizing = FALSE;
     w = window_of(&ms);
     if (w) {
         MsgSend(w, WM_EXITSIZEMOVE, 0, 0);
