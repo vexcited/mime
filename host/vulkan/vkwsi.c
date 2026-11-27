@@ -2912,11 +2912,27 @@ static bool run_once(MvkConnection *c, Presenter *p, void (*fill)(MvkConnection 
     fill(c, p, cmd);
     c->fn.vkEndCommandBuffer(cmd);
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &cmd, 0, nullptr};
-    bool ok = submit_locked(c, p->last_queue, &submit, fence) == VK_SUCCESS &&
-              c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    /*
+     * a queue held by a wait of the program, or a gpu that does not finish, makes the copy fail after the time windows
+     * gives a gpu before it resets it: the caller would hold everyone who waits for it meanwhile.
+     */
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += 2;
+    if (pthread_mutex_timedlock(&c->queue_lock, &until)) {
+        c->fn.vkDestroyFence(c->device, fence, nullptr);
+        c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
+        return false;
+    }
+    bool ok = c->fn.vkQueueSubmit(p->last_queue, 1, &submit, fence) == VK_SUCCESS;
+    pthread_mutex_unlock(&c->queue_lock);
+    VkResult waited = ok ? c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, 2000000000ull) : VK_SUCCESS;
+    /* the command buffer and the fence of a copy still running are left to the gpu. */
+    if (waited == VK_TIMEOUT)
+        return false;
     c->fn.vkDestroyFence(c->device, fence, nullptr);
     c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
-    return ok;
+    return ok && waited == VK_SUCCESS;
 }
 
 static void copy_shown(MvkConnection *c, Presenter *p, VkCommandBuffer cmd)
