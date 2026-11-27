@@ -37,6 +37,7 @@ void NtUserDisableProcessWindowsGhosting(void);
 void NtUserReplyMessage(void);
 void NtUserSetMessageExtraInfo(void);
 void NtUserRealChildWindowFromPoint(void);
+void NtUserSetProcessMousewheelRoutingMode(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2852,5 +2853,10 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserRealChildWindowFromPoint & 0xFFF] = (SERVICE){(void *)NtUserRealChildWindowFromPoint, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtUserRealChildWindowFromPoint has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetProcessMousewheelRoutingMode
+    table[MIME_SVC_NtUserSetProcessMousewheelRoutingMode & 0xFFF] = (SERVICE){(void *)NtUserSetProcessMousewheelRoutingMode, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserSetProcessMousewheelRoutingMode has no syscall number"
 #endif
 }

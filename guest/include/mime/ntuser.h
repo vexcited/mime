@@ -1017,6 +1017,7 @@ W32KAPI int NTAPI NtUserShowCursor(BOOL show);
 W32KAPI void NTAPI NtUserDisableProcessWindowsGhosting(void);
 W32KAPI BOOL NTAPI NtUserReplyMessage(LRESULT result);
 W32KAPI LPARAM NTAPI NtUserSetMessageExtraInfo(LPARAM info);
+W32KAPI BOOL NTAPI NtUserSetProcessMousewheelRoutingMode(int mode);
 W32KAPI DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask,
                                                       DWORD flags);
 W32KAPI BOOL NTAPI NtUserGetClipCursor(LPRECT rect);

@@ -591,6 +591,7 @@ typedef struct W32PROCESS {
     BOOLEAN DpiGdiScaled; /* chosen as DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED, which works as unaware. */
     BOOLEAN Wow;        /* a 32-bit program, its structures are converted at its boundary. */
     DWORD LpkFlags;     /* NtUserRegisterLPK. */
+    UCHAR WheelRouting; /* NtUserSetProcessMousewheelRoutingMode: 0 for the system's, 1 the focus, 2 the pointer. */
     HINSTANCE ClientModule; /* user32 as the process loaded it, known from the first control class it registers. */
     DWORD StartupFlags; /* NtUserModifyUserStartupInfoFlags. */
     HICON ExeIcon;      /* the first icon of the program's file, for a window that has none. */
@@ -1261,6 +1262,7 @@ BOOLEAN HotkeyInput(const MimeInputEvent *ev);
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait);
 void MsgProcessSent(W32THREAD *t);
 ULONG MsgInSendFlags(W32THREAD *t);
+UINT MetricsWheelRouting(void);
 BOOLEAN MsgReply(W32THREAD *t, LRESULT result);
 BOOLEAN MsgDirectProc(WND *w, UINT msg, BOOLEAN send, WNDPROC *proc, BOOLEAN *ansi);
 void MsgPaintDispatched(WND *w);

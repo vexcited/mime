@@ -500,6 +500,37 @@ static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG
  * ones TranslateMessage makes on windows.
  */
 #define CHAR_OF_KEY 16 /* a flag of a character event, kept inside the guest. */
+#define WHEEL_TO_FOCUS 32 /* a flag of a wheel event that goes to the focus window, kept inside the guest. */
+
+/*
+ * where a turn of the wheel goes, as ComputeAndDeliverMouseWheel and ProcessMouseWheel of win32kbase 26300 decide
+ * and as measured on windows. the foreground process that asked for the focus gets every turn in its focus window.
+ * else the window under the pointer gets it when the system routes by the pointer, which is mode 2, or when the
+ * foreground process asked for that: its own windows only where the system routes by the focus. modes 0 and 1 give
+ * the turn to the focus window of the foreground, mode 1 keeping the pointer for store programs alone. a window
+ * under the pointer whose process asked for the focus only takes the turn when it is the focus window of the
+ * foreground.
+ */
+enum { WHEEL_POINTER, WHEEL_FOCUS, WHEEL_DROPPED };
+
+static ULONG wheel_route(const MimeInputEvent *ev)
+{
+    WND *under = WndLookup((HWND)(ULONG_PTR)ev->window_id);
+    W32THREAD *fg = InputForeground ? InputForeground->Thread : nullptr;
+    UCHAR asked = fg && fg->Process ? fg->Process->WheelRouting : 0;
+    UINT system = MetricsWheelRouting();
+    if (asked == 1 || (asked != 2 && system != 2))
+        return fg ? WHEEL_FOCUS : WHEEL_DROPPED;
+    if (!under || !under->Thread)
+        return fg ? WHEEL_FOCUS : WHEEL_DROPPED;
+    W32PROCESS *there = under->Thread->Process;
+    /* it is not the foreground process, which was asked above, so the focus window is not one of its own. */
+    if (there && there->WheelRouting == 1)
+        return WHEEL_DROPPED;
+    if (fg && there != fg->Process && system == 0)
+        return WHEEL_FOCUS;
+    return WHEEL_POINTER;
+}
 static BOOLEAN g_chars_follow_key;
 static BOOLEAN g_key_dropped;
 static ULONG g_key_scancode;
@@ -643,6 +674,15 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         InputCursorPos = (POINT){ev->x, ev->y};
         t = mouse_target_thread(ev);
         mouse_goes_to(t);
+        if (ev->type == MIME_INPUT_MOUSE_WHEEL && !(t && W32InputOwner(t)->Capture)) {
+            ULONG route = wheel_route(ev);
+            if (route == WHEEL_DROPPED)
+                return;
+            if (route == WHEEL_FOCUS) {
+                t = InputForeground->Thread;
+                copy.flags |= WHEEL_TO_FOCUS;
+            }
+        }
         break;
     case MIME_INPUT_KEY_DOWN:
     case MIME_INPUT_KEY_UP:
@@ -1101,7 +1141,17 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     WND *w;
     LONG hit;
     WND *capture = WndLookup(t->Capture);
-    if (capture) {
+    if (ev->type == MIME_INPUT_MOUSE_WHEEL && (ev->flags & WHEEL_TO_FOCUS)) {
+        /* PostInputMessage with no window: the focus window takes it, and nobody where there is none. */
+        w = WndLookup(W32InputOwner(t)->Focus);
+        if (!w) {
+            *consumed = TRUE;
+            return FALSE;
+        }
+        capture = nullptr;
+        hit = HTCLIENT;
+        DpiPixelConvert(&pt, DPI_PHYSICAL, w->Awareness);
+    } else if (capture) {
         w = capture;
         hit = t->CaptureNc ? (LONG)t->CaptureNc : HTCLIENT;
         DpiPixelConvert(&pt, DPI_PHYSICAL, capture->Awareness);
@@ -1166,7 +1216,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
 
     if (msg == WM_MOUSEWHEEL || msg == WM_MOUSEHWHEEL) {
         WND *focus = WndLookup(t->Focus);
-        if (focus && !capture && !RectContains(&w->WindowRect, pt.x, pt.y))
+        if (focus && !capture && !(ev->flags & WHEEL_TO_FOCUS) && !RectContains(&w->WindowRect, pt.x, pt.y))
             w = focus;
         wparam = MAKEWPARAM((WORD)qm->Msg.wParam, (SHORT)ev->wheel);
         lparam = MAKELPARAM(pt.x, pt.y);

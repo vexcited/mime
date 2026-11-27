@@ -411,6 +411,12 @@ static_assert(RTL_NUMBER_OF(g_preferences) == (PREFERENCE_LAST + 1 - PREFERENCE_
 #define g_smoothing_contrast PREFERENCE(0x200C)
 #define g_smoothing_orientation PREFERENCE(0x2012)
 
+/* SPI_GETMOUSEWHEELROUTING: 2 gives the wheel to the window under the pointer, 0 and 1 to the focus. */
+UINT MetricsWheelRouting(void)
+{
+    return PREFERENCE(0x201C);
+}
+
 BOOLEAN MetricsFontSmoothing(UINT *type, UINT *contrast, UINT *orientation)
 {
     *type = g_smoothing_type;

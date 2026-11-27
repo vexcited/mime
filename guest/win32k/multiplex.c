@@ -362,6 +362,20 @@ void NTAPI NtUserDisableProcessWindowsGhosting(void)
 {
 }
 
+/* SetProcessMousewheelRoutingMode of win32kbase 26300: 0 follows the system, 1 asks for the focus, 2 for the pointer. */
+BOOL NTAPI NtUserSetProcessMousewheelRoutingMode(int mode)
+{
+    UserEnter();
+    W32PROCESS *p = W32GetProcess();
+    BOOL ok = p && mode >= 0 && mode <= 2;
+    if (ok)
+        p->WheelRouting = (UCHAR)mode;
+    else
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+    UserLeave();
+    return ok;
+}
+
 BOOL NTAPI NtUserReplyMessage(LRESULT result)
 {
     UserEnter();
