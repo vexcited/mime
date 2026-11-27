@@ -233,7 +233,7 @@ typedef struct _KPROCESS {
 #define KI_IDLE_HALTED 2
 
 /* the kinds of service KiFastSystemService does without the kernel lock. */
-#define KI_FAST_SERVICE_KINDS 12
+#define KI_FAST_SERVICE_KINDS 13
 
 typedef struct _KPRCB {
     ULONG Number;
@@ -1559,6 +1559,7 @@ typedef struct _EPROCESS {
 
 extern LIST_ENTRY PsActiveProcessHead;
 void ExReleaseTimerResolution(PEPROCESS process);
+NTSTATUS ExSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current);
 /* ps/job.c: what a process's jobs impose on it. */
 ULONG PspJobForcedErrorMode(PEPROCESS process);
 PVOID *PspJobAtomTableSlot(PEPROCESS process);

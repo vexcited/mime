@@ -234,8 +234,9 @@ enum {
     FAST_UNPARK,
     FAST_TEST_ALERT,
     FAST_QUERY,
+    FAST_RESOLUTION,
 };
-static_assert(FAST_QUERY + 1 == KI_FAST_SERVICE_KINDS);
+static_assert(FAST_RESOLUTION + 1 == KI_FAST_SERVICE_KINDS);
 
 /* a wait on more objects than this is left to the usual way: the wait blocks are on the stack. */
 #define FAST_WAIT_OBJECTS 8
@@ -388,6 +389,9 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     case MIME_SVC_NtQueryVirtualMemory:
         kind = FAST_QUERY;
         break;
+    case MIME_SVC_NtSetTimerResolution:
+        kind = FAST_RESOLUTION;
+        break;
     default:
         return 0;
     }
@@ -515,6 +519,11 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         if (!MmFastQueryVirtual(held ? objects[0] : nullptr, (PVOID)a1, (PMEMORY_BASIC_INFORMATION)region))
             return held ? fast_decline(thread, frame, objects, held) : 0;
         break;
+    case FAST_RESOLUTION:
+        /* the current resolution is stored, so a pointer that cannot take it is the usual way's. */
+        if (!fast_probe(a2, sizeof(ULONG)))
+            return 0;
+        break;
     default: {
         /* the suspension of an emulated thread, a suspension, an apc and an alert are the usual way's. */
         if (thread->UserSuspendGate)
@@ -592,6 +601,13 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         else
             status = STATUS_ACCESS_DENIED;
         break;
+    case FAST_RESOLUTION: {
+        ULONG current;
+        status = ExSetTimerResolution((ULONG)a0, (BOOLEAN)a1, &current);
+        if (NT_SUCCESS(status))
+            outputs[output_count++] = (FAST_OUTPUT){(PVOID)a2, current, sizeof(ULONG)};
+        break;
+    }
     case FAST_QUERY:
         for (; output_count < sizeof(region) / sizeof(ULONG64); output_count++)
             outputs[output_count] = (FAST_OUTPUT){(PVOID)(a3 + output_count * sizeof(ULONG64)), region[output_count], sizeof(ULONG64)};
@@ -1080,9 +1096,9 @@ void KiDumpServiceCalls(void)
                 "took it to end, %llu answered by win32k", fast[0], fast[1], fast[2], fast_locked, fast_win32);
     KiLogPrintf("more services without the kernel lock: %llu event resets, %llu delays, %llu waits on several, %llu "
                 "packets removed, %llu packets posted, %llu waits for an alert, %llu alerts, %llu alert tests, %llu memory "
-                "queries",
+                "queries, %llu timer resolutions",
                 fast[FAST_RESET], fast[FAST_DELAY], fast[FAST_WAIT_MANY], fast[FAST_REMOVE], fast[FAST_POST],
-                fast[FAST_PARK], fast[FAST_UNPARK], fast[FAST_TEST_ALERT], fast[FAST_QUERY]);
+                fast[FAST_PARK], fast[FAST_UNPARK], fast[FAST_TEST_ALERT], fast[FAST_QUERY], fast[FAST_RESOLUTION]);
     KiLogPrintf("interrupts in user mode without the kernel lock: %llu, %llu more took it to end", fast_interrupts,
                 fast_interrupts_locked);
     KiDumpForeignStats();

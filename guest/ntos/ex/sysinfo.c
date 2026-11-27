@@ -103,7 +103,11 @@ NTSTATUS NTAPI NtQueryTimerResolution(PULONG maximum, PULONG minimum, PULONG cur
     return KiCopyToUser(current, &cur, sizeof(cur));
 }
 
-NTSTATUS NTAPI NtSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current)
+/*
+ * the request of the calling process, and the resolution of the machine it makes. it needs only the dispatcher lock,
+ * so a game that asks for it every frame does it without the kernel lock too, see KiFastSystemService.
+ */
+NTSTATUS ExSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current)
 {
     PEPROCESS process = PsCurrentProcess();
     if (set) {
@@ -117,8 +121,15 @@ NTSTATUS NTAPI NtSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current)
     } else {
         process->TimerResolution = 0;
     }
-    ULONG cur = current_resolution();
-    return KiCopyToUser(current, &cur, sizeof(cur));
+    *current = current_resolution();
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI NtSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current)
+{
+    ULONG cur;
+    NTSTATUS status = ExSetTimerResolution(desired, set, &cur);
+    return NT_SUCCESS(status) ? KiCopyToUser(current, &cur, sizeof(cur)) : status;
 }
 
 ULONG NTAPI NtGetTickCount(void)
