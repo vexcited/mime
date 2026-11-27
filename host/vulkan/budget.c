@@ -264,20 +264,6 @@ bool mvk_budget_fits(MvkConnection *c, VkDeviceSize size)
     return fits;
 }
 
-/*
- * memory of what the desktop shows of a window: the images of a swapchain and the presenter's own. it is not held to
- * the margin, which is kept for the desktop itself: a game that fills its budget and makes its swapchain again would
- * have the images refused and its window would stay black while it retries.
- */
-VkResult mvk_budget_allocate_desktop(MvkConnection *c, const VkMemoryAllocateInfo *info, VkDeviceMemory *memory)
-{
-    pthread_mutex_lock(&g_lock);
-    BudgetDevice *d = c->device ? find_device(c->device) : nullptr;
-    PFN_vkAllocateMemory allocate = d ? d->allocate : c->fn.vkAllocateMemory;
-    pthread_mutex_unlock(&g_lock);
-    return allocate(c->device, info, nullptr, memory);
-}
-
 /* the guest sees budgets with the desktop's margin taken out, which is what allocations are held to. */
 static void lower_budgets(VkPhysicalDeviceMemoryProperties2 *props)
 {

@@ -149,7 +149,6 @@ void mvk_budget_hook(MvkConnection *c);
 void mvk_budget_forget(VkDevice device);
 /* whether size bytes of device local memory fit now, for what the driver allocates itself. */
 bool mvk_budget_fits(MvkConnection *c, VkDeviceSize size);
-VkResult mvk_budget_allocate_desktop(MvkConnection *c, const VkMemoryAllocateInfo *info, VkDeviceMemory *memory);
 
 /* vkwsi.c: surfaces and swapchains. */
 extern const char *const mvk_wsi_instance_extensions[];
