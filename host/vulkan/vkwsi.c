@@ -546,8 +546,7 @@ void mvk_wsi_create_swapchain(MvkCall *call)
             if (type < 0)
                 type = memory_type(c, req.memoryTypeBits, 0);
             VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
-            result = type < 0 ? VK_ERROR_OUT_OF_DEVICE_MEMORY
-                              : c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &s->memory[i]);
+            result = type < 0 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : mvk_budget_allocate_desktop(c, &alloc, &s->memory[i]);
             if (result == VK_SUCCESS)
                 result = c->fn.vkBindImageMemory(c->device, s->images[i], s->memory[i], 0);
             s->released[i] = new_semaphore(c);
@@ -1151,7 +1150,7 @@ static bool make_gdi(MvkConnection *c, Presenter *p, uint32_t width, uint32_t he
     c->fn.vkGetImageMemoryRequirements(c->device, p->gdi, &req);
     int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
-    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->gdi_memory) != VK_SUCCESS ||
+    if (type < 0 || mvk_budget_allocate_desktop(c, &alloc, &p->gdi_memory) != VK_SUCCESS ||
         c->fn.vkBindImageMemory(c->device, p->gdi, p->gdi_memory, 0) != VK_SUCCESS)
         return false;
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, (VkDeviceSize)width * height * 4,
@@ -1315,7 +1314,7 @@ static bool gamma_image(MvkConnection *c, VkImageCreateInfo *info, VkImage *imag
     c->fn.vkGetImageMemoryRequirements(c->device, *image, &req);
     int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
-    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, memory) != VK_SUCCESS ||
+    if (type < 0 || mvk_budget_allocate_desktop(c, &alloc, memory) != VK_SUCCESS ||
         c->fn.vkBindImageMemory(c->device, *image, *memory, 0) != VK_SUCCESS)
         return false;
     VkImageViewCreateInfo vi = {
