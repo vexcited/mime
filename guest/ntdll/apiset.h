@@ -367,6 +367,7 @@
     {L"ext-ms-win-com-sta-l1-1", L"ole32.dll", 0},
     {L"ext-ms-win-core-iuri-l1-1", L"urlmon.dll", 0},
     {L"ext-ms-win-core-marshal-l2-1", L"ole32.dll", 0},
+    {L"ext-ms-win-core-pkeyhelper-l1-1", L"pkeyhelper.dll", 0},
     {L"ext-ms-win-dwmapi-ext-l1-1", L"dwmapi.dll", 2},
     {L"ext-ms-win-dwmapidxgi-ext-l1-1", L"dwmapi.dll", 1},
     {L"ext-ms-win-dx-d3d9-l1-1", L"d3d9.dll", 0},
