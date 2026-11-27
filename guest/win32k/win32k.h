@@ -608,6 +608,7 @@ typedef struct W32PROCESS {
     HANDLE WinStaHandle;
     ULONG_PTR DndHandler;        /* the process's code for drops, dnd.c. */
     BOOLEAN InputIdle;           /* WaitForInputIdle succeeds immediately after the first input wait. */
+    BOOLEAN Threaded;            /* its first gui thread came, cursor.c. */
     PVOID SharedBase, HandleBase; /* its views of the server information and of the handle table, usershared.c. */
     PVOID GdiBase;                /* its view of the table of gdi, gdi/shared.c. */
     PUCHAR DcAttrChunk;           /* the memory of the program its device contexts keep their attributes in, gdi/dc.c. */
@@ -1521,6 +1522,17 @@ BOOL CursorOnScreen(HCURSOR *cursor);
 void CursorAttached(W32THREAD *from, W32THREAD *to);
 void CursorDetached(W32THREAD *gone, W32THREAD *asked);
 void CursorHeir(W32THREAD *from, W32THREAD *heir);
+extern volatile LONG CursorStarting;
+void CursorStartProcess(PEPROCESS process, BOOLEAN feedback);
+void CursorStartThread(PEPROCESS process);
+void CursorStartShown(PEPROCESS process);
+void CursorStartActivated(PEPROCESS process, BOOLEAN caption);
+void CursorStartRead(PEPROCESS process);
+void CursorStartGone(PEPROCESS process);
+void CursorStartTick(void);
+/* a thread of the current process reads its messages: a start it shows ends. takes the lock, which must not be held. */
+void CursorStartReading(void);
+void InputWakeAt(LONG64 due);
 void InputCursorTarget(W32THREAD *t);
 HWND InputTopAt(POINT physical);
 void InputMouseRefresh(void);

@@ -1966,6 +1966,162 @@ static void queue_set_cursor(W32THREAD *q, HCURSOR cursor)
         release(old);
 }
 
+/*
+ * the processes that start, the list of zzzCalcStartCursorHide of win32kfull 26300. CreateProcess asks for the feedback
+ * of the start, which basesrv hands to UserNotifyProcessCreate: the screen then shows the starting cursor in place of
+ * the arrow for 2 s, for 5 s from the first gui thread of the process and from a window it shows before it activates
+ * one. the process reading its messages, or ending, ends it. measured on windows, where a daemon timer of a second ends
+ * it after its time and mime ends it at the time.
+ */
+#define STARTING_SLOTS 16
+
+static struct STARTING {
+    PEPROCESS Process; /* referenced. */
+    LONG64 Due;        /* the tick in ms the start shows until, 0 once it ended. */
+    BOOLEAN Shows;     /* a window shown starts it again, until the process activates one: the AppStarting flag. */
+} g_starting[STARTING_SLOTS];
+static LONG64 g_starting_due;
+volatile LONG CursorStarting; /* how many processes show the starting cursor, read without the lock. */
+
+static LONG64 tick(void)
+{
+    return (LONG64)(KeQueryInterruptTime() / 10000);
+}
+
+static struct STARTING *starting_of(PEPROCESS process)
+{
+    for (ULONG i = 0; i < STARTING_SLOTS; i++)
+        if (g_starting[i].Process == process)
+            return &g_starting[i];
+    return nullptr;
+}
+
+/* the time the screen shows the starting cursor until, from the processes whose time has not passed. */
+static void starting_changed(void)
+{
+    LONG64 now = tick(), due = 0;
+    LONG live = 0;
+    for (ULONG i = 0; i < STARTING_SLOTS; i++) {
+        struct STARTING *s = &g_starting[i];
+        if (s->Due && s->Due <= now)
+            s->Due = 0;
+        if (s->Due) {
+            live++;
+            if (s->Due > due)
+                due = s->Due;
+        }
+    }
+    CursorStarting = live;
+    if (due != g_starting_due) {
+        g_starting_due = due;
+        InputWakeAt(due);
+        CursorUpdateImage();
+    }
+}
+
+static void starting_for(struct STARTING *s, LONG64 ms)
+{
+    s->Due = tick() + ms;
+    starting_changed();
+}
+
+/* UserNotifyProcessCreate, before the process runs: with the feedback on it starts for 2 s, with it off never. */
+void CursorStartProcess(PEPROCESS process, BOOLEAN feedback)
+{
+    struct STARTING *s = starting_of(process);
+    if (!feedback) {
+        if (s)
+            CursorStartGone(process);
+        return;
+    }
+    for (ULONG i = 0; i < STARTING_SLOTS && !s; i++)
+        if (!g_starting[i].Process)
+            s = &g_starting[i];
+    /* with every slot taken, one whose start ended and only waits for a window gives way. */
+    for (ULONG i = 0; i < STARTING_SLOTS && !s; i++)
+        if (!g_starting[i].Due) {
+            s = &g_starting[i];
+            ObDereferenceObject(s->Process);
+            s->Process = nullptr;
+        }
+    if (!s)
+        return;
+    if (!s->Process) {
+        ObReferenceObject(process);
+        s->Process = process;
+    }
+    s->Shows = TRUE;
+    starting_for(s, 2000);
+}
+
+/* the first gui thread of the process, xxxCreateThreadInfo. */
+void CursorStartThread(PEPROCESS process)
+{
+    struct STARTING *s = starting_of(process);
+    if (s)
+        starting_for(s, 5000);
+}
+
+/* a window of the process becomes visible, zzzChangeStates. */
+void CursorStartShown(PEPROCESS process)
+{
+    struct STARTING *s = starting_of(process);
+    if (s && s->Shows)
+        starting_for(s, 5000);
+}
+
+/*
+ * the process activates a window: a window it shows no longer starts it again, as OnFirstActivationAttempted of
+ * CForegroundLaunch clears its flag. a window with a caption also ends the start, measured on windows with overlapped,
+ * tool and popup windows, from a path not found in win32kfull. a popup without one, even an app window, does not.
+ */
+void CursorStartActivated(PEPROCESS process, BOOLEAN caption)
+{
+    struct STARTING *s = starting_of(process);
+    if (!s)
+        return;
+    s->Shows = FALSE;
+    if (caption && s->Due) {
+        s->Due = 0;
+        starting_changed();
+    }
+}
+
+/* a thread of the process reads its messages or waits for them, xxxRealInternalGetMessage and xxxRealSleepThread. */
+void CursorStartRead(PEPROCESS process)
+{
+    struct STARTING *s = starting_of(process);
+    if (s && s->Due) {
+        s->Due = 0;
+        starting_changed();
+    }
+}
+
+void CursorStartGone(PEPROCESS process)
+{
+    struct STARTING *s = starting_of(process);
+    if (!s)
+        return;
+    ObDereferenceObject(s->Process);
+    *s = (struct STARTING){};
+    starting_changed();
+}
+
+void CursorStartReading(void)
+{
+    if (!CursorStarting)
+        return;
+    UserEnter();
+    CursorStartRead(PsGetCurrentProcess());
+    UserLeave();
+}
+
+/* the time of the start passed, from the input thread. */
+void CursorStartTick(void)
+{
+    starting_changed();
+}
+
 /* the count of ShowCursor of a queue: the sum of the counts of its threads. */
 static LONG queue_level(W32THREAD *q)
 {
@@ -1998,7 +2154,8 @@ static void show(HCURSOR cursor)
 /*
  * zzzUpdateCursorImage of win32kfull 26300: the screen has the cursor of the queue the mouse goes to, and none while
  * the count of that queue is below zero. the foreground queue hides it whatever the mouse is over when its program
- * registered the mouse for raw input with RIDEV_CAPTUREMOUSE. with no queue yet nothing changes.
+ * registered the mouse for raw input with RIDEV_CAPTUREMOUSE. with no queue yet nothing changes. while a process
+ * starts, the arrow and the starting cursor are shown as the starting cursor.
  */
 void CursorUpdateImage(void)
 {
@@ -2010,6 +2167,9 @@ void CursorUpdateImage(void)
         return;
     else if (queue_level(InputCursorQueue) >= 0)
         cursor = queue_cursor(InputCursorQueue);
+    HCURSOR starting = CursorSystem(32650 /* IDC_APPSTARTING */);
+    if (g_starting_due && cursor && (cursor == CursorSystem(32512 /* IDC_ARROW */) || cursor == starting))
+        cursor = starting;
     show(cursor);
 }
 

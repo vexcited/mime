@@ -73,6 +73,12 @@ NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize)
     return g_win32.ProcessCallout ? g_win32.ProcessCallout(process, initialize) : STATUS_SUCCESS;
 }
 
+void PsWin32ProcessStarting(PEPROCESS process, BOOLEAN feedback)
+{
+    if (g_win32.ProcessStarting)
+        g_win32.ProcessStarting(process, feedback);
+}
+
 void PsWin32TimeChange(void)
 {
     if (g_win32.TimeChange)

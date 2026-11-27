@@ -384,6 +384,10 @@ W32THREAD *W32GetThread(void)
     t->CursorShowCount = 0;
     t->LastRead = W32TickCount();
     InsertTailList(&g_threads, &t->Links);
+    if (!p->Threaded) {
+        p->Threaded = TRUE;
+        CursorStartThread(p->Process);
+    }
     PsSetThreadWin32Thread(PsGetCurrentThread(), t, nullptr);
     DeskAttachThread(p);
     return t;
@@ -598,6 +602,14 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     return STATUS_SUCCESS;
 }
 
+/* UserNotifyProcessCreate of winsrv, which basesrv calls for a process CreateProcess made, before it runs. */
+static void NTAPI process_starting(PEPROCESS process, BOOLEAN feedback)
+{
+    UserEnter();
+    CursorStartProcess(process, feedback);
+    UserLeave();
+}
+
 static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
 {
     if (initialize) {
@@ -610,6 +622,7 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
     W32PROCESS *p = PsGetProcessWin32Process(process);
     UserEnter();
     WndLaunchPolicyDone(process, TRUE);
+    CursorStartGone(process);
     GdiReleaseProcessObjects(PsGetProcessId(process));
     FontReleaseProcess(PsGetProcessId(process));
     DisplayProcessExited(PsGetProcessId(process));
@@ -853,7 +866,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
         return STATUS_UNSUCCESSFUL;
     }
     static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange, W32FastService,
-                                      service_enter};
+                                      service_enter, process_starting};
     PsEstablishWin32Callouts(&callouts);
     UserSharedInitialize();
 

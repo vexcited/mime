@@ -884,14 +884,40 @@ static void guest_time(MimeInputEvent *ev)
     ev->time_ms = (uint64_t)at;
 }
 
+/* the input thread also ends the starting cursor at its time, cursor.c. */
+static KEVENT g_input_wake;
+static volatile LONG64 g_input_due;
+
+void InputWakeAt(LONG64 due)
+{
+    g_input_due = due;
+    KeSetEvent(&g_input_wake, 0, FALSE);
+}
+
 static void NTAPI input_thread(PVOID context)
 {
     InputThreadId = PsGetCurrentThreadId();
     InputProcessId = PsGetCurrentProcessId();
     PKEVENT ready = HalMimeGetInputEvent();
     ULONG64 pa = (ULONG64)MmGetPhysicalAddress(g_events).QuadPart;
+    PVOID objects[] = {ready, &g_input_wake};
     for (;;) {
-        KeWaitForSingleObject(ready, Executive, KernelMode, FALSE, nullptr);
+        LONG64 due = g_input_due;
+        LARGE_INTEGER timeout;
+        if (due) {
+            LONG64 left = due - (LONG64)(KeQueryInterruptTime() / 10000);
+            timeout.QuadPart = -(left > 0 ? left : 0) * 10000;
+        }
+        NTSTATUS status = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE,
+                                                   due ? &timeout : nullptr, nullptr);
+        if (status == STATUS_TIMEOUT) {
+            UserEnter();
+            CursorStartTick();
+            UserLeave();
+            continue;
+        }
+        if (status != STATUS_WAIT_0)
+            continue;
         for (;;) {
             ULONG64 count = 0;
             if (HalMimeHypercall(MIME_HC_INPUT_RECV, pa, INPUT_BATCH, 0, 0, 0, 0, &count) != MIME_HC_STATUS_OK ||
@@ -919,6 +945,7 @@ void InputInitialize(void)
     }
     const MimeBootInfo *boot = HalMimeGetBootInfo();
     InputCursorPos = (POINT){(LONG)boot->display.width / 2, (LONG)boot->display.height / 2};
+    KeInitializeEvent(&g_input_wake, SynchronizationEvent, FALSE);
     HANDLE thread;
     NTSTATUS status = PsCreateSystemThread(&thread, 0, nullptr, nullptr, nullptr, input_thread, nullptr);
     if (NT_SUCCESS(status))

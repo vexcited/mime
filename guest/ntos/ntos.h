@@ -637,6 +637,7 @@ BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame);
 NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, ULONG count);
 void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);
 NTSTATUS PsWin32ProcessCallout(PEPROCESS process, BOOLEAN initialize);
+void PsWin32ProcessStarting(PEPROCESS process, BOOLEAN feedback);
 NTSTATUS PsWin32ThreadCallout(PETHREAD thread, BOOLEAN initialize);
 ULONG PsWin32ShutdownProcess(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
 /* ps/shutdown.c. */

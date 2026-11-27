@@ -62,6 +62,9 @@ typedef struct CSR_PORT {
 /* BaseSrvCreateProcess2 and where its message holds the new process and the answers of InternalSxsCreateProcess. */
 #define CSR_BASE_CREATE_PROCESS 0x1001d
 #define CSR_CREATE_PROCESS_ID 0x50
+/* the handles of the new process and thread, as arguments of the message. */
+#define CSR_CREATE_PROCESS_PROCESS 1
+#define CSR_CREATE_PROCESS_THREAD 2
 #define CSR_CREATE_PROCESS_RUN_LEVEL 0x110
 #define CSR_CREATE_PROCESS_SUPPORTED_OS 0x11c
 #define CSR_CREATE_PROCESS_MAX_VERSION 0x130
@@ -300,6 +303,13 @@ static NTSTATUS serve(const CSR_PORT *port, CSR_MESSAGE *message)
             system[0] = created->SxsSupportedOsMajor;
             system[1] = created->SxsSupportedOsMinor;
             *(ULONG64 *)((PUCHAR)message + CSR_CREATE_PROCESS_MAX_VERSION) = created->SxsMaxVersionTested;
+            /*
+             * the part basesrv hands to UserNotifyProcessCreate of winsrv: CreateProcess asks for the feedback of the
+             * start in bit 0 of the process handle, from the startup flags or a program of the windows subsystem
+             * starting one. a process of another session, bit 0 of the thread handle, is only made known.
+             */
+            if (!(message->Arguments[CSR_CREATE_PROCESS_THREAD] & 1))
+                PsWin32ProcessStarting(created, (message->Arguments[CSR_CREATE_PROCESS_PROCESS] & 1) != 0);
             ObDereferenceObject(created);
         }
         return STATUS_SUCCESS;

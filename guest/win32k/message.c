@@ -1002,6 +1002,7 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
+    CursorStartReading();
     UserEnterRead();
     W32THREAD *t = W32GetThread();
     MSG m;
@@ -1031,6 +1032,7 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
         W32SetLastError(ERROR_INVALID_FLAGS);
         return FALSE;
     }
+    CursorStartReading();
     UserEnterRead();
     W32THREAD *t = W32GetThread();
     MSG m;
@@ -1054,6 +1056,7 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
 
 BOOL NTAPI NtUserWaitMessage(void)
 {
+    CursorStartReading();
     UserEnterRead();
     W32THREAD *t = W32GetThread();
     if (t) {
@@ -1163,6 +1166,7 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         return WAIT_FAILED_VALUE;
     }
     resolve_standard_handles(handles, count);
+    CursorStartReading();
     UserEnterRead();
     W32THREAD *t = W32GetThread();
     LONG64 deadline = timeout == WAIT_FOREVER ? -1 : (LONG64)now_ms() + timeout;

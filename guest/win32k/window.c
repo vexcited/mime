@@ -1170,6 +1170,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     else if (pos.flags & SWP_HIDEWINDOW)
         w->Style &= ~WS_VISIBLE;
     BOOLEAN visible = WndIsVisible(w);
+    if (visible && !was_visible && w->Thread)
+        CursorStartShown(w->Thread->Process->Process);
 
     if (WndIsTopLevel(w)) {
         if ((pos.flags & SWP_HIDEWINDOW) && w->Surface)
@@ -2121,6 +2123,8 @@ void WndActivate(WND *w, BOOLEAN click)
     if (!w || w == g_desktop || (w->Flags & WNDF_DESTROYING))
         return;
     WND *old = InputForeground;
+    if (w->Thread)
+        CursorStartActivated(w->Thread->Process->Process, (w->Style & WS_CAPTION) == WS_CAPTION);
     if (old == w) {
         if (w->Thread)
             w->Thread->Active = WndHandle(w);

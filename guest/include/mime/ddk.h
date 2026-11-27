@@ -1093,6 +1093,8 @@ typedef struct _WIN32_CALLOUTS {
     BOOLEAN(NTAPI *FastService)(ULONG number, ULONG64 argument, ULONG64 *result);
     /* runs what gdi32 left in GdiTebBatch, before any service of win32k, like KeGdiFlushUserBatch */
     void(NTAPI *FlushUserBatch)(void);
+    /* a process CreateProcess made, before it runs, and whether it asked for the feedback of its start */
+    void(NTAPI *ProcessStarting)(PEPROCESS process, BOOLEAN feedback);
 } WIN32_CALLOUTS;
 NTKERNELAPI void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts);
 
