@@ -1059,7 +1059,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
-        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 24));
+        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 25));
         uint32_t n = 0;
         bool video = false;
         for (uint32_t i = 0; i < info.enabledExtensionCount; i++) {
@@ -1175,10 +1175,9 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
                 info.pNext = &pageable;
             }
         }
+        bool timeline_extension = host_has(list, count, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
         free(list);
         info.enabledLayerCount = 0;
-        info.enabledExtensionCount = n;
-        info.ppEnabledExtensionNames = names;
         /* timeline semaphores hand presents to the presenting thread: on whenever the GPU has them. */
         VkPhysicalDeviceTimelineSemaphoreFeatures timeline = {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
@@ -1198,6 +1197,16 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             timeline.pNext = (void *)info.pNext;
             info.pNext = &timeline;
         }
+        /* an instance older than vulkan 1.2 has their commands by the extension's names alone. */
+        if (timeline.timelineSemaphore && timeline_extension) {
+            bool has = false;
+            for (uint32_t i = 0; i < n; i++)
+                has |= !strcmp(names[i], VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+            if (!has)
+                names[n++] = VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME;
+        }
+        info.enabledExtensionCount = n;
+        info.ppEnabledExtensionNames = names;
         if (video) {
             vp9_features.pNext = &maintenance_features;
             VkPhysicalDeviceFeatures2 supported = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &vp9_features};
@@ -1218,9 +1227,10 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
         result = c->fn.vkCreateDevice(physical, &info, nullptr, &c->device);
         if (result == VK_SUCCESS) {
             c->physical_device = physical;
-            c->timelines = timeline.timelineSemaphore;
             PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
             mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, c->device);
+            c->timelines = timeline.timelineSemaphore && c->fn.vkWaitSemaphores && c->fn.vkSignalSemaphore &&
+                           c->fn.vkGetSemaphoreCounterValue;
             mvk_budget_hook(c);
             if (c->host_import && c->fn.vkCreateBuffer && import_device_add(c->device, c->fn.vkCreateBuffer))
                 c->fn.vkCreateBuffer = create_importable_buffer;
