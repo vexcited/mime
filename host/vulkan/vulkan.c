@@ -750,6 +750,24 @@ static void create_instance(MvkCall *call)
     mvk_reply_end(call);
 }
 
+/*
+ * whether devices take video memory the driver may page out, as WDDM does. without it NVIDIA moves system memory the
+ * cpu does not map into video memory for programs its profiles name by engine, until the gpu is full to the last page
+ * and no process can make a device. a device of such a program without pageable memory turns that on for the whole
+ * process, so every device takes it. the budget places that memory within its margin instead.
+ */
+static bool has_pageable(MvkConnection *c, VkPhysicalDevice physical, const VkExtensionProperties *list, uint32_t count)
+{
+    if (!host_has(list, count, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME) ||
+        !host_has(list, count, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME))
+        return false;
+    VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageable = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT};
+    VkPhysicalDeviceFeatures2 supported = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &pageable};
+    c->fn.vkGetPhysicalDeviceFeatures2(physical, &supported);
+    return pageable.pageableDeviceLocalMemory;
+}
+
 /* creates a temporary device to query which memory types can import host memory for guest mappings. */
 static uint32_t probe_importable_types(MvkConnection *c, VkPhysicalDevice physical)
 {
@@ -758,13 +776,18 @@ static uint32_t probe_importable_types(MvkConnection *c, VkPhysicalDevice physic
     VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
     c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
     bool has = host_has(list, count, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    bool pageable = has && has_pageable(c, physical, list, count);
     free(list);
     if (!has)
         return 0;
     float priority = 1.0f;
     VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0, 0, 1, &priority};
-    const char *ext = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
-    VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, nullptr, 0, 1, &queue, 0, nullptr, 1, &ext, nullptr};
+    const char *ext[] = {VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME,
+                         VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME};
+    VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT paged = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT, nullptr, VK_TRUE};
+    VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, pageable ? &paged : nullptr, 0, 1, &queue, 0, nullptr,
+                               pageable ? 3u : 1u, ext, nullptr};
     VkDevice device;
     if (c->fn.vkCreateDevice(physical, &info, nullptr, &device) != VK_SUCCESS)
         return 0;
@@ -1036,7 +1059,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
-        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 20));
+        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 24));
         uint32_t n = 0;
         bool video = false;
         for (uint32_t i = 0; i < info.enabledExtensionCount; i++) {
@@ -1128,6 +1151,30 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             metadata |= !strcmp(names[i], VK_EXT_HDR_METADATA_EXTENSION_NAME);
         if (c->hdr_metadata && !metadata)
             names[n++] = VK_EXT_HDR_METADATA_EXTENSION_NAME;
+        /* video memory the driver may page out, has_pageable. */
+        VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageable = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT, nullptr, VK_TRUE};
+        if (has_pageable(c, physical, list, count)) {
+            bool named_pageable = false, named_priority = false;
+            for (uint32_t i = 0; i < n; i++) {
+                named_pageable |= !strcmp(names[i], VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
+                named_priority |= !strcmp(names[i], VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
+            }
+            if (!named_pageable)
+                names[n++] = VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME;
+            if (!named_priority)
+                names[n++] = VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME;
+            bool chained = false;
+            for (VkBaseOutStructure *s = (VkBaseOutStructure *)info.pNext; s; s = s->pNext)
+                if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT) {
+                    ((VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT *)s)->pageableDeviceLocalMemory = VK_TRUE;
+                    chained = true;
+                }
+            if (!chained) {
+                pageable.pNext = (void *)info.pNext;
+                info.pNext = &pageable;
+            }
+        }
         free(list);
         info.enabledLayerCount = 0;
         info.enabledExtensionCount = n;

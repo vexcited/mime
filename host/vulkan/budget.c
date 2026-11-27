@@ -12,8 +12,11 @@ typedef struct BudgetDevice {
     VkPhysicalDevice physical;
     PFN_vkAllocateMemory allocate;
     VkPhysicalDeviceMemoryProperties memory;
+    PFN_vkGetImageMemoryRequirements image_requirements;
+    PFN_vkGetBufferMemoryRequirements buffer_requirements;
     bool budgets; /* the device reports VK_EXT_memory_budget. */
-    int32_t spill; /* the type in system memory every image and buffer takes, or -1, spill_type. */
+    /* the types every image and buffer takes, in system memory and video memory without host access, or -1. */
+    int32_t spill, promote;
 } BudgetDevice;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -117,13 +120,15 @@ static void warn_refused(const BudgetDevice *d, uint32_t heap, VkDeviceSize size
  * program runs slower. the Linux drivers refuse instead, NVIDIA at the size of the heap with
  * VK_ERROR_OUT_OF_DEVICE_MEMORY, and a game that only retries freezes. NVIDIA lets images of every kind and buffers
  * live in its type 0, system memory without any property, which is where they go. found from the memory types the
- * resources the gpu has take, -1 when none fits them all.
+ * resources the gpu has take, -1 when none fits them all. promote is the type of video memory without host access
+ * that the same resources take.
  */
-static int32_t spill_type(MvkConnection *c, const VkPhysicalDeviceMemoryProperties *memory)
+static void place_types(MvkConnection *c, const VkPhysicalDeviceMemoryProperties *memory, int32_t *spill, int32_t *promote)
 {
+    *spill = *promote = -1;
     if (!c->fn.vkCreateImage || !c->fn.vkGetImageMemoryRequirements || !c->fn.vkDestroyImage || !c->fn.vkCreateBuffer ||
         !c->fn.vkGetBufferMemoryRequirements || !c->fn.vkDestroyBuffer)
-        return -1;
+        return;
     static const struct {
         VkFormat format;
         VkImageUsageFlags usage;
@@ -161,24 +166,59 @@ static int32_t spill_type(MvkConnection *c, const VkPhysicalDeviceMemoryProperti
                                 VK_SHARING_MODE_EXCLUSIVE};
     VkBuffer buffer;
     if (c->fn.vkCreateBuffer(c->device, &binfo, nullptr, &buffer) != VK_SUCCESS)
-        return -1;
+        return;
     VkMemoryRequirements req;
     c->fn.vkGetBufferMemoryRequirements(c->device, buffer, &req);
     c->fn.vkDestroyBuffer(c->device, buffer, nullptr);
     bits &= req.memoryTypeBits;
-    int32_t found = -1;
     for (uint32_t i = 0; i < memory->memoryTypeCount; i++) {
         const VkMemoryType *t = &memory->memoryTypes[i];
-        if (!(bits & (1u << i)) || (memory->memoryHeaps[t->heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ||
+        if (!(bits & (1u << i)) ||
             (t->propertyFlags & (VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)))
             continue;
-        /* without host access the driver may place it as it likes, so that one comes first. */
-        if (found < 0 || !t->propertyFlags)
-            found = (int32_t)i;
-        if (!t->propertyFlags)
-            break;
+        if (memory->memoryHeaps[t->heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            if (*promote < 0 && t->propertyFlags == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+                *promote = (int32_t)i;
+            continue;
+        }
+        /* the type without host access comes first, nothing maps it. */
+        if (*spill < 0 || (!t->propertyFlags && memory->memoryTypes[*spill].propertyFlags))
+            *spill = (int32_t)i;
     }
-    return found;
+}
+
+/*
+ * system memory the cpu does not map, which the gpu alone uses, goes to video memory while the margin has room. that
+ * is what NVIDIA does on windows for the programs its profiles name, and WDDM moves it out when the room is needed.
+ * its driver here fills the gpu to the last page doing it, and does not on pageable devices, see vulkan.c. under
+ * g_lock.
+ */
+static bool promotable(const BudgetDevice *d, const VkMemoryAllocateInfo *info)
+{
+    if (d->promote < 0 || info->memoryTypeIndex >= d->memory.memoryTypeCount ||
+        d->memory.memoryTypes[info->memoryTypeIndex].propertyFlags ||
+        (d->memory.memoryHeaps[d->memory.memoryTypes[info->memoryTypeIndex].heapIndex].flags &
+         VK_MEMORY_HEAP_DEVICE_LOCAL_BIT))
+        return false;
+    for (const VkBaseInStructure *s = info->pNext; s; s = s->pNext) {
+        /* an export keeps its type for the importer, and a captured address its place. */
+        if (s->sType == VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO ||
+            s->sType == VK_STRUCTURE_TYPE_MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO)
+            return false;
+        if (s->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO) {
+            const VkMemoryDedicatedAllocateInfo *dedicated = (const VkMemoryDedicatedAllocateInfo *)s;
+            VkMemoryRequirements req = {};
+            if (dedicated->image && d->image_requirements)
+                d->image_requirements(d->device, dedicated->image, &req);
+            else if (dedicated->buffer && d->buffer_requirements)
+                d->buffer_requirements(d->device, dedicated->buffer, &req);
+            else if (dedicated->image || dedicated->buffer)
+                return false;
+            if ((dedicated->image || dedicated->buffer) && !(req.memoryTypeBits & (1u << d->promote)))
+                return false;
+        }
+    }
+    return true;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL allocate_memory(VkDevice device, const VkMemoryAllocateInfo *info,
@@ -196,6 +236,21 @@ static VKAPI_ATTR VkResult VKAPI_CALL allocate_memory(VkDevice device, const VkM
         uint32_t h = d->memory.memoryTypes[info->memoryTypeIndex].heapIndex;
         if (d->memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
             heap = (int32_t)h;
+        else if (promotable(d, info)) {
+            uint32_t local = d->memory.memoryTypes[d->promote].heapIndex;
+            if (reserve(d, local, info->allocationSize)) {
+                VkMemoryAllocateInfo moved = *info;
+                moved.memoryTypeIndex = (uint32_t)d->promote;
+                pthread_mutex_unlock(&g_lock);
+                VkResult r = allocate(device, &moved, a, memory);
+                pthread_mutex_lock(&g_lock);
+                g_pending[local] -= info->allocationSize;
+                if (r == VK_SUCCESS) {
+                    pthread_mutex_unlock(&g_lock);
+                    return r;
+                }
+            }
+        }
     }
     if (heap >= 0 && !reserve(d, (uint32_t)heap, info->allocationSize)) {
         /*
@@ -301,10 +356,11 @@ void mvk_budget_hook(MvkConnection *c)
     pthread_mutex_unlock(&g_lock);
     if (!c->device || !c->physical_device || !c->fn.vkAllocateMemory || c->fn.vkAllocateMemory == allocate_memory)
         return;
-    BudgetDevice d = {c->device, c->physical_device, c->fn.vkAllocateMemory};
+    BudgetDevice d = {c->device, c->physical_device, c->fn.vkAllocateMemory, {}, c->fn.vkGetImageMemoryRequirements,
+                      c->fn.vkGetBufferMemoryRequirements};
     c->fn.vkGetPhysicalDeviceMemoryProperties(c->physical_device, &d.memory);
     d.budgets = has_budget_extension(c->physical_device);
-    d.spill = spill_type(c, &d.memory);
+    place_types(c, &d.memory, &d.spill, &d.promote);
     pthread_mutex_lock(&g_lock);
     BudgetDevice *slot = find_device(c->device);
     if (!slot)
