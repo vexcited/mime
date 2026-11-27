@@ -713,33 +713,6 @@ DWORD NTAPI NtUserSetThreadState(DWORD flags, DWORD mask)
     return old;
 }
 
-ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
-{
-    UserEnter();
-    /* routine 15 asks whether the thread has a queue yet, without giving it one. */
-    W32THREAD *t = routine == 15 ? PsGetCurrentThreadWin32Thread() : W32GetThread();
-    ULONG_PTR v = 0;
-    if (t) {
-        switch (routine) {
-        case 0: /* focus */
-            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Focus));
-            break;
-        case 1: /* active */
-            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Active));
-            break;
-        case 2: /* capture */
-            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Capture));
-            break;
-        case 14: /* thread has a queue */
-        case 15:
-            v = 1;
-            break;
-        }
-    }
-    UserLeave();
-    return v;
-}
-
 /* ------------------------------------------------------------------ waiting for a process to be idle */
 
 #define WIDLE_TIMEOUT 0x102u

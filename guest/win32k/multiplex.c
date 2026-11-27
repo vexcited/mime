@@ -56,6 +56,61 @@ DWORD NTAPI NtUserGetQueueStatusReadonly(UINT flags)
     return r;
 }
 
+/*
+ * the routines of NtUserGetThreadState in win32kfull 26300 that user32 asks for: GetInputState is 5,
+ * GetMessageExtraInfo 7, InSendMessageEx 8, GetMessageTime 9, the foreground check of dialogs 10,
+ * HasDeferredKeyboardInput 15 and GetSendMessageThread 16.
+ */
+ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    ULONG_PTR v = 0;
+    if (t) {
+        switch (routine) {
+        case 0: /* focus */
+            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Focus));
+            break;
+        case 1: /* active */
+            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Active));
+            break;
+        case 2: /* capture */
+            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Capture));
+            break;
+        case 5: /* keys or buttons arrived since the last look, which takes every change bit with it. */
+            v = (queue_status(t, 0x1C7F, TRUE) & (QS_KEY | QS_MOUSEBUTTON)) != 0;
+            break;
+        case 7:
+            v = t->ExtraInfo;
+            break;
+        case 8:
+            v = MsgInSendFlags(t);
+            break;
+        case 9:
+            v = (ULONG_PTR)(LONG_PTR)(LONG)t->MessageTime;
+            break;
+        case 10:
+            v = InputForeground && InputForeground->Thread && W32InputOwner(InputForeground->Thread) == W32InputOwner(t);
+            break;
+        case 14: /* thread has a queue */
+            v = 1;
+            break;
+        case 15: /* HasDeferredKeyboardInput: no key waits on a text input service here. */
+            break;
+        case 16:
+            if (!t->Receiving)
+                W32SetLastError(ERROR_INVALID_STATE);
+            else if (!t->Receiving->Sender)
+                W32SetLastError(ERROR_NOT_SUPPORTED);
+            else
+                v = (ULONG_PTR)t->Receiving->Sender->Tid;
+            break;
+        }
+    }
+    UserLeave();
+    return v;
+}
+
 ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
 {
     UserEnter();
