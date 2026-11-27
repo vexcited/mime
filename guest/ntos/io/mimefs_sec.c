@@ -406,6 +406,11 @@ void MimeFsSecurityChanged(void)
     __atomic_fetch_add(&g_epoch, 1, __ATOMIC_SEQ_CST);
 }
 
+ULONG64 MimeFsSecurityEpoch(void)
+{
+    return __atomic_load_n(&g_epoch, __ATOMIC_SEQ_CST);
+}
+
 static ULONG64 name_hash(ULONG volume, const PATH *p, ULONG count, BOOLEAN directory)
 {
     ULONG64 h = 1469598103934665603ull ^ volume ^ ((ULONG64)directory << 40) ^ ((ULONG64)count << 48);

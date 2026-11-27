@@ -1361,6 +1361,8 @@ typedef struct _MIMEFS_STORED {
     ULONG Status, Length, Distance;
     const UCHAR *Data;
 } MIMEFS_STORED;
+/* counts the stored descriptors written and the names moved, after which what was known of them is not. */
+ULONG64 MimeFsSecurityEpoch(void);
 NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOLEAN directory, ACCESS_MASK desired,
                          ULONG options, ULONG disposition, BOOLEAN created, const MIMEFS_STORED *known, ACCESS_MASK *granted);
 NTSTATUS MimeFsCheckRomOpen(ACCESS_MASK desired, ULONG options, ACCESS_MASK *granted);
@@ -1939,11 +1941,12 @@ void FsNotifyInitialize(void);
 void FsAttrInitialize(void);
 void FsAttrChanged(ULONG volume, const WCHAR *name, ULONG chars, BOOLEAN tree);
 BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token);
-BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info);
+BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info, MIMEFS_STORED *stored, PUCHAR data);
 #define ATTR_KEEP_NOTHING 0
 #define ATTR_KEEP_FILE 1
 #define ATTR_KEEP_MISSING 2
-void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token);
+void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token,
+                const MIMEFS_STORED *stored, ULONG64 epoch);
 void FsAttrHostChange(ULONG id, ULONG action, const WCHAR *name, ULONG chars, BOOLEAN overflow);
 BOOLEAN FsAttrIsHostWatch(ULONG id);
 BOOLEAN FsAttrWatched(ULONG volume, PCUNICODE_STRING name, PLONG token);

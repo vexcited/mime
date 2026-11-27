@@ -721,7 +721,7 @@ static BOOLEAN query_deferred(MIMEFS_FCB *fcb, MimeFsInfo *info)
     /* buffered writes of other handles count, as they do for a query with a handle. */
     FsWbSyncPath(fcb->Volume, &file->FileName, fcb->Directory);
     BOOLEAN missing;
-    if (FsAttrLookup(fcb->Volume, &file->FileName, &missing, info))
+    if (FsAttrLookup(fcb->Volume, &file->FileName, &missing, info, nullptr, nullptr))
         return !missing && info->file_id == fcb->FileId;
     ULONG chars = file->FileName.Length / sizeof(WCHAR);
     return stat_name(fcb->Volume, file->FileName.Buffer, chars, info) && info->file_id == fcb->FileId &&
@@ -1045,23 +1045,34 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     ULONG64 hs;
     ACCESS_MASK granted = access;
     BOOLEAN checked = FALSE;
+    /* read before the host is asked, so a descriptor stored meanwhile outdates what is kept of the answer. */
+    ULONG64 sd_epoch = MimeFsSecurityEpoch();
     /* a plain open of a name known to be missing fails the same way, and its answer is kept when it is missing. */
     if (disposition == FILE_OPEN && !by_id) {
         BOOLEAN missing;
         MimeFsInfo known;
-        BOOLEAN plain = (stat_only || deferred) && !check && !(options & (FILE_DIRECTORY_FILE | FILE_NON_DIRECTORY_FILE));
-        if (FsAttrLookup(vol->HostVolume, &file->FileName, &missing, &known)) {
+        MIMEFS_STORED stored;
+        if (FsAttrLookup(vol->HostVolume, &file->FileName, &missing, &known, &stored, req->sd_data)) {
             if (missing) {
                 ExFreePool(req);
                 return complete(irp, host_status(MIME_HC_STATUS_NOT_FOUND, FALSE), 0);
             }
-            if (plain) {
+            /* an open of the wrong kind is the host's to refuse. a checked one needs the stored descriptors known too. */
+            BOOLEAN kind = (known.attributes & FILE_ATTRIBUTE_DIRECTORY) ? !(options & FILE_NON_DIRECTORY_FILE)
+                                                                         : !(options & FILE_DIRECTORY_FILE);
+            if ((stat_only || deferred) && kind && (!check || stored.Status == MIME_HC_STATUS_OK)) {
                 req->info_out = known;
                 req->handle_out = 0;
                 req->action_out = FILE_OPENED;
+                req->sd_status = stored.Status;
+                req->sd_length = stored.Length;
+                req->sd_distance = stored.Distance;
                 hs = MIME_HC_STATUS_OK;
                 goto opened;
             }
+            /* the answer of the host with what is stored replaces the one kept without it. */
+            if (check && (stat_only || deferred) && kind)
+                keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
         } else {
             keep = FsAttrBegin(vol->HostVolume, &file->FileName, &keep_token);
         }
@@ -1147,8 +1158,9 @@ opened:
     if (keep) {
         BOOLEAN found = hs == MIME_HC_STATUS_OK && !req->handle_out;
         BOOLEAN missing = hs == MIME_HC_STATUS_NOT_FOUND && req->action_out == 0;
+        MIMEFS_STORED stored = {req->sd_status, req->sd_length, req->sd_distance, req->sd_data};
         FsAttrKeep(vol->HostVolume, &file->FileName, found ? ATTR_KEEP_FILE : missing ? ATTR_KEEP_MISSING : ATTR_KEEP_NOTHING,
-                   &req->info_out, keep_token);
+                   &req->info_out, keep_token, (req->flags & MIME_FS_OPEN_WANT_SD) ? &stored : nullptr, sd_epoch);
         keep = FALSE;
     }
     if (hs == MIME_HC_STATUS_REPARSE) {

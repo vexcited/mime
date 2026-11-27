@@ -33,6 +33,11 @@ typedef struct ATTR_ENTRY {
     LONGLONG Born;
     BOOLEAN Missing;
     USHORT Chars;
+    /* the stored descriptor the host found nearest the name, kept after the name while SdEpoch is the one of MimeFsSecurityEpoch. */
+    BOOLEAN SdKnown;
+    USHORT SdLength;
+    ULONG SdDistance;
+    ULONG64 SdEpoch;
     MimeFsInfo Info;
     WCHAR Name[1];
 } ATTR_ENTRY;
@@ -345,9 +350,14 @@ BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token)
     return covered;
 }
 
-/* a cached answer: missing, or the attributes. */
-BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info)
+/*
+ * a cached answer: missing, or the attributes. stored, when asked, gets what the host said of the descriptors stored at
+ * or above the name, its bytes copied to data, or a status that is not MIME_HC_STATUS_OK when that is not known.
+ */
+BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, MimeFsInfo *info, MIMEFS_STORED *stored, PUCHAR data)
 {
+    if (stored)
+        *stored = (MIMEFS_STORED){MIME_HC_STATUS_NOT_FOUND, 0, 0, data};
     if (!__atomic_load_n(&g_entries, __ATOMIC_ACQUIRE))
         return FALSE;
     ULONG chars = name->Length / sizeof(WCHAR);
@@ -363,6 +373,12 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
         } else {
             *missing = e->Missing;
             *info = e->Info;
+            if (stored && e->SdKnown && e->SdEpoch == MimeFsSecurityEpoch()) {
+                stored->Status = MIME_HC_STATUS_OK;
+                stored->Length = e->SdLength;
+                stored->Distance = e->SdDistance;
+                memcpy(data, e->Name + e->Chars, e->SdLength);
+            }
             RemoveEntryList(&e->Lru);
             InsertHeadList(&g_lru, &e->Lru);
             g_watches[e->Watch].Used_At = (LONGLONG)KeQueryInterruptTime();
@@ -373,8 +389,12 @@ BOOLEAN FsAttrLookup(ULONG volume, PCUNICODE_STRING name, PBOOLEAN missing, Mime
     return found;
 }
 
-/* caches the answer if nothing touched the name since FsAttrBegin and the directory is still watched. */
-void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token)
+/*
+ * caches the answer if nothing touched the name since FsAttrBegin and the directory is still watched. stored is what
+ * the host said of the stored descriptors with the answer, if it was asked, and epoch the one read before it was.
+ */
+void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInfo *info, LONG token,
+                const MIMEFS_STORED *stored, ULONG64 epoch)
 {
     ULONG chars = name->Length / sizeof(WCHAR);
     ULONG hash = hash_of(name->Buffer, chars);
@@ -382,8 +402,11 @@ void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInf
     /* a file with other names is not kept: a change made through one of them would not reach the entries of the rest. */
     if (kind == ATTR_KEEP_FILE && info && info->links > 1)
         kind = ATTR_KEEP_NOTHING;
+    if (kind != ATTR_KEEP_FILE || !stored || stored->Status != MIME_HC_STATUS_OK || stored->Length > sizeof(((MimeFsOpen *)0)->sd_data))
+        stored = nullptr;
     if (kind != ATTR_KEEP_NOTHING)
-        fresh = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATTR_ENTRY) + chars * sizeof(WCHAR), KI_TAG('F', 's', 'A', 'e'));
+        fresh = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ATTR_ENTRY) + chars * sizeof(WCHAR) + (stored ? stored->Length : 0),
+                                KI_TAG('F', 's', 'A', 'e'));
     ExAcquireFastMutex(&g_lock);
     __atomic_sub_fetch(&g_fills, 1, __ATOMIC_SEQ_CST);
     LONG slot = fresh ? watch_of(volume, name->Buffer, parent_chars(name->Buffer, chars),
@@ -408,6 +431,13 @@ void FsAttrKeep(ULONG volume, PCUNICODE_STRING name, ULONG kind, const MimeFsInf
     if (info)
         fresh->Info = *info;
     memcpy(fresh->Name, name->Buffer, chars * sizeof(WCHAR));
+    fresh->SdKnown = stored != nullptr;
+    if (stored) {
+        fresh->SdLength = (USHORT)stored->Length;
+        fresh->SdDistance = stored->Distance;
+        fresh->SdEpoch = epoch;
+        memcpy(fresh->Name + chars, stored->Data, stored->Length);
+    }
     fresh->Next = g_buckets[hash % ATTR_BUCKETS];
     g_buckets[hash % ATTR_BUCKETS] = fresh;
     InsertHeadList(&g_lru, &fresh->Lru);
