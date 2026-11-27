@@ -727,9 +727,10 @@ int WSAAPI getpeername(SOCKET s, struct sockaddr *name, int *namelen)
 
 /* ------------------------------------------------------------------ sending and receiving */
 
-static int transfer(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD done, LPDWORD flags,
-                    const struct sockaddr *to, int tolen, struct sockaddr *from, LPINT fromlen,
-                    LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+/* message is the WSAMSG of WSARecvMsg, whose control data and flags the driver writes. */
+static int transfer_message(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD done, LPDWORD flags,
+                            const struct sockaddr *to, int tolen, struct sockaddr *from, LPINT fromlen,
+                            LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine, LPWSAMSG message)
 {
     int error;
     WS_SOCKET *sock = acquire(s, &error);
@@ -768,6 +769,11 @@ static int transfer(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD 
         t.Address = (ULONG64)(ULONG_PTR)from;
         t.AddressLength = (ULONG64)(ULONG_PTR)fromlen;
     }
+    if (!send && message) {
+        t.Control = (ULONG64)(ULONG_PTR)message->Control.buf;
+        t.ControlLength = (ULONG64)(ULONG_PTR)&message->Control.len;
+        t.MessageFlags = (ULONG64)(ULONG_PTR)&message->dwFlags;
+    }
     ULONG code = send ? IOCTL_AFD_SEND : IOCTL_AFD_RECV;
     if (!send)
         *flags = 0;
@@ -787,6 +793,14 @@ static int transfer(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD 
     if (error == WSA_OPERATION_ABORTED)
         error = WSAEINTR;
     return error ? fail(sock, error) : succeed(sock);
+}
+
+static int transfer(SOCKET s, BOOL send, LPWSABUF buffers, DWORD count, LPDWORD done, LPDWORD flags,
+                    const struct sockaddr *to, int tolen, struct sockaddr *from, LPINT fromlen,
+                    LPWSAOVERLAPPED overlapped, LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
+{
+    return transfer_message(s, send, buffers, count, done, flags, to, tolen, from, fromlen, overlapped, routine,
+                            nullptr);
 }
 
 int WSAAPI send(SOCKET s, const char *buf, int len, int flags)
@@ -1106,8 +1120,9 @@ static const GUID guid_wsa_send_msg = {0xA441E712, 0x754F, 0x43CA, {0x84, 0xA7, 
 static const GUID guid_disconnect_ex = {0x7FDA2E11, 0x8630, 0x436F, {0xA0, 0x31, 0xF5, 0x36, 0xA6, 0xEE, 0xC1, 0x57}};
 
 /*
- * datagram WSARecvMsg and WSASendMsg carry addresses but no control data here. receive returns no control messages;
- * send ignores them, including type of service.
+ * datagram WSARecvMsg and WSASendMsg carry addresses. a receive gets the control data of the socket's receive options,
+ * written by the driver when it completes; a send ignores its control data, the type of service among it. measured
+ * on windows 11 26100: a control length without a buffer is WSAEFAULT, and the datagram stays.
  */
 static int WSAAPI wsa_recv_msg(SOCKET s, LPWSAMSG msg, LPDWORD received, LPWSAOVERLAPPED overlapped,
                                LPWSAOVERLAPPED_COMPLETION_ROUTINE routine)
@@ -1124,12 +1139,11 @@ static int WSAAPI wsa_recv_msg(SOCKET s, LPWSAMSG msg, LPDWORD received, LPWSAOV
     release(sock);
     if (stream)
         return WsFail(WSAEOPNOTSUPP);
+    if (msg->Control.len && !msg->Control.buf)
+        return WsFail(WSAEFAULT);
     DWORD flags = msg->dwFlags;
-    int r = transfer(s, FALSE, msg->lpBuffers, msg->dwBufferCount, received, &flags, nullptr, 0, msg->name,
-                     msg->name ? &msg->namelen : nullptr, overlapped, routine);
-    msg->Control.len = 0;
-    msg->dwFlags = 0;
-    return r;
+    return transfer_message(s, FALSE, msg->lpBuffers, msg->dwBufferCount, received, &flags, nullptr, 0, msg->name,
+                            msg->name ? &msg->namelen : nullptr, overlapped, routine, msg);
 }
 
 static int WSAAPI wsa_send_msg(SOCKET s, LPWSAMSG msg, DWORD flags, LPDWORD sent, LPWSAOVERLAPPED overlapped,
@@ -2118,6 +2132,32 @@ static ULONG host_option_id(const WS_SOCKET *sock, int level, int name, int *err
     }
     if ((level == IPPROTO_IP || level == IPPROTO_IPV6) && name == IP_TTL)
         return MIME_AFD_OPT_TTL;
+    /*
+     * the receive options of a datagram socket, which WSARecvMsg answers with control data. measured on windows 11
+     * 26100: a stream socket refuses them, and an IPv4 socket takes the IPv6 ones for the IPv4 ones.
+     */
+    if (level == IPPROTO_IP || level == IPPROTO_IPV6) {
+        BOOL v6 = level == IPPROTO_IPV6 && sock->family == AF_INET6;
+        ULONG first = MIME_AFD_OPT_RECV_FIRST + (v6 ? 4 : 0), option = 0;
+        switch (name) {
+        case IP_PKTINFO:
+            option = first;
+            break;
+        case IP_ECN:
+            option = first + 1;
+            break;
+        case IP_RECVTTL:
+            option = first + 2;
+            break;
+        case IP_RECVTOS:
+            option = first + 3;
+            break;
+        }
+        if (option && sock->type != SOCK_DGRAM)
+            *error = WSAEINVAL;
+        if (option)
+            return option;
+    }
     if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY) {
         if (sock->family != AF_INET6)
             *error = WSAEINVAL;
@@ -2257,7 +2297,8 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
         if (option == MIME_AFD_OPT_TTL)
             v = sock->ttl >= 0 ? sock->ttl : 128;
         if (option == MIME_AFD_OPT_KEEPALIVE || option == MIME_AFD_OPT_NODELAY || option == MIME_AFD_OPT_BROADCAST ||
-            option == MIME_AFD_OPT_OOBINLINE || option == MIME_AFD_OPT_V6ONLY)
+            option == MIME_AFD_OPT_OOBINLINE || option == MIME_AFD_OPT_V6ONLY ||
+            (option >= MIME_AFD_OPT_RECV_FIRST && option <= MIME_AFD_OPT_RECV_LAST))
             v = v != 0;
     } else if (level == SOL_SOCKET) {
         MIME_AFD_STATE st;

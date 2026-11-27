@@ -48,6 +48,8 @@
 #define MSG_PEEK 0x2
 #define MSG_DONTROUTE 0x4
 #define MSG_WAITALL 0x8
+#define MSG_TRUNC 0x100
+#define MSG_CTRUNC 0x200
 
 #define SOCK_STREAM 1
 #define SOCK_DGRAM 2
@@ -65,7 +67,9 @@
 #define FILE_DEVICE_NETWORK 0x12
 #define FILE_DEVICE_NAMED_PIPE 0x11
 
-MIME_STATIC_ASSERT(MIME_AFD_OPT_ATMARK == MIME_NET_OPT_ATMARK && MIME_AFD_OPT_ERROR == MIME_NET_OPT_ERROR,
+MIME_STATIC_ASSERT(MIME_AFD_OPT_ATMARK == MIME_NET_OPT_ATMARK && MIME_AFD_OPT_ERROR == MIME_NET_OPT_ERROR &&
+                       MIME_AFD_OPT_RECV_FIRST == MIME_NET_OPT_RECV_FIRST &&
+                       MIME_AFD_OPT_RECV_LAST == MIME_NET_OPT_RECV_LAST,
                    "afd options are the host's");
 MIME_STATIC_ASSERT(sizeof(MIME_AFD_ADDRESS) == sizeof(MimeNetAddr), "afd addresses are the host's");
 MIME_STATIC_ASSERT(sizeof(MIME_AFD_INTERFACE) == sizeof(MimeNetInterface), "afd interfaces are the host's");
@@ -100,6 +104,11 @@ typedef struct AFD_REQUEST {
     PVOID From;        /* receive: the caller's sockaddr and its length */
     PVOID FromLength;
     LONG FromCapacity;
+    PVOID Control;     /* WSARecvMsg: the caller's control buffer, its length and its flags */
+    PVOID ControlLength;
+    PVOID MessageFlags;
+    ULONG ControlCapacity;
+    BOOLEAN Narrow;    /* the records of a 32-bit program */
     BOOLEAN HasTo;
     MIME_AFD_ADDRESS To; /* send: a datagram's destination */
     PFILE_OBJECT Accept;  /* accept: the socket taking the connection */
@@ -193,6 +202,7 @@ static MimeNetPoll g_poll __attribute__((aligned(16)));
 static ULONG g_events[AFD_EVENTS_BATCH] __attribute__((aligned(16)));
 static MimeNetEcho g_echo __attribute__((aligned(16)));
 static MimeNetEchoReply g_echo_reply __attribute__((aligned(16)));
+static MimeNetRecvInfo g_info __attribute__((aligned(16)));
 
 static void lock(void)
 {
@@ -205,10 +215,10 @@ static void unlock(void)
 }
 
 /* returns 0 or the winsock error. */
-static LONG host(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 *value)
+static LONG host6(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6, ULONG64 *value)
 {
     ULONG64 v = 0;
-    ULONG64 hs = HalHypercallUnlocked(nr, a1, a2, a3, a4, a5, 0, &v);
+    ULONG64 hs = HalHypercallUnlocked(nr, a1, a2, a3, a4, a5, a6, &v);
     if (value)
         *value = v;
     if (hs == MIME_HC_STATUS_OK)
@@ -216,6 +226,11 @@ static LONG host(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULO
     if (hs == MIME_HC_STATUS_NET_ERROR)
         return (LONG)v;
     return hs == MIME_HC_STATUS_UNSUPPORTED ? 10045 : WSAEINVAL;
+}
+
+static LONG host(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 *value)
+{
+    return host6(nr, a1, a2, a3, a4, a5, 0, value);
 }
 
 static ULONG64 pa(const void *p)
@@ -565,6 +580,76 @@ void AfdDumpStats(void)
 
 /* ------------------------------------------------------------ operations */
 
+/* a WSACMSGHDR: the length, the level and the type, the data aligned to a pointer, the padding zeroed. */
+static ULONG put_record(PUCHAR out, ULONG at, BOOLEAN narrow, INT level, INT type, const void *data, ULONG size)
+{
+    ULONG header = narrow ? 12 : 16, align = narrow ? 4 : 8;
+    ULONG length = header + size, space = (length + align - 1) & ~(align - 1);
+    memset(out + at, 0, space);
+    ULONG64 wide = length;
+    memcpy(out + at, narrow ? (const void *)&length : &wide, narrow ? sizeof(length) : sizeof(wide));
+    memcpy(out + at + header - 8, &level, sizeof(level));
+    memcpy(out + at + header - 4, &type, sizeof(type));
+    memcpy(out + at + header, data, size);
+    return at + space;
+}
+
+/*
+ * the control data of WSARecvMsg, measured on windows 11 26100: a record for each receive option the socket asked
+ * of the datagram's family, packet information, ecn, hop limit then type of service, each value an INT. what does
+ * not fit is cut, at the byte for a 64-bit program and for a 32-bit one after the last header or value that fits
+ * whole, the length is what all of it takes and MSG_CTRUNC tells, and the receive fails with WSAEMSGSIZE though the
+ * datagram is taken.
+ */
+static NTSTATUS write_control(AFD_REQUEST *r, const MimeNetRecvInfo *info, BOOLEAN cut_data, BOOLEAN *cut)
+{
+    UCHAR out[160];
+    ULONG at = 0;
+    BOOLEAN v6 = (info->present & MIME_NET_RECV_V6) != 0;
+    INT level = v6 ? 41 : 0;
+    if (info->present & MIME_NET_RECV_PKTINFO) {
+        UCHAR p[20];
+        ULONG addr = v6 ? 16 : 4;
+        memcpy(p, info->to, addr);
+        memcpy(p + addr, &info->ifindex, sizeof(info->ifindex));
+        at = put_record(out, at, r->Narrow, level, 19, p, addr + 4);
+    }
+    if (info->present & MIME_NET_RECV_ECN) {
+        INT v = info->tos & 3;
+        at = put_record(out, at, r->Narrow, level, 50, &v, sizeof(v));
+    }
+    if (info->present & MIME_NET_RECV_TTL) {
+        INT v = info->ttl;
+        at = put_record(out, at, r->Narrow, level, v6 ? 21 : 4, &v, sizeof(v));
+    }
+    if (info->present & MIME_NET_RECV_TOS) {
+        INT v = info->tos;
+        at = put_record(out, at, r->Narrow, level, v6 ? 39 : 3, &v, sizeof(v));
+    }
+    *cut = at > r->ControlCapacity;
+    ULONG flags = (cut_data ? MSG_TRUNC : 0) | (*cut ? MSG_CTRUNC : 0);
+    ULONG copy = *cut ? r->ControlCapacity : at;
+    if (*cut && r->Narrow) {
+        ULONG whole = 0;
+        while (whole < at && whole + 12 <= copy) {
+            ULONG length;
+            memcpy(&length, out + whole, sizeof(length));
+            if (whole + length > copy) {
+                whole += 12;
+                break;
+            }
+            whole += length;
+        }
+        copy = whole;
+    }
+    NTSTATUS status = copy ? attach_copy(r->Process, r->Control, out, copy, TRUE) : STATUS_SUCCESS;
+    if (NT_SUCCESS(status))
+        status = attach_copy(r->Process, r->ControlLength, &at, sizeof(at), TRUE);
+    if (NT_SUCCESS(status) && r->MessageFlags)
+        status = attach_copy(r->Process, r->MessageFlags, &flags, sizeof(flags), TRUE);
+    return status;
+}
+
 static ULONG try_recv(AFD_SOCKET *s, AFD_REQUEST *r)
 {
     BOOLEAN stream = s->Type == SOCK_STREAM;
@@ -582,10 +667,10 @@ static ULONG try_recv(AFD_SOCKET *s, AFD_REQUEST *r)
         }
         ULONG left = stream ? r->Total - r->Transferred : r->Total;
         ULONG chunk = left < AFD_CHUNK ? left : AFD_CHUNK;
-        BOOLEAN want_from = r->From || !stream;
+        BOOLEAN want_from = r->From || !stream, want_control = r->ControlLength && !stream;
         ULONG64 got = 0;
-        LONG e = host(MIME_HC_NET_RECV, s->Host, pa(g_bounce), chunk, r->Flags & (MSG_OOB | MSG_PEEK),
-                      want_from ? pa(&g_addr) : 0, &got);
+        LONG e = host6(MIME_HC_NET_RECV, s->Host, pa(g_bounce), chunk, r->Flags & (MSG_OOB | MSG_PEEK),
+                       want_from ? pa(&g_addr) : 0, want_control ? pa(&g_info) : 0, &got);
         NTSTATUS status = STATUS_SUCCESS;
         if (e == WSAEWOULDBLOCK)
             return AFD_BLOCKED;
@@ -610,6 +695,14 @@ static ULONG try_recv(AFD_SOCKET *s, AFD_REQUEST *r)
                 continue;
         } else {
             r->Transferred = (ULONG)got;
+        }
+        if (want_control) {
+            BOOLEAN cut = FALSE;
+            NTSTATUS written = write_control(r, &g_info, status == STATUS_BUFFER_OVERFLOW, &cut);
+            if (!NT_SUCCESS(written))
+                return done(r, written, 0);
+            if (cut)
+                status = STATUS_BUFFER_OVERFLOW;
         }
         if (r->From && r->FromLength) {
             LONG size = (LONG)address_size(&g_addr);
@@ -1404,6 +1497,17 @@ static NTSTATUS transfer(PFILE_OBJECT file, AFD_SOCKET *s, BOOLEAN send, HANDLE 
         r->From = (PVOID)(ULONG_PTR)t.Address;
         r->FromLength = (PVOID)(ULONG_PTR)t.AddressLength;
         r->FromCapacity = capacity;
+    }
+    if (!send && t.ControlLength && s->Type == SOCK_DGRAM) {
+        ULONG capacity;
+        status = KiCopyFromUser(&capacity, (PVOID)(ULONG_PTR)t.ControlLength, sizeof(capacity));
+        if (!NT_SUCCESS(status))
+            return immediate(r, status, 0);
+        r->Control = (PVOID)(ULONG_PTR)t.Control;
+        r->ControlLength = (PVOID)(ULONG_PTR)t.ControlLength;
+        r->MessageFlags = (PVOID)(ULONG_PTR)t.MessageFlags;
+        r->ControlCapacity = r->Control ? capacity : 0;
+        r->Narrow = PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386;
     }
     lock();
     if (!s->Host || s->Closed) {

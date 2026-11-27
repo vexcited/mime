@@ -78,6 +78,10 @@ typedef struct MIME_AFD_TRANSFER {
     ULONG Pad;
     ULONG64 Address;       /* send: MIME_AFD_ADDRESS to send to; receive: the caller's sockaddr */
     ULONG64 AddressLength; /* receive: the caller's INT length, both read when starting and written */
+    /* WSARecvMsg: its control buffer and the ULONG of its length, read when starting and written, and its flags. */
+    ULONG64 Control;
+    ULONG64 ControlLength;
+    ULONG64 MessageFlags;
 } MIME_AFD_TRANSFER;
 
 /* the host's MIME_NET_OPT_* values. */
@@ -97,6 +101,9 @@ typedef struct MIME_AFD_TRANSFER {
 #define MIME_AFD_OPT_KEEPINTVL 14
 #define MIME_AFD_OPT_KEEPCNT 15
 #define MIME_AFD_OPT_ATMARK 16
+/* the receive options of a datagram socket, IP_PKTINFO, IP_RECVECN, IP_RECVTTL, IP_RECVTOS, then their IPv6 ones. */
+#define MIME_AFD_OPT_RECV_FIRST 17
+#define MIME_AFD_OPT_RECV_LAST 24
 #define MIME_AFD_OPTION_NONBLOCKING 0x100 /* the FIONBIO mode, kept by the driver */
 
 typedef struct MIME_AFD_OPTION {
