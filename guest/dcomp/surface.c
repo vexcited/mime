@@ -987,5 +987,6 @@ BOOL DcContentFrame(DcContent *c, ID3D11Device *d3d, DcFrame *f)
     texture->lpVtbl->Release(texture);
     if (ok)
         f->view = c->view;
+    f->scrgb = format == DXGI_FORMAT_R16G16B16A16_FLOAT;
     return ok;
 }

@@ -195,28 +195,52 @@ void DcOutputRelease(DcOutput *output)
     memset(output, 0, sizeof(*output));
 }
 
-/* the swap chain matches the client area and is remade when the window resizes. */
-static BOOL ensure_output(DcTarget *t, DcGpu *gpu, UINT width, UINT height)
+/*
+ * how many times 80 nits the white of standard content is on the monitor of a window, while that monitor shows high
+ * dynamic range.
+ */
+static BOOL hdr_white(HWND hwnd, float *white)
+{
+    MONITORINFOEXW info = {.cbSize = sizeof(info)};
+    if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO *)&info))
+        return FALSE;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    for (ULONG i = 0; i < count && i < MIME_USER_MAX_MONITORS; i++)
+        if (!wcscmp(list[i].Device, info.szDevice) && (list[i].Flags & MIME_MONITORINFOF_HDR)) {
+            *white = (list[i].Color.WhiteNits ? list[i].Color.WhiteNits / 1e4f : 203.0f) / 80.0f;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+/*
+ * the swap chain matches the client area and is remade when the window resizes. it holds scRGB when the tree shows
+ * floats on a monitor of high dynamic range, as the dwm composes there, and sRGB otherwise.
+ */
+static BOOL ensure_output(DcTarget *t, DcGpu *gpu, UINT width, UINT height, BOOL wide)
 {
     DcOutput *o = &t->output;
-    if (o->swapchain && (o->width != width || o->height != height)) {
+    DXGI_FORMAT format = wide ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+    if (o->swapchain && (o->width != width || o->height != height || o->wide != wide)) {
         release((IUnknown *)o->rtv);
         release((IUnknown *)o->back);
         o->rtv = nullptr;
         o->back = nullptr;
-        if (FAILED(o->swapchain->lpVtbl->ResizeBuffers((IDXGISwapChain1 *)o->swapchain, 0, width, height,
-                                                       DXGI_FORMAT_UNKNOWN, 0))) {
+        if (FAILED(o->swapchain->lpVtbl->ResizeBuffers((IDXGISwapChain1 *)o->swapchain, 0, width, height, format,
+                                                       0))) {
             release((IUnknown *)o->swapchain);
             o->swapchain = nullptr;
         }
         o->width = width;
         o->height = height;
     }
+    o->wide = wide;
     if (!o->swapchain) {
         DXGI_SWAP_CHAIN_DESC1 desc = {};
         desc.Width = width;
         desc.Height = height;
-        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.Format = format;
         desc.SampleDesc.Count = 1;
         desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         desc.BufferCount = 2;
@@ -249,6 +273,7 @@ static BOOL ensure_output(DcTarget *t, DcGpu *gpu, UINT width, UINT height)
 typedef struct DcDraw {
     ID3D11ShaderResourceView *view;
     BOOL linear;
+    BOOL scrgb;
     int blend;
     float constants[CB_REGISTERS * 4];
 } DcDraw;
@@ -479,6 +504,7 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *walk,
     for (int j = 0; j < 4; j++)
         cb[124 + j] = color[16 + j];
     d->view = frame.view;
+    d->scrgb = frame.scrgb;
     d->linear = w->interpolation != DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
     if (layout->on && !solid)
         d->linear = layout->interpolation != DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
@@ -839,7 +865,7 @@ HRESULT DcCompose(DcTarget *t)
         return compose_software(t, width, height);
     dxgi->lpVtbl->Release(dxgi);
     DcGpu *gpu = gpu_for(d, d3d);
-    if (!gpu || !ensure_output(t, gpu, width, height))
+    if (!gpu)
         return E_FAIL;
 
     DcBuild c = {t, gpu, DcNow(), width, height};
@@ -856,6 +882,22 @@ HRESULT DcCompose(DcTarget *t)
         if (c.draws)
             HeapFree(GetProcessHeap(), 0, c.draws);
         return E_OUTOFMEMORY;
+    }
+    /* floats are scRGB and the rest sRGB: each goes to the space of the swap chain, which cuts scRGB at white. */
+    BOOL wide = FALSE;
+    float white = 1.0f;
+    for (UINT i = 0; i < c.draw_count && !wide; i++)
+        wide = c.draws[i].scrgb;
+    wide = wide && hdr_white(t->hwnd, &white);
+    if (!ensure_output(t, gpu, width, height, wide)) {
+        if (c.draws)
+            HeapFree(GetProcessHeap(), 0, c.draws);
+        return E_FAIL;
+    }
+    t->output.white = white;
+    for (UINT i = 0; i < c.draw_count; i++) {
+        c.draws[i].constants[26] = wide ? (c.draws[i].scrgb ? 0.0f : 1.0f) : (c.draws[i].scrgb ? 2.0f : 0.0f);
+        c.draws[i].constants[27] = white;
     }
 
     if (gpu->multithread)
@@ -948,6 +990,55 @@ void WINAPI DcSourceNotify(void *context, IUnknown *source)
 
 /* ------------------------------------------------------------------ reading back */
 
+static float half_value(USHORT h)
+{
+    UINT exponent = h >> 10 & 31, mantissa = h & 1023;
+    float v;
+    if (!exponent) {
+        v = (float)mantissa / 16777216.0f;
+    } else if (exponent == 31) {
+        v = mantissa ? 0.0f : 65504.0f;
+    } else {
+        v = 1.0f + (float)mantissa / 1024.0f;
+        for (UINT e = exponent; e < 15; e++)
+            v *= 0.5f;
+        for (UINT e = exponent; e > 15; e--)
+            v *= 2.0f;
+    }
+    return h & 0x8000 ? -v : v;
+}
+
+/* the sRGB byte of a linear value, cut at white. */
+static BYTE srgb_byte(float v)
+{
+    if (!(v > 0.0f))
+        return 0;
+    if (v >= 1.0f)
+        return 255;
+    double e = v * 12.92;
+    if (v >= 0.0031308f) {
+        /* the power of 5/12 as the cube root of the fifth power, by newton, and two square roots. */
+        double fifth = (double)v * v * v * v * v, root = v;
+        for (int i = 0; i < 24; i++)
+            root = (2.0 * root + fifth / (root * root)) / 3.0;
+        e = 1.055 * DcSqrt(DcSqrt(root)) - 0.055;
+    }
+    return (BYTE)(e * 255.0 + 0.5);
+}
+
+/* a row of the scRGB back buffer as the premultiplied BGRA bytes a swap chain of sRGB would hold. */
+static void read_wide(BYTE *out, const USHORT *in, UINT count, float white)
+{
+    for (UINT x = 0; x < count; x++, in += 4, out += 4) {
+        float a = half_value(in[3]);
+        a = a < 0.0f ? 0.0f : a > 1.0f ? 1.0f : a;
+        float k = a > 0.0f ? a : 1.0f;
+        for (UINT i = 0; i < 3; i++)
+            out[2 - i] = (BYTE)((float)srgb_byte(half_value(in[i]) / (k * white)) * k + 0.5f);
+        out[3] = (BYTE)(a * 255.0f + 0.5f);
+    }
+}
+
 /* reads a rectangle of the last frame through a staging copy of the back buffer. */
 HRESULT DcReadTarget(DcTarget *t, const RECT *rect, void *pixels, UINT pitch)
 {
@@ -970,7 +1061,7 @@ HRESULT DcReadTarget(DcTarget *t, const RECT *rect, void *pixels, UINT pitch)
     desc.Width = r.right - r.left;
     desc.Height = r.bottom - r.top;
     desc.MipLevels = desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.Format = o->wide ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_STAGING;
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -986,9 +1077,13 @@ HRESULT DcReadTarget(DcTarget *t, const RECT *rect, void *pixels, UINT pitch)
     D3D11_MAPPED_SUBRESOURCE mapped;
     hr = gpu->immediate->lpVtbl->Map(gpu->immediate, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped);
     if (SUCCEEDED(hr)) {
-        for (UINT y = 0; y < desc.Height; y++)
-            memcpy((BYTE *)pixels + (SIZE_T)y * pitch, (BYTE *)mapped.pData + (SIZE_T)y * mapped.RowPitch,
-                   (SIZE_T)desc.Width * 4);
+        for (UINT y = 0; y < desc.Height; y++) {
+            BYTE *to = (BYTE *)pixels + (SIZE_T)y * pitch, *from = (BYTE *)mapped.pData + (SIZE_T)y * mapped.RowPitch;
+            if (o->wide)
+                read_wide(to, (const USHORT *)from, desc.Width, o->white);
+            else
+                memcpy(to, from, (SIZE_T)desc.Width * 4);
+        }
         gpu->immediate->lpVtbl->Unmap(gpu->immediate, (ID3D11Resource *)staging, 0);
     }
     if (gpu->multithread)

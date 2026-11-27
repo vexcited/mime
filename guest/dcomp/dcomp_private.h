@@ -286,6 +286,9 @@ typedef struct DcOutput {
     BYTE *bits;
     UINT width, height;
     BOOL composed;
+    /* the swap chain holds scRGB, where the white of standard content is this many times 80 nits. */
+    BOOL wide;
+    float white;
 } DcOutput;
 
 struct DcTarget {
@@ -336,6 +339,7 @@ typedef struct DcFrame {
     DXGI_ALPHA_MODE alpha;
     float matrix[6];
     BOOL has_matrix;
+    BOOL scrgb; /* floats, which are linear. */
 } DcFrame;
 
 BOOL DcContentFrame(DcContent *content, ID3D11Device *device, DcFrame *frame);
