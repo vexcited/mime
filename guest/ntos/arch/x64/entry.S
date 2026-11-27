@@ -65,7 +65,7 @@ KiSecondaryStartup:
 #define HC_WORD_WAKE 0x0E
 
     .globl  KiAcquireKernelLock
-    .p2align 4
+    .p2align 6
 KiAcquireKernelLock:
     leaq    KiKernelLock(%rip), %r8
     xorl    %r11d, %r11d            /* when waiting began, 0 if the lock was free */
@@ -148,7 +148,7 @@ KiAcquireKernelLock:
 9:  ret
 
     .globl  KiReleaseKernelLock
-    .p2align 4
+    .p2align 6
 KiReleaseKernelLock:
     leaq    KiKernelLock(%rip), %r8
     movl    LOCK_OWNER(%r8), %eax
@@ -339,7 +339,7 @@ KiFlushIpi:
  * the frame is built where the hardware would push one, at KPCR.KernelRsp.
  */
     .globl  KiSystemCall64
-    .p2align 4
+    .p2align 6
 KiSystemCall64:
     swapgs
     movq    %rsp, %gs:KPCR_USER_RSP
@@ -376,7 +376,7 @@ KiSystemCall64:
  * FlushPending is read: a processor that changes the address space sets the one and then reads the other, so
  * either this one flushes here or it is interrupted in user mode.
  */
-    .p2align 4
+    .p2align 6
 KiFastServiceExit:
     movq    %rbx, %rsp
     leaq    KTRAP_FRAME_SIZE(%rsp), %rax
