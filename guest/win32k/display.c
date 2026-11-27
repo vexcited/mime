@@ -1199,10 +1199,17 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
         *(PULONG)(body + 8) = hdr ? 10 : 8;
         break;
     }
-    case DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL:
-        /* 80 nits, in thousandths of them over 80. */
-        *(PULONG)body = 1000;
+    case DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL: {
+        /*
+         * in thousandths of 80 nits: 80 nits, or where the host shows the white of standard content while the monitor
+         * is in high dynamic range, which is where programs then draw their white in scRGB.
+         */
+        ULONG white = 1000;
+        if (info.Flags & MIME_MONITORINFOF_HDR)
+            white = (ULONG)((ULONG64)(info.Color.WhiteNits ? info.Color.WhiteNits : 2030000) / 800);
+        *(PULONG)body = white;
         break;
+    }
     }
     return NT_SUCCESS(MimeCopyToUser(user_packet, packet, want)) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
