@@ -393,9 +393,23 @@ BOOLEAN MetricsKeyboardCues(void)
 #define SPI_SETFONTSMOOTHINGORIENTATION 0x2013
 
 static BOOLEAN g_font_smoothing = TRUE;
-static UINT g_smoothing_type = 2;
-static UINT g_smoothing_contrast = 1200;
-static UINT g_smoothing_orientation = 1;
+/*
+ * the user preferences of win32kbase 26300 that are one value each: action 0x2000 + 2n reads value n into the
+ * buffer and the action after it takes the new value in place of the buffer. these are the values of a new account,
+ * the wheel routing among them: 2 gives the wheel to the window under the pointer. the first is the foreground lock
+ * timeout, which LoadCPUserPreferences of win32kfull sets to the largest time whatever the account says.
+ */
+#define PREFERENCE_FIRST 0x2000
+#define PREFERENCE_LAST 0x2039
+static UINT g_preferences[] = {
+    0x7FFFFFFF, 0, 7, 1, 1200, 2, 1200, 1, 1, 1, 0, 5, 1, 31, 2, 35, 3, 5000, 0, 0, 32, 0, 0, 0, 1, 1, 0, 0, 0,
+};
+static_assert(RTL_NUMBER_OF(g_preferences) == (PREFERENCE_LAST + 1 - PREFERENCE_FIRST) / 2);
+#define PREFERENCE(get) g_preferences[((get) - PREFERENCE_FIRST) / 2]
+#define SPI_SETMOUSEWHEELROUTING 0x201D
+#define g_smoothing_type PREFERENCE(0x200A)
+#define g_smoothing_contrast PREFERENCE(0x200C)
+#define g_smoothing_orientation PREFERENCE(0x2012)
 
 BOOLEAN MetricsFontSmoothing(UINT *type, UINT *contrast, UINT *orientation)
 {
@@ -458,6 +472,25 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         BOOL result = access_feature(action, data, &b);
         if (b)
             return result;
+    }
+    if (action >= PREFERENCE_FIRST && action <= PREFERENCE_LAST) {
+        /* NtUserSystemParametersInfo of win32kbase 26300 refuses a second parameter and the values out of range. */
+        ULONG_PTR value = (ULONG_PTR)data;
+        if (param || (action == SPI_SETFONTSMOOTHINGTYPE && (value & ~(ULONG_PTR)3)) ||
+            (action == SPI_SETFONTSMOOTHINGORIENTATION && (value & ~(ULONG_PTR)1)) ||
+            (action == SPI_SETMOUSEWHEELROUTING && value > 2)) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        if (!(action & 1)) {
+            if (NT_SUCCESS(MimeCopyToUser(data, &PREFERENCE(action), sizeof(UINT))))
+                return TRUE;
+            W32SetLastError(ERROR_NOACCESS);
+            return FALSE;
+        }
+    } else if (action > PREFERENCE_LAST) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
     }
     switch (action) {
     case SPI_GETNONCLIENTMETRICS: {
@@ -546,15 +579,6 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     case SPI_GETKEYBOARDPREF:
         b = FALSE;
         return NT_SUCCESS(MimeCopyToUser(data, &b, sizeof(b)));
-    case SPI_GETFONTSMOOTHINGTYPE:
-        u = g_smoothing_type;
-        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
-    case SPI_GETFONTSMOOTHINGCONTRAST:
-        u = g_smoothing_contrast;
-        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
-    case SPI_GETFONTSMOOTHINGORIENTATION:
-        u = g_smoothing_orientation;
-        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETBORDER:
         u = 1;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
@@ -575,11 +599,6 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     case SPI_GETMOUSEHOVERHEIGHT:
         u = 4;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
-    case SPI_GETCARETWIDTH:
-    case SPI_GETFOCUSBORDERWIDTH:
-    case SPI_GETFOCUSBORDERHEIGHT:
-        u = 1;
-        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETMOUSESPEED:
         u = 10;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
@@ -588,9 +607,6 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETKEYBOARDDELAY:
         u = 1;
-        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
-    case SPI_GETFOREGROUNDLOCKTIMEOUT:
-        u = 200000;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETSCREENSAVETIMEOUT:
         u = 0;
@@ -659,6 +675,11 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         }
         return TRUE;
     default:
+        /* the other preferences keep the value they are given. */
+        if (action >= PREFERENCE_FIRST && (action & 1)) {
+            PREFERENCE(action - 1) = (UINT)(ULONG_PTR)data;
+            return TRUE;
+        }
         /* setters succeed without effect; unknown getters fail. */
         return (action & 1) == 1 && action > 0x0001 ? FALSE : TRUE;
     }
