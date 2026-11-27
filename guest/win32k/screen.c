@@ -112,7 +112,8 @@ static BOOLEAN presents_through_host(WND *w)
 
 /*
  * query the last Vulkan image: size, client rectangle relative to the window, and host present count. return false if
- * absent; read pixels into g_pixels only when requested.
+ * absent; read pixels into g_pixels only when requested. the host waits for the gpu to copy it, so the kernel's lock is
+ * left meanwhile: a gpu that does not finish holds the caller, not every processor.
  */
 static BOOLEAN read_presented(WND *top, WND *source, BOOLEAN pixels, ULONG *width, ULONG *height, RECT *client,
                              ULONG64 *serial, ULONG *flags)
@@ -125,7 +126,8 @@ static BOOLEAN read_presented(WND *top, WND *source, BOOLEAN pixels, ULONG *widt
         r->window_id = (uint32_t)(ULONG_PTR)WndHandle(top);
         r->source = (uint32_t)(ULONG_PTR)WndHandle(source);
         /* first the size, then the pixels into a buffer that holds them. */
-        if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, nullptr))
+        if (HalMimeHypercallUnlocked(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0,
+                                     nullptr))
             return FALSE;
         SIZE_T need = (SIZE_T)r->width * r->height * 4;
         if (!need)
@@ -152,7 +154,8 @@ static BOOLEAN read_presented(WND *top, WND *source, BOOLEAN pixels, ULONG *widt
         r->stride = r->width * 4;
         r->pixels_phys = (uint64_t)MmGetPhysicalAddress(g_pixels).QuadPart;
         ULONG want_w = r->width, want_h = r->height;
-        if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, nullptr))
+        if (HalMimeHypercallUnlocked(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0,
+                                     nullptr))
             return FALSE;
         /* a present may have resized the image; retry once. */
         if (r->width != want_w || r->height != want_h)
