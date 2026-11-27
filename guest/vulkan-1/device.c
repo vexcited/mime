@@ -182,6 +182,9 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkAllocationCa
 {
     if (!device)
         return;
+    for (struct VkQueue_T *q = device->queues; q; q = q->next)
+        if (q->fence_state > 0)
+            vkDestroySemaphore(device, (VkSemaphore)q->fence_timeline, nullptr);
     MvkEncoder *e = mvk_call_begin(MVK_OP_DESTROY_DEVICE);
     mvk_put_u64(e, device->obj.id);
     mvk_call_end(e);
@@ -730,28 +733,66 @@ VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandBuffer(VkCommandBuffer buffer, VkCo
 
 /* ------------------------------------------------------------------ submission */
 
+static BOOL fence_timeline(VkQueue queue);
+static void fence_submitted(VkFence fence, VkQueue queue, uint64_t value);
+
+/*
+ * a fenced submit also signals the queue's timeline semaphore in a last batch of its own, with the next value. its
+ * mirror then answers for the fence, see vkWaitForFences. protected batches are left alone.
+ */
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t count, const VkSubmitInfo *submits, VkFence fence)
 {
+    BOOL tracked = fence != VK_NULL_HANDLE;
+    for (uint32_t i = 0; i < count && tracked; i++)
+        for (const VkBaseInStructure *p = submits[i].pNext; p; p = p->pNext)
+            if (p->sType == VK_STRUCTURE_TYPE_PROTECTED_SUBMIT_INFO && ((const VkProtectedSubmitInfo *)p)->protectedSubmit)
+                tracked = FALSE;
+    tracked = tracked && fence_timeline(queue);
+    uint64_t value = tracked ? queue->fence_value + 1 : 0;
     MvkEncoder *e = mvk_call_begin(MVK_OP_QUEUE_SUBMIT);
     mvk_put_u64(e, queue->obj.id);
-    mvk_put_u32(e, count);
+    mvk_put_u32(e, count + (tracked ? 1 : 0));
     for (uint32_t i = 0; i < count; i++)
         mvk_put_VkSubmitInfo(e, &submits[i]);
+    if (tracked) {
+        VkSemaphore timeline = (VkSemaphore)queue->fence_timeline;
+        VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO, nullptr, 0, nullptr, 1,
+                                                &value};
+        VkSubmitInfo signal = {VK_STRUCTURE_TYPE_SUBMIT_INFO, &values, 0, nullptr, nullptr, 0, nullptr, 1, &timeline};
+        mvk_put_VkSubmitInfo(e, &signal);
+    }
     mvk_put_u64(e, (uint64_t)fence);
     mvk_call_end(e);
+    if (tracked)
+        fence_submitted(fence, queue, value);
     return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue queue, uint32_t count, const VkSubmitInfo2 *submits,
                                               VkFence fence)
 {
+    BOOL tracked = fence != VK_NULL_HANDLE;
+    for (uint32_t i = 0; i < count && tracked; i++)
+        if (submits[i].flags & VK_SUBMIT_PROTECTED_BIT)
+            tracked = FALSE;
+    tracked = tracked && fence_timeline(queue);
+    uint64_t value = tracked ? queue->fence_value + 1 : 0;
     MvkEncoder *e = mvk_call_begin(MVK_OP_QUEUE_SUBMIT2);
     mvk_put_u64(e, queue->obj.id);
-    mvk_put_u32(e, count);
+    mvk_put_u32(e, count + (tracked ? 1 : 0));
     for (uint32_t i = 0; i < count; i++)
         mvk_put_VkSubmitInfo2(e, &submits[i]);
+    if (tracked) {
+        VkSemaphoreSubmitInfo timeline = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr,
+                                          (VkSemaphore)queue->fence_timeline, value,
+                                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0};
+        VkSubmitInfo2 signal = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 0, nullptr, 0, nullptr, 1, &timeline};
+        mvk_put_VkSubmitInfo2(e, &signal);
+    }
     mvk_put_u64(e, (uint64_t)fence);
     mvk_call_end(e);
+    if (tracked)
+        fence_submitted(fence, queue, value);
     return VK_SUCCESS;
 }
 
@@ -763,18 +804,26 @@ static VkResult result_call(MvkEncoder *e)
     return r;
 }
 
+static void fence_idle(VkQueue queue);
+
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueWaitIdle(VkQueue queue)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_QUEUE_WAIT_IDLE);
     mvk_put_u64(e, queue->obj.id);
-    return result_call(e);
+    VkResult r = result_call(e);
+    if (r == VK_SUCCESS)
+        fence_idle(queue);
+    return r;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkDeviceWaitIdle(VkDevice device)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_DEVICE_WAIT_IDLE);
     mvk_put_u64(e, device->obj.id);
-    return result_call(e);
+    VkResult r = result_call(e);
+    for (struct VkQueue_T *q = device->queues; q && r == VK_SUCCESS; q = q->next)
+        fence_idle(q);
+    return r;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueueBindSparse(VkQueue queue, uint32_t count, const VkBindSparseInfo *info,
@@ -813,15 +862,135 @@ static void destroy_object(uint32_t op, uint64_t id)
     mvk_free_id(id);
 }
 
+/*
+ * the host keeps timeline semaphore values in header slots, so reading one
+ * costs no call. a slot is reused once the host destroyed its last semaphore
+ * and writes there no more.
+ */
+typedef struct Mirror {
+    uint64_t semaphore;
+    uint64_t freed;
+    uint64_t signaled;
+} Mirror;
+
+static Mirror g_mirrors[MVK_MIRRORS];
+static SRWLOCK g_mirror_lock;
+
+static int find_mirror(uint64_t semaphore)
+{
+    for (int i = 0; i < MVK_MIRRORS; i++)
+        if (g_mirrors[i].semaphore == semaphore)
+            return i;
+    return -1;
+}
+
+/*
+ * what the guest knows of a fence. one submitted with its queue's timeline is signaled once that semaphore's mirror
+ * reaches the value of the submit, and a fence made signaled stays so until a reset. any other is the host's to answer.
+ */
+enum { FENCE_HOST, FENCE_SIGNALED, FENCE_PENDING };
+
+typedef struct Fence {
+    int state;
+    int slot;
+    uint64_t timeline, value;
+} Fence;
+
+static Map g_fences;
+/* guards the records, which a wait reads while another thread may reset or destroy the fence. */
+static SRWLOCK g_fence_lock;
+
+static Fence fence_read(VkFence fence)
+{
+    Fence f = {FENCE_HOST, -1, 0, 0};
+    AcquireSRWLockShared(&g_fence_lock);
+    Fence *r = map_get(&g_fences, (uint64_t)fence);
+    if (r)
+        f = *r;
+    ReleaseSRWLockShared(&g_fence_lock);
+    return f;
+}
+
+static void fence_set(VkFence fence, Fence f)
+{
+    AcquireSRWLockExclusive(&g_fence_lock);
+    Fence *r = map_get(&g_fences, (uint64_t)fence);
+    if (r)
+        *r = f;
+    ReleaseSRWLockExclusive(&g_fence_lock);
+}
+
+static void fence_submitted(VkFence fence, VkQueue queue, uint64_t value)
+{
+    queue->fence_value = value;
+    fence_set(fence, (Fence){FENCE_PENDING, queue->fence_slot, queue->fence_timeline, value});
+}
+
+static BOOL fence_reached(const Fence *f)
+{
+    return f->state == FENCE_SIGNALED ||
+           (f->state == FENCE_PENDING && (__atomic_load_n(&mvk_mirrors()[f->slot], __ATOMIC_ACQUIRE) >= f->value ||
+                                          __atomic_load_n(&g_mirrors[f->slot].signaled, __ATOMIC_ACQUIRE) >= f->value));
+}
+
+/* an idle queue has signaled every fence submitted to it, whether or not the host's watcher has moved the mirror yet. */
+static void fence_idle(VkQueue queue)
+{
+    if (queue->fence_state <= 0)
+        return;
+    AcquireSRWLockExclusive(&g_mirror_lock);
+    if (g_mirrors[queue->fence_slot].signaled < queue->fence_value)
+        __atomic_store_n(&g_mirrors[queue->fence_slot].signaled, queue->fence_value, __ATOMIC_RELEASE);
+    ReleaseSRWLockExclusive(&g_mirror_lock);
+}
+
+/*
+ * the host signals a fence just after the timeline semaphore that answered for it, so before a reset or a destroy
+ * it waits for those the guest called signaled. that call has no reply and runs ahead of the next one in the ring.
+ */
+static void fence_settle(uint32_t count, const VkFence *fences)
+{
+    VkFence pending[64];
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (fence_read(fences[i]).state == FENCE_PENDING)
+            pending[n++] = fences[i];
+        if (n == 64 || (n && i + 1 == count)) {
+            MvkEncoder *e = mvk_call_begin(MVK_OP_WAIT_FENCES);
+            mvk_put_u32(e, n);
+            for (uint32_t k = 0; k < n; k++)
+                mvk_put_u64(e, (uint64_t)pending[k]);
+            mvk_put_u32(e, VK_TRUE);
+            mvk_put_u64(e, 1000000000ull);
+            mvk_call_end(e);
+            n = 0;
+        }
+    }
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateFence(VkDevice device, const VkFenceCreateInfo *info,
                                              const VkAllocationCallbacks *allocator, VkFence *fence)
 {
-    return create_object(MVK_OP_CREATE_FENCE, (uint64_t *)fence, (void (*)(MvkEncoder *, const void *))mvk_put_VkFenceCreateInfo,
-                         info);
+    VkResult r = create_object(MVK_OP_CREATE_FENCE, (uint64_t *)fence,
+                               (void (*)(MvkEncoder *, const void *))mvk_put_VkFenceCreateInfo, info);
+    Fence *f = zalloc(sizeof(*f));
+    if (f) {
+        *f = (Fence){(info->flags & VK_FENCE_CREATE_SIGNALED_BIT) ? FENCE_SIGNALED : FENCE_HOST, -1, 0, 0};
+        AcquireSRWLockExclusive(&g_fence_lock);
+        map_put(&g_fences, (uint64_t)*fence, f);
+        ReleaseSRWLockExclusive(&g_fence_lock);
+    }
+    return r;
 }
 
 VKAPI_ATTR void VKAPI_CALL vkDestroyFence(VkDevice device, VkFence fence, const VkAllocationCallbacks *allocator)
 {
+    if (!fence)
+        return;
+    fence_settle(1, &fence);
+    AcquireSRWLockExclusive(&g_fence_lock);
+    zfree(map_take(&g_fences, (uint64_t)fence));
+    ReleaseSRWLockExclusive(&g_fence_lock);
     destroy_object(MVK_OP_DESTROY_FENCE, (uint64_t)fence);
 }
 
@@ -850,9 +1019,49 @@ static VkResult wait_fences_now(uint32_t count, const VkFence *fences, VkBool32 
     return result_call(e);
 }
 
+/* fences the guest answers for wait as their timeline semaphores do: on the mirrors, then for the host's events. */
+static BOOL wait_fences_mirrored(VkDevice device, uint32_t count, const VkFence *fences, VkBool32 all,
+                                 uint64_t timeout, VkResult *result)
+{
+    VkSemaphore timelines[64];
+    uint64_t values[64];
+    uint32_t left = 0;
+    if (!count || count > 64)
+        return FALSE;
+    for (uint32_t i = 0; i < count; i++) {
+        Fence f = fence_read(fences[i]);
+        if (f.state == FENCE_HOST)
+            return FALSE;
+        BOOL reached = fence_reached(&f);
+        if (reached && !all) {
+            *result = VK_SUCCESS;
+            return TRUE;
+        }
+        if (!reached) {
+            timelines[left] = (VkSemaphore)f.timeline;
+            values[left++] = f.value;
+        }
+    }
+    if (!left)
+        *result = VK_SUCCESS;
+    else if (mvk_lost())
+        *result = VK_ERROR_DEVICE_LOST;
+    else if (!timeout)
+        *result = VK_TIMEOUT;
+    else {
+        VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, nullptr, all ? 0 : VK_SEMAPHORE_WAIT_ANY_BIT,
+                                    left, timelines, values};
+        *result = vkWaitSemaphores(device, &wait, timeout);
+    }
+    return TRUE;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t count, const VkFence *fences, VkBool32 all,
                                                uint64_t timeout)
 {
+    VkResult mirrored;
+    if (wait_fences_mirrored(device, count, fences, all, timeout, &mirrored))
+        return mirrored;
     ULONGLONG start = GetTickCount64();
     for (UINT round = 0;; round++) {
         VkResult r = wait_fences_now(count, fences, all);
@@ -869,6 +1078,9 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitForFences(VkDevice device, uint32_t count, 
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice device, VkFence fence)
 {
+    Fence f = fence_read(fence);
+    if (f.state != FENCE_HOST)
+        return fence_reached(&f) ? VK_SUCCESS : mvk_lost() ? VK_ERROR_DEVICE_LOST : VK_NOT_READY;
     MvkEncoder *e = mvk_call_begin(MVK_OP_FENCE_STATUS);
     mvk_put_u64(e, (uint64_t)fence);
     return result_call(e);
@@ -876,34 +1088,15 @@ VKAPI_ATTR VkResult VKAPI_CALL vkGetFenceStatus(VkDevice device, VkFence fence)
 
 VKAPI_ATTR VkResult VKAPI_CALL vkResetFences(VkDevice device, uint32_t count, const VkFence *fences)
 {
+    fence_settle(count, fences);
+    for (uint32_t i = 0; i < count; i++)
+        fence_set(fences[i], (Fence){FENCE_HOST, -1, 0, 0});
     MvkEncoder *e = mvk_call_begin(MVK_OP_RESET_FENCES);
     mvk_put_u32(e, count);
     for (uint32_t i = 0; i < count; i++)
         mvk_put_u64(e, (uint64_t)fences[i]);
     mvk_call_end(e);
     return VK_SUCCESS;
-}
-
-/*
- * the host keeps timeline semaphore values in header slots, so reading one
- * costs no call. a slot is reused once the host destroyed its last semaphore
- * and writes there no more.
- */
-typedef struct Mirror {
-    uint64_t semaphore;
-    uint64_t freed;
-    uint64_t signaled;
-} Mirror;
-
-static Mirror g_mirrors[MVK_MIRRORS];
-static SRWLOCK g_mirror_lock;
-
-static int find_mirror(uint64_t semaphore)
-{
-    for (int i = 0; i < MVK_MIRRORS; i++)
-        if (g_mirrors[i].semaphore == semaphore)
-            return i;
-    return -1;
 }
 
 static void mirror(uint64_t semaphore, uint64_t initial)
@@ -951,6 +1144,34 @@ VKAPI_ATTR void VKAPI_CALL vkDestroySemaphore(VkDevice device, VkSemaphore semap
     if (slot >= 0)
         g_mirrors[slot] = (Mirror){0, mvk_last_serial(), 0};
     ReleaseSRWLockExclusive(&g_mirror_lock);
+}
+
+/* the queue's timeline semaphore for fences, made at its first fenced submit where the device has timelines. */
+static BOOL fence_timeline(VkQueue queue)
+{
+    if (!queue->fence_state) {
+        queue->fence_state = -1;
+        VkPhysicalDeviceTimelineSemaphoreFeatures timeline = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+        VkPhysicalDeviceFeatures2 features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline};
+        vkGetPhysicalDeviceFeatures2(queue->device->physical, &features);
+        VkSemaphoreTypeCreateInfo type = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
+        VkSemaphoreCreateInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type, 0};
+        VkSemaphore made;
+        if (timeline.timelineSemaphore && mvk_mirrors() &&
+            vkCreateSemaphore(queue->device, &info, nullptr, &made) == VK_SUCCESS) {
+            AcquireSRWLockShared(&g_mirror_lock);
+            int slot = find_mirror((uint64_t)made);
+            ReleaseSRWLockShared(&g_mirror_lock);
+            if (slot >= 0) {
+                queue->fence_timeline = (uint64_t)made;
+                queue->fence_slot = slot;
+                queue->fence_state = 1;
+            } else {
+                vkDestroySemaphore(queue->device, made, nullptr);
+            }
+        }
+    }
+    return queue->fence_state > 0;
 }
 
 static VkResult get_semaphore_value(VkDevice device, VkSemaphore semaphore, uint64_t *value);

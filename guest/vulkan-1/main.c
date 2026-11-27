@@ -401,3 +401,8 @@ uint64_t mvk_done_serial(void)
 {
     return g_header ? __atomic_load_n(&g_header->done, __ATOMIC_ACQUIRE) : 0;
 }
+
+BOOL mvk_lost(void)
+{
+    return g_header && g_header->lost;
+}

@@ -41,6 +41,10 @@ struct VkQueue_T {
     VkDevice device;
     uint32_t family, index, flags;
     struct VkQueue_T *next;
+    /* the timeline semaphore its fenced submits signal, see vkQueueSubmit: 1 made, -1 none, 0 not tried. */
+    int fence_state;
+    int fence_slot;
+    uint64_t fence_timeline, fence_value;
 };
 
 typedef struct MvkStreamPool MvkStreamPool;
@@ -87,6 +91,7 @@ uint64_t mvk_events(void);
 /* header slots of mirrored timeline semaphores. */
 volatile uint64_t *mvk_mirrors(void);
 uint64_t mvk_done_serial(void);
+BOOL mvk_lost(void);
 /* the process allocated or freed device memory, so a budget read before is stale. */
 void mvk_memory_changed(void);
 BOOL mvk_wait_events(uint64_t seen, ULONG timeout_ms, BOOL spin);
