@@ -1453,49 +1453,208 @@ VKAPI_ATTR VkResult VKAPI_CALL vkResetEvent(VkDevice device, VkEvent event)
 
 /* ------------------------------------------------------------------ descriptors */
 
+/*
+ * the guest counts what a pool has left, so an allocation that fits is not waited for: a pool with no set freed since
+ * it was made or reset cannot refuse one within its sets and its descriptors of each type. the count is kept for the
+ * types a descriptor of a set takes one of. inline uniform blocks are counted in bytes, a mutable descriptor takes
+ * from several types, a combined image sampler with an immutable sampler may take several for a multi planar format
+ * and a binding of variable size takes what the allocation says: a layout or a pool with one of those asks the host.
+ */
+#define POOL_TYPES 24
+
+typedef struct Counts {
+    uint32_t types;
+    struct {
+        VkDescriptorType type;
+        uint32_t count;
+    } of[POOL_TYPES];
+} Counts;
+
+typedef struct SetLayout {
+    BOOL counted;
+    Counts needs;
+} SetLayout;
+
+typedef struct SetPool {
+    BOOL counted;
+    /* no set freed and none of a layout that is not counted, since the pool was made or reset. */
+    BOOL exact;
+    uint32_t max_sets, sets;
+    Counts sizes, used;
+} SetPool;
+
+static Map g_set_layouts, g_set_pools;
+
+static BOOL counts_add(Counts *c, VkDescriptorType type, uint32_t count)
+{
+    if (type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK || type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT)
+        return FALSE;
+    for (uint32_t i = 0; i < c->types; i++)
+        if (c->of[i].type == type) {
+            c->of[i].count += count;
+            return TRUE;
+        }
+    if (c->types == POOL_TYPES)
+        return FALSE;
+    c->of[c->types].type = type;
+    c->of[c->types++].count = count;
+    return TRUE;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorSetLayout(VkDevice device, const VkDescriptorSetLayoutCreateInfo *info,
+                                                           const VkAllocationCallbacks *allocator,
+                                                           VkDescriptorSetLayout *layout)
+{
+    VkResult r = mvk_raw_vkCreateDescriptorSetLayout(device, info, allocator, layout);
+    SetLayout *l = r == VK_SUCCESS ? zalloc(sizeof(*l)) : nullptr;
+    if (!l)
+        return r;
+    l->counted = !(info->flags & ~(VkDescriptorSetLayoutCreateFlags)VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
+    for (const VkBaseInStructure *p = info->pNext; p; p = p->pNext) {
+        const VkDescriptorSetLayoutBindingFlagsCreateInfo *flags = (const void *)p;
+        if (p->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
+            continue;
+        for (uint32_t i = 0; i < flags->bindingCount; i++)
+            if (flags->pBindingFlags[i] & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT)
+                l->counted = FALSE;
+    }
+    for (uint32_t i = 0; i < info->bindingCount && l->counted; i++) {
+        const VkDescriptorSetLayoutBinding *b = &info->pBindings[i];
+        if (!b->descriptorCount)
+            continue;
+        if (b->descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && b->pImmutableSamplers)
+            l->counted = FALSE;
+        else
+            l->counted = counts_add(&l->needs, b->descriptorType, b->descriptorCount);
+    }
+    map_put(&g_set_layouts, (uint64_t)*layout, l);
+    return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorSetLayout(VkDevice device, VkDescriptorSetLayout layout,
+                                                        const VkAllocationCallbacks *allocator)
+{
+    if (layout)
+        zfree(map_take(&g_set_layouts, (uint64_t)layout));
+    mvk_raw_vkDestroyDescriptorSetLayout(device, layout, allocator);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorPool(VkDevice device, const VkDescriptorPoolCreateInfo *info,
                                                       const VkAllocationCallbacks *allocator, VkDescriptorPool *pool)
 {
-    return create_object(MVK_OP_CREATE_DESCRIPTOR_POOL, (uint64_t *)pool,
-                         (void (*)(MvkEncoder *, const void *))mvk_put_VkDescriptorPoolCreateInfo, info);
+    VkResult r = create_object(MVK_OP_CREATE_DESCRIPTOR_POOL, (uint64_t *)pool,
+                               (void (*)(MvkEncoder *, const void *))mvk_put_VkDescriptorPoolCreateInfo, info);
+    SetPool *p = zalloc(sizeof(*p));
+    if (p) {
+        p->counted = p->exact = TRUE;
+        p->max_sets = info->maxSets;
+        for (uint32_t i = 0; i < info->poolSizeCount && p->counted; i++)
+            p->counted = counts_add(&p->sizes, info->pPoolSizes[i].type, info->pPoolSizes[i].descriptorCount);
+        map_put(&g_set_pools, (uint64_t)*pool, p);
+    }
+    return r;
 }
 
 VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorPool(VkDevice device, VkDescriptorPool pool,
                                                    const VkAllocationCallbacks *allocator)
 {
+    if (pool)
+        zfree(map_take(&g_set_pools, (uint64_t)pool));
     destroy_object(MVK_OP_DESTROY_DESCRIPTOR_POOL, (uint64_t)pool);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkResetDescriptorPool(VkDevice device, VkDescriptorPool pool,
                                                      VkDescriptorPoolResetFlags flags)
 {
+    SetPool *p = map_get(&g_set_pools, (uint64_t)pool);
+    if (p) {
+        p->sets = 0;
+        p->used = (Counts){};
+        p->exact = TRUE;
+    }
     MvkEncoder *e = mvk_call_begin(MVK_OP_RESET_DESCRIPTOR_POOL);
     mvk_put_u64(e, (uint64_t)pool);
     mvk_call_end(e);
     return VK_SUCCESS;
 }
 
+/* what the sets asked for take from the pool, FALSE when one of their layouts is not counted. */
+static BOOL sets_need(const VkDescriptorSetAllocateInfo *info, Counts *need)
+{
+    *need = (Counts){};
+    if (info->pNext)
+        return FALSE;
+    for (uint32_t i = 0; i < info->descriptorSetCount; i++) {
+        const SetLayout *l = map_get(&g_set_layouts, (uint64_t)info->pSetLayouts[i]);
+        if (!l || !l->counted)
+            return FALSE;
+        for (uint32_t k = 0; k < l->needs.types; k++)
+            if (!counts_add(need, l->needs.of[k].type, l->needs.of[k].count))
+                return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL pool_fits(const SetPool *p, uint32_t sets, const Counts *need)
+{
+    if (!p->counted || !p->exact || p->sets > p->max_sets || sets > p->max_sets - p->sets)
+        return FALSE;
+    for (uint32_t i = 0; i < need->types; i++) {
+        uint32_t size = 0, used = 0;
+        for (uint32_t k = 0; k < p->sizes.types; k++)
+            if (p->sizes.of[k].type == need->of[i].type)
+                size = p->sizes.of[k].count;
+        for (uint32_t k = 0; k < p->used.types; k++)
+            if (p->used.of[k].type == need->of[i].type)
+                used = p->used.of[k].count;
+        if (used > size || need->of[i].count > size - used)
+            return FALSE;
+    }
+    return TRUE;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(VkDevice device, const VkDescriptorSetAllocateInfo *info,
                                                         VkDescriptorSet *sets)
 {
+    SetPool *p = map_get(&g_set_pools, (uint64_t)info->descriptorPool);
+    Counts need;
+    BOOL known = p && sets_need(info, &need);
+    BOOL fits = known && pool_fits(p, info->descriptorSetCount, &need);
     MvkEncoder *e = mvk_call_begin(MVK_OP_ALLOCATE_DESCRIPTOR_SETS);
     mvk_put_VkDescriptorSetAllocateInfo(e, info);
     for (uint32_t i = 0; i < info->descriptorSetCount; i++) {
         sets[i] = (VkDescriptorSet)mvk_new_id();
         mvk_put_u64(e, (uint64_t)sets[i]);
     }
-    VkResult r = result_call(e);
-    if (r != VK_SUCCESS)
+    VkResult r = VK_SUCCESS;
+    if (fits)
+        mvk_call_end(e);
+    else
+        r = result_call(e);
+    if (r != VK_SUCCESS) {
         for (uint32_t i = 0; i < info->descriptorSetCount; i++) {
             mvk_free_id((uint64_t)sets[i]);
             sets[i] = VK_NULL_HANDLE;
         }
-    return r;
+        return r;
+    }
+    if (p && known) {
+        p->sets += info->descriptorSetCount;
+        for (uint32_t i = 0; i < need.types; i++)
+            if (!counts_add(&p->used, need.of[i].type, need.of[i].count))
+                p->exact = FALSE;
+    } else if (p) {
+        p->exact = FALSE;
+    }
+    return VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkFreeDescriptorSets(VkDevice device, VkDescriptorPool pool, uint32_t count,
                                                     const VkDescriptorSet *sets)
 {
+    SetPool *p = map_get(&g_set_pools, (uint64_t)pool);
+    if (p)
+        p->exact = FALSE;
     MvkEncoder *e = mvk_call_begin(MVK_OP_FREE_DESCRIPTOR_SETS);
     mvk_put_u64(e, (uint64_t)pool);
     mvk_put_u32(e, count);

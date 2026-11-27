@@ -136,6 +136,12 @@ VKAPI_ATTR void VKAPI_CALL mvk_raw_vkGetPhysicalDeviceProperties2(VkPhysicalDevi
                                                                   VkPhysicalDeviceProperties2 *properties);
 VKAPI_ATTR VkResult VKAPI_CALL mvk_raw_vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo *info,
                                                            const VkAllocationCallbacks *allocator, VkCommandPool *pool);
+VKAPI_ATTR VkResult VKAPI_CALL mvk_raw_vkCreateDescriptorSetLayout(VkDevice device,
+                                                                   const VkDescriptorSetLayoutCreateInfo *info,
+                                                                   const VkAllocationCallbacks *allocator,
+                                                                   VkDescriptorSetLayout *layout);
+VKAPI_ATTR void VKAPI_CALL mvk_raw_vkDestroyDescriptorSetLayout(VkDevice device, VkDescriptorSetLayout layout,
+                                                                const VkAllocationCallbacks *allocator);
 
 
 #endif

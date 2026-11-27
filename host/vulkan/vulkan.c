@@ -2486,7 +2486,11 @@ static void allocate_descriptor_sets(MvkCall *call)
     if (result == VK_SUCCESS)
         for (uint32_t i = 0; i < n; i++)
             bind(c, ids[i], (uint64_t)sets[i]);
-    reply_result(call, result);
+    /* the guest does not wait for an allocation its count of the pool has room for. */
+    if (call->header.reply == MVK_NO_REPLY)
+        mvk_check(call, result, "vkAllocateDescriptorSets");
+    else
+        reply_result(call, result);
 }
 
 static void free_descriptor_sets(MvkCall *call)

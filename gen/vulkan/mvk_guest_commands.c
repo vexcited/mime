@@ -684,7 +684,7 @@ VKAPI_ATTR void VKAPI_CALL vkDestroySampler(VkDevice device, VkSampler sampler, 
     mvk_free_id((uint64_t)sampler);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorSetLayout(VkDevice device, const VkDescriptorSetLayoutCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDescriptorSetLayout * pSetLayout)
+VKAPI_ATTR VkResult VKAPI_CALL mvk_raw_vkCreateDescriptorSetLayout(VkDevice device, const VkDescriptorSetLayoutCreateInfo * pCreateInfo, const VkAllocationCallbacks * pAllocator, VkDescriptorSetLayout * pSetLayout)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_vkCreateDescriptorSetLayout);
     mvk_put_handle(e, 1, mvk_dispatch_id(device));
@@ -699,7 +699,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorSetLayout(VkDevice device, cons
     return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorSetLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, const VkAllocationCallbacks * pAllocator)
+VKAPI_ATTR void VKAPI_CALL mvk_raw_vkDestroyDescriptorSetLayout(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, const VkAllocationCallbacks * pAllocator)
 {
     MvkEncoder *e = mvk_call_begin(MVK_OP_vkDestroyDescriptorSetLayout);
     mvk_put_handle(e, 1, mvk_dispatch_id(device));
