@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <linux/futex.h>
 #include <linux/kvm.h>
+#include <poll.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdio.h>
@@ -561,6 +562,58 @@ void mime_vcpu_kick(MimeVcpu *vcpu)
         pthread_kill(vcpu->thread, KICK_SIGNAL);
 }
 
+struct MimeWake {
+    int fd;
+    uint32_t number;
+    bool in_kernel;
+};
+
+MimeWake *mime_wake_create(MimeVm *vm, uint32_t number)
+{
+    MimeWake *wake = calloc(1, sizeof(*wake));
+    if (!wake)
+        return nullptr;
+    wake->number = number;
+    wake->fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (wake->fd < 0) {
+        free(wake);
+        return nullptr;
+    }
+    /* without it the write leaves kvm for handle_io, which wakes as well. */
+    struct kvm_ioeventfd kick = {.datamatch = number, .addr = MIME_VK_KICK_PORT, .len = 4, .fd = wake->fd,
+                                 .flags = KVM_IOEVENTFD_FLAG_PIO | KVM_IOEVENTFD_FLAG_DATAMATCH};
+    wake->in_kernel = ioctl(vm->vm_fd, KVM_IOEVENTFD, &kick) == 0;
+    return wake;
+}
+
+void mime_wake_destroy(MimeVm *vm, MimeWake *wake)
+{
+    if (!wake)
+        return;
+    struct kvm_ioeventfd kick = {.datamatch = wake->number, .addr = MIME_VK_KICK_PORT, .len = 4, .fd = wake->fd,
+                                 .flags = KVM_IOEVENTFD_FLAG_PIO | KVM_IOEVENTFD_FLAG_DATAMATCH |
+                                          KVM_IOEVENTFD_FLAG_DEASSIGN};
+    if (wake->in_kernel)
+        ioctl(vm->vm_fd, KVM_IOEVENTFD, &kick);
+    close(wake->fd);
+    free(wake);
+}
+
+void mime_wake_signal(MimeWake *wake)
+{
+    uint64_t one = 1;
+    /* a full counter is a wake that is already there. */
+    if (write(wake->fd, &one, sizeof(one)) < 0 && errno != EAGAIN)
+        mime_warn("a wake is lost: %s", strerror(errno));
+}
+
+bool mime_wake_wait(MimeWake *wake, uint32_t milliseconds)
+{
+    struct pollfd wait = {.fd = wake->fd, .events = POLLIN};
+    uint64_t count;
+    return poll(&wait, 1, (int)milliseconds) > 0 && read(wake->fd, &count, sizeof(count)) == sizeof(count);
+}
+
 void mime_vcpu_request_dump(MimeVm *vm)
 {
     g_dump_requested = true;
@@ -695,6 +748,13 @@ static bool handle_io(MimeVcpu *vcpu)
     struct kvm_run *run = vcpu->run;
     if (run->io.direction != KVM_EXIT_IO_OUT || run->io.port != MIME_HC_PORT) {
         uint8_t *data = (uint8_t *)run + run->io.data_offset;
+        /* a kick kvm did not take itself, see mime_wake_create. */
+        if (run->io.direction == KVM_EXIT_IO_OUT && run->io.port == MIME_VK_KICK_PORT && run->io.size == 4) {
+            uint32_t connection;
+            memcpy(&connection, data, sizeof(connection));
+            mime_vk_kick(connection);
+            return true;
+        }
         bool write = run->io.direction == KVM_EXIT_IO_OUT;
         /* a string instruction moves count elements through the one port. */
         for (uint32_t i = 0; i < run->io.count; i++, data += run->io.size)

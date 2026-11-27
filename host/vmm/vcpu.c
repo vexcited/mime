@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 #define EC_WFX 0x01
 #define EC_HVC64 0x16
@@ -268,6 +269,62 @@ void mime_vcpu_kick(MimeVcpu *vcpu)
         hv_vcpu_t h = (hv_vcpu_t)vcpu->handle;
         hv_vcpus_exit(&h, 1);
     }
+}
+
+struct MimeWake {
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    bool signaled;
+};
+
+/* the guest wakes it by hypercall here. */
+MimeWake *mime_wake_create(MimeVm *vm, uint32_t number)
+{
+    (void)vm;
+    (void)number;
+    MimeWake *wake = calloc(1, sizeof(*wake));
+    if (wake) {
+        pthread_mutex_init(&wake->lock, nullptr);
+        pthread_cond_init(&wake->cond, nullptr);
+    }
+    return wake;
+}
+
+void mime_wake_destroy(MimeVm *vm, MimeWake *wake)
+{
+    (void)vm;
+    if (!wake)
+        return;
+    pthread_cond_destroy(&wake->cond);
+    pthread_mutex_destroy(&wake->lock);
+    free(wake);
+}
+
+void mime_wake_signal(MimeWake *wake)
+{
+    pthread_mutex_lock(&wake->lock);
+    wake->signaled = true;
+    pthread_cond_signal(&wake->cond);
+    pthread_mutex_unlock(&wake->lock);
+}
+
+bool mime_wake_wait(MimeWake *wake, uint32_t milliseconds)
+{
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += milliseconds / 1000;
+    until.tv_nsec += (long)(milliseconds % 1000) * 1000000;
+    if (until.tv_nsec >= 1000000000) {
+        until.tv_sec++;
+        until.tv_nsec -= 1000000000;
+    }
+    pthread_mutex_lock(&wake->lock);
+    while (!wake->signaled && pthread_cond_timedwait(&wake->cond, &wake->lock, &until) == 0)
+        ;
+    bool signaled = wake->signaled;
+    wake->signaled = false;
+    pthread_mutex_unlock(&wake->lock);
+    return signaled;
 }
 
 static bool handle_exception(MimeVcpu *vcpu)

@@ -256,6 +256,16 @@ bool mime_vm_load_kernel(MimeVm *vm);
 /* vcpu.c */
 bool mime_vcpu_start(MimeVcpu *vcpu);
 void mime_vcpu_kick(MimeVcpu *vcpu);
+/*
+ * what a host thread sleeps on until the guest or the host wakes it. on x64 the guest wakes it with a write of number to
+ * MIME_VK_KICK_PORT, which kvm takes without leaving the kernel.
+ */
+typedef struct MimeWake MimeWake;
+MimeWake *mime_wake_create(MimeVm *vm, uint32_t number);
+void mime_wake_destroy(MimeVm *vm, MimeWake *wake);
+void mime_wake_signal(MimeWake *wake);
+/* false when the time ran out with no wake. */
+bool mime_wake_wait(MimeWake *wake, uint32_t milliseconds);
 void mime_vcpu_request_dump(MimeVm *vm);
 /* starts or stops sampling where the vCPUs run; async signal safe. */
 void mime_vcpu_toggle_profile(void);

@@ -22,9 +22,7 @@ struct MvkConnection {
     uint8_t *ring;
     uint8_t *reply;
     pthread_t thread;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    bool kicked;
+    MimeWake *kick; /* what the thread sleeps on with no call to run. */
     volatile bool closing;
     volatile uint32_t syncing; /* reads of the screen waiting for what the guest posted, see mime_vk_sync. */
 

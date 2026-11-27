@@ -11,10 +11,16 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
     ULONG64 rdx = a3;
     ULONG64 number = nr;
     ULONG64 start = HalReadCounter();
-    __asm__ volatile("outb %%al, %[port]"
-                     : "+a"(nr), "+d"(rdx)
-                     : [port] "i"(MIME_HC_PORT), "D"(a1), "S"(a2), "r"(r10), "r"(r8), "r"(r9)
-                     : "memory");
+    if (nr == MIME_HC_VK_KICK) {
+        /* its own port: the host's kernel wakes the thread and the processor never leaves it. */
+        __asm__ volatile("outl %%eax, %[port]" : : "a"((ULONG)a1), [port] "i"(MIME_VK_KICK_PORT) : "memory");
+        nr = MIME_HC_STATUS_OK;
+    } else {
+        __asm__ volatile("outb %%al, %[port]"
+                         : "+a"(nr), "+d"(rdx)
+                         : [port] "i"(MIME_HC_PORT), "D"(a1), "S"(a2), "r"(r10), "r"(r8), "r"(r9)
+                         : "memory");
+    }
     if (number < 64) {
         /* racy without the lock, good enough for statistics. */
         ULONG64 took = HalReadCounter() - start;

@@ -3267,21 +3267,9 @@ static void *connection_main(void *arg)
                 __atomic_store_n(&h->host_idle, 1, __ATOMIC_SEQ_CST);
                 put = __atomic_load_n(&h->put, __ATOMIC_SEQ_CST);
                 if (put == get) {
-                    pthread_mutex_lock(&c->lock);
-                    while (!c->kicked && !c->closing) {
-                        struct timespec ts;
-                        clock_gettime(CLOCK_REALTIME, &ts);
-                        ts.tv_nsec += 100000000;
-                        if (ts.tv_nsec >= 1000000000) {
-                            ts.tv_sec++;
-                            ts.tv_nsec -= 1000000000;
-                        }
-                        pthread_cond_timedwait(&c->cond, &c->lock, &ts);
-                        if (__atomic_load_n(&h->put, __ATOMIC_ACQUIRE) != get)
-                            break;
-                    }
-                    c->kicked = false;
-                    pthread_mutex_unlock(&c->lock);
+                    while (!c->closing && !mime_wake_wait(c->kick, 100) &&
+                           __atomic_load_n(&h->put, __ATOMIC_ACQUIRE) == get)
+                        ;
                 }
                 __atomic_store_n(&h->host_idle, 0, __ATOMIC_SEQ_CST);
                 continue;
@@ -3403,8 +3391,6 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     c->call = malloc(MVK_MAX_CALL);
     c->arena = malloc(ARENA_SIZE);
     c->handle_chunks = calloc(CHUNKS, sizeof(uint64_t *));
-    pthread_mutex_init(&c->lock, nullptr);
-    pthread_cond_init(&c->cond, nullptr);
     pthread_mutex_init(&c->job_lock, nullptr);
     pthread_cond_init(&c->job_done, nullptr);
     pthread_mutex_init(&c->watch_lock, nullptr);
@@ -3426,10 +3412,12 @@ uint64_t mime_vk_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *index)
     uint32_t i = 1;
     while (i < MAX_CONNECTIONS && g_connections[i])
         i++;
-    if (i == MAX_CONNECTIONS) {
+    c->kick = i < MAX_CONNECTIONS ? mime_wake_create(vm, i) : nullptr;
+    if (!c->kick) {
         pthread_mutex_unlock(&g_lock);
         free(c->call);
         free(c->arena);
+        free(c->handle_chunks);
         free(c);
         return MIME_HC_STATUS_NO_MEMORY;
     }
@@ -3445,12 +3433,8 @@ void mime_vk_kick(uint64_t index)
 {
     pthread_mutex_lock(&g_lock);
     MvkConnection *c = index < MAX_CONNECTIONS ? g_connections[index] : nullptr;
-    if (c) {
-        pthread_mutex_lock(&c->lock);
-        c->kicked = true;
-        pthread_cond_signal(&c->cond);
-        pthread_mutex_unlock(&c->lock);
-    }
+    if (c)
+        mime_wake_signal(c->kick);
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -3481,12 +3465,8 @@ void mime_vk_sync(void)
     for (uint32_t i = 0; i < count; i++) {
         MvkConnection *c = list[i];
         MvkHeader *h = c->header;
-        if (__atomic_load_n(&h->get, __ATOMIC_ACQUIRE) < put[i]) {
-            pthread_mutex_lock(&c->lock);
-            c->kicked = true;
-            pthread_cond_signal(&c->cond);
-            pthread_mutex_unlock(&c->lock);
-        }
+        if (__atomic_load_n(&h->get, __ATOMIC_ACQUIRE) < put[i])
+            mime_wake_signal(c->kick);
         while (__atomic_load_n(&h->get, __ATOMIC_ACQUIRE) < put[i] && !c->closing &&
                !__atomic_load_n(&h->lost, __ATOMIC_ACQUIRE) && mime_now_ns() < until) {
             struct timespec pause = {0, 100000};
@@ -3517,10 +3497,8 @@ void mime_vk_close(uint64_t index)
     pthread_mutex_unlock(&g_lock);
     if (!c)
         return;
-    pthread_mutex_lock(&c->lock);
     c->closing = true;
-    pthread_cond_signal(&c->cond);
-    pthread_mutex_unlock(&c->lock);
+    mime_wake_signal(c->kick);
     /* a read of a window that sync waits for the connection is done with it first. */
     while (__atomic_load_n(&c->syncing, __ATOMIC_ACQUIRE)) {
         struct timespec pause = {0, 100000};
@@ -3555,6 +3533,7 @@ void mime_vk_close(uint64_t index)
     free(c->reverse);
     free(c->call);
     free(c->arena);
+    mime_wake_destroy(c->vm, c->kick);
     free(c);
 }
 

@@ -50,6 +50,8 @@
 
 /* x64: the i/o port of hypercalls and the apic vector of the host's interrupt. */
 #define MIME_HC_PORT 0x5E
+/* x64: `outl %eax` of a vulkan connection is MIME_HC_VK_KICK with no reply, which kvm takes without leaving the kernel. */
+#define MIME_VK_KICK_PORT 0x5A
 #define MIME_X64_IRQ_VECTOR 0x81
 
 /*
