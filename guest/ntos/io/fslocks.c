@@ -137,6 +137,9 @@ NTSTATUS NTAPI NtLockFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOI
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     status = access & (FILE_READ_DATA | FILE_WRITE_DATA) ? capture_range(file, offset, length, key, lock) : STATUS_ACCESS_DENIED;
+    /* like windows, the close of a file object never locked leaves its ranges alone. */
+    if (NT_SUCCESS(status))
+        file->LockOperation = TRUE;
     IO_USER_REQUEST *request = nullptr;
     if (NT_SUCCESS(status))
         request = IopNewUserRequest(file, event, routine, context, iosb, nullptr, 0, &status);
@@ -247,7 +250,8 @@ NTSTATUS FsLocksCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb)
 
 void FsLocksCleanup(PFILE_OBJECT file, PEPROCESS process)
 {
-    if (!IopIsMimeFs(file))
+    /* a close looks for the process's other handles to the file, which in the system process's table are thousands. */
+    if (!file->LockOperation || !IopIsMimeFs(file))
         return;
     LIST_ENTRY ready;
     InitializeListHead(&ready);
