@@ -3304,6 +3304,7 @@ NTSTATUS NTAPI NtTraceEvent(HANDLE handle, ULONG flags, ULONG length, PVOID data
 #define LICENCE_DWORD 4
 static const ULONG g_licence_product = 0x30; /* PRODUCT_PROFESSIONAL */
 static const ULONG g_licence_languages = 1000;
+static const ULONG g_licence_no_override = 0;
 static const WCHAR g_licence_empty[] = L"EMPTY";
 static const WCHAR g_licence_sku[] =
         L"en-US;en-AU;en-CA;en-GB;en-HK;en-IE;en-NZ;en-SG;ar-SA;pt-BR;zh-TW;zh-CN;zh-HK;zh-SG;cs-CZ;da-DK;"
@@ -3318,6 +3319,8 @@ static const struct {
     ULONG Size;
 } g_licence_values[] = {
     {L"Kernel-ProductInfo", LICENCE_DWORD, &g_licence_product, sizeof(g_licence_product)},
+    {L"Kernel-BrandingInfo", LICENCE_DWORD, &g_licence_product, sizeof(g_licence_product)},
+    {L"Security-SPP-AllowBrandingOverride", LICENCE_DWORD, &g_licence_no_override, sizeof(g_licence_no_override)},
     {L"Kernel-MUI-Number-Allowed", LICENCE_DWORD, &g_licence_languages, sizeof(g_licence_languages)},
     {L"Kernel-MUI-Language-Allowed", LICENCE_SZ, g_licence_empty, sizeof(g_licence_empty)},
     {L"Kernel-MUI-Language-Disallowed", LICENCE_SZ, g_licence_empty, sizeof(g_licence_empty)},
