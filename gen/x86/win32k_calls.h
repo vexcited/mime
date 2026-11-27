@@ -241,6 +241,12 @@
         return MxCallService(number, v);
     case MIME_SVC_NtUserDisableProcessWindowsGhosting:
         return MxCallService(number, v);
+    case MIME_SVC_NtUserReplyMessage:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserSetMessageExtraInfo:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
     case MIME_SVC_NtUserGetForegroundWindow:
         return MxCallService(number, v);
     case MIME_SVC_NtUserSetCapture:

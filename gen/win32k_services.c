@@ -34,6 +34,8 @@ void NtUserSetShellWindowEx(void);
 void NtUserGetTitleBarInfo(void);
 void NtUserShowCursor(void);
 void NtUserDisableProcessWindowsGhosting(void);
+void NtUserReplyMessage(void);
+void NtUserSetMessageExtraInfo(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2834,5 +2836,15 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserDisableProcessWindowsGhosting & 0xFFF] = (SERVICE){(void *)NtUserDisableProcessWindowsGhosting, STACK_ARGS(0), 1, 0};
 #else
 #warning "NtUserDisableProcessWindowsGhosting has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserReplyMessage
+    table[MIME_SVC_NtUserReplyMessage & 0xFFF] = (SERVICE){(void *)NtUserReplyMessage, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserReplyMessage has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetMessageExtraInfo
+    table[MIME_SVC_NtUserSetMessageExtraInfo & 0xFFF] = (SERVICE){(void *)NtUserSetMessageExtraInfo, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserSetMessageExtraInfo has no syscall number"
 #endif
 }

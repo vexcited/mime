@@ -362,6 +362,27 @@ void NTAPI NtUserDisableProcessWindowsGhosting(void)
 {
 }
 
+BOOL NTAPI NtUserReplyMessage(LRESULT result)
+{
+    UserEnter();
+    BOOL replied = MsgReply(W32GetThread(), result);
+    UserLeave();
+    return replied;
+}
+
+LPARAM NTAPI NtUserSetMessageExtraInfo(LPARAM info)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    LPARAM old = 0;
+    if (t) {
+        old = (LPARAM)t->ExtraInfo;
+        t->ExtraInfo = (ULONG_PTR)info;
+    }
+    UserLeave();
+    return old;
+}
+
 BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
 {
     CURSORINFO ci;
