@@ -240,8 +240,41 @@ static void string_free(WCHAR *text)
 }
 
 /*
+ * a licence that allows its own branding adds EditionSubstring of the CurrentVersion key to the long name, after a
+ * space. windows then counts the end of the string in the length it returns.
+ */
+static WCHAR *overridden(const WCHAR *name)
+{
+    UNICODE_STRING policy = RTL_CONSTANT_STRING(L"Security-SPP-AllowBrandingOverride");
+    ULONG type = 0, allowed = 0, size = 0;
+    if (!NT_SUCCESS(NtQueryLicenseValue(&policy, &type, &allowed, sizeof(allowed), &size)) || size != sizeof(allowed) ||
+        allowed != 1)
+        return nullptr;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &key))
+        return nullptr;
+    DWORD kind = 0, bytes = 0;
+    WCHAR *text = nullptr;
+    if (!RegQueryValueExW(key, L"EditionSubstring", nullptr, &kind, nullptr, &bytes) &&
+        (kind == REG_SZ || kind == REG_EXPAND_SZ)) {
+        SIZE_T chars = wcslen(name);
+        text = LocalAlloc(LPTR, (chars + 2) * sizeof(WCHAR) + bytes + sizeof(WCHAR));
+        if (text) {
+            memcpy(text, name, chars * sizeof(WCHAR));
+            text[chars] = L' ';
+            if (RegQueryValueExW(key, L"EditionSubstring", nullptr, nullptr, (BYTE *)(text + chars + 1), &bytes)) {
+                LocalFree(text);
+                text = nullptr;
+            }
+        }
+    }
+    RegCloseKey(key);
+    return text;
+}
+
+/*
  * the name of an edition takes two inserts, " Insider Preview" then " in S mode", and only strings 12 and 13 are given
- * them. the override of the edition's name by the licence and EditionSubstring is not read: no licence here allows it.
+ * them.
  */
 DECLSPEC_EXPORT int WINAPI BrandingLoadStringForEdition(const WCHAR *brand, UINT id, DWORD edition, WCHAR *buffer,
                                                          int count, DWORD flags)
@@ -277,13 +310,20 @@ done:
         LocalFree(text);
         return 0;
     }
-    int copied = (int)chars < count ? (int)chars : count - 1;
+    int length = (int)chars;
+    WCHAR *named = id == BRAND_STRING_LONG ? overridden(text) : nullptr;
+    if (named) {
+        LocalFree(text);
+        text = named;
+        length = (int)wcslen(named) + 1;
+    }
     if (count > 0) {
+        int copied = (int)wcslen(text) < count ? (int)wcslen(text) : count - 1;
         memcpy(buffer, text, copied * sizeof(WCHAR));
         buffer[copied] = 0;
     }
     LocalFree(text);
-    return copied;
+    return length < count ? length : count - 1;
 }
 
 DECLSPEC_EXPORT int WINAPI BrandingLoadString(const WCHAR *brand, UINT id, WCHAR *buffer, int count)
