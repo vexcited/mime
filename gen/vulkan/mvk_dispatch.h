@@ -826,7 +826,12 @@ static inline void mvk_destroy_kind(const MvkDispatch *t, VkDevice device, int k
     }
 }
 
-/* fills every entry the instance or device has; only device level commands come from the device. */
+/*
+ * fills every entry the instance or device has. device level commands come from the device alone: Mesa leaves out
+ * the core name of a command when the instance asked for an older version, and the loader then hands out a
+ * trampoline for it through the instance that jumps to a null entry. the name the device does have, of the
+ * extension the command came from, stands in for it.
+ */
 static inline void mvk_load_dispatch(MvkDispatch *t, PFN_vkGetInstanceProcAddr gipa, VkInstance instance,
                                      PFN_vkGetDeviceProcAddr gdpa, VkDevice device)
 {
@@ -842,394 +847,140 @@ static inline void mvk_load_dispatch(MvkDispatch *t, PFN_vkGetInstanceProcAddr g
     t->vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)gipa(instance, "vkGetInstanceProcAddr");
     t->vkGetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)gipa(instance, "vkGetDeviceProcAddr");
     t->vkCreateDevice = (PFN_vkCreateDevice)gipa(instance, "vkCreateDevice");
-    t->vkDestroyDevice = (PFN_vkDestroyDevice)(device ? gdpa(device, "vkDestroyDevice") : NULL);
-    if (!t->vkDestroyDevice)
-        t->vkDestroyDevice = (PFN_vkDestroyDevice)gipa(instance, "vkDestroyDevice");
+    t->vkDestroyDevice = (PFN_vkDestroyDevice)(device ? gdpa(device, "vkDestroyDevice") : gipa(instance, "vkDestroyDevice"));
     t->vkEnumerateInstanceExtensionProperties = (PFN_vkEnumerateInstanceExtensionProperties)gipa(instance, "vkEnumerateInstanceExtensionProperties");
     t->vkEnumerateDeviceExtensionProperties = (PFN_vkEnumerateDeviceExtensionProperties)gipa(instance, "vkEnumerateDeviceExtensionProperties");
     t->vkEnumerateInstanceLayerProperties = (PFN_vkEnumerateInstanceLayerProperties)gipa(instance, "vkEnumerateInstanceLayerProperties");
     t->vkEnumerateDeviceLayerProperties = (PFN_vkEnumerateDeviceLayerProperties)gipa(instance, "vkEnumerateDeviceLayerProperties");
-    t->vkGetDeviceQueue = (PFN_vkGetDeviceQueue)(device ? gdpa(device, "vkGetDeviceQueue") : NULL);
-    if (!t->vkGetDeviceQueue)
-        t->vkGetDeviceQueue = (PFN_vkGetDeviceQueue)gipa(instance, "vkGetDeviceQueue");
-    t->vkQueueSubmit = (PFN_vkQueueSubmit)(device ? gdpa(device, "vkQueueSubmit") : NULL);
-    if (!t->vkQueueSubmit)
-        t->vkQueueSubmit = (PFN_vkQueueSubmit)gipa(instance, "vkQueueSubmit");
-    t->vkQueueWaitIdle = (PFN_vkQueueWaitIdle)(device ? gdpa(device, "vkQueueWaitIdle") : NULL);
-    if (!t->vkQueueWaitIdle)
-        t->vkQueueWaitIdle = (PFN_vkQueueWaitIdle)gipa(instance, "vkQueueWaitIdle");
-    t->vkDeviceWaitIdle = (PFN_vkDeviceWaitIdle)(device ? gdpa(device, "vkDeviceWaitIdle") : NULL);
-    if (!t->vkDeviceWaitIdle)
-        t->vkDeviceWaitIdle = (PFN_vkDeviceWaitIdle)gipa(instance, "vkDeviceWaitIdle");
-    t->vkAllocateMemory = (PFN_vkAllocateMemory)(device ? gdpa(device, "vkAllocateMemory") : NULL);
-    if (!t->vkAllocateMemory)
-        t->vkAllocateMemory = (PFN_vkAllocateMemory)gipa(instance, "vkAllocateMemory");
-    t->vkFreeMemory = (PFN_vkFreeMemory)(device ? gdpa(device, "vkFreeMemory") : NULL);
-    if (!t->vkFreeMemory)
-        t->vkFreeMemory = (PFN_vkFreeMemory)gipa(instance, "vkFreeMemory");
-    t->vkMapMemory = (PFN_vkMapMemory)(device ? gdpa(device, "vkMapMemory") : NULL);
-    if (!t->vkMapMemory)
-        t->vkMapMemory = (PFN_vkMapMemory)gipa(instance, "vkMapMemory");
-    t->vkUnmapMemory = (PFN_vkUnmapMemory)(device ? gdpa(device, "vkUnmapMemory") : NULL);
-    if (!t->vkUnmapMemory)
-        t->vkUnmapMemory = (PFN_vkUnmapMemory)gipa(instance, "vkUnmapMemory");
-    t->vkFlushMappedMemoryRanges = (PFN_vkFlushMappedMemoryRanges)(device ? gdpa(device, "vkFlushMappedMemoryRanges") : NULL);
-    if (!t->vkFlushMappedMemoryRanges)
-        t->vkFlushMappedMemoryRanges = (PFN_vkFlushMappedMemoryRanges)gipa(instance, "vkFlushMappedMemoryRanges");
-    t->vkInvalidateMappedMemoryRanges = (PFN_vkInvalidateMappedMemoryRanges)(device ? gdpa(device, "vkInvalidateMappedMemoryRanges") : NULL);
-    if (!t->vkInvalidateMappedMemoryRanges)
-        t->vkInvalidateMappedMemoryRanges = (PFN_vkInvalidateMappedMemoryRanges)gipa(instance, "vkInvalidateMappedMemoryRanges");
-    t->vkGetDeviceMemoryCommitment = (PFN_vkGetDeviceMemoryCommitment)(device ? gdpa(device, "vkGetDeviceMemoryCommitment") : NULL);
-    if (!t->vkGetDeviceMemoryCommitment)
-        t->vkGetDeviceMemoryCommitment = (PFN_vkGetDeviceMemoryCommitment)gipa(instance, "vkGetDeviceMemoryCommitment");
-    t->vkBindBufferMemory = (PFN_vkBindBufferMemory)(device ? gdpa(device, "vkBindBufferMemory") : NULL);
-    if (!t->vkBindBufferMemory)
-        t->vkBindBufferMemory = (PFN_vkBindBufferMemory)gipa(instance, "vkBindBufferMemory");
-    t->vkBindImageMemory = (PFN_vkBindImageMemory)(device ? gdpa(device, "vkBindImageMemory") : NULL);
-    if (!t->vkBindImageMemory)
-        t->vkBindImageMemory = (PFN_vkBindImageMemory)gipa(instance, "vkBindImageMemory");
-    t->vkGetBufferMemoryRequirements = (PFN_vkGetBufferMemoryRequirements)(device ? gdpa(device, "vkGetBufferMemoryRequirements") : NULL);
-    if (!t->vkGetBufferMemoryRequirements)
-        t->vkGetBufferMemoryRequirements = (PFN_vkGetBufferMemoryRequirements)gipa(instance, "vkGetBufferMemoryRequirements");
-    t->vkGetImageMemoryRequirements = (PFN_vkGetImageMemoryRequirements)(device ? gdpa(device, "vkGetImageMemoryRequirements") : NULL);
-    if (!t->vkGetImageMemoryRequirements)
-        t->vkGetImageMemoryRequirements = (PFN_vkGetImageMemoryRequirements)gipa(instance, "vkGetImageMemoryRequirements");
-    t->vkGetImageSparseMemoryRequirements = (PFN_vkGetImageSparseMemoryRequirements)(device ? gdpa(device, "vkGetImageSparseMemoryRequirements") : NULL);
-    if (!t->vkGetImageSparseMemoryRequirements)
-        t->vkGetImageSparseMemoryRequirements = (PFN_vkGetImageSparseMemoryRequirements)gipa(instance, "vkGetImageSparseMemoryRequirements");
+    t->vkGetDeviceQueue = (PFN_vkGetDeviceQueue)(device ? gdpa(device, "vkGetDeviceQueue") : gipa(instance, "vkGetDeviceQueue"));
+    t->vkQueueSubmit = (PFN_vkQueueSubmit)(device ? gdpa(device, "vkQueueSubmit") : gipa(instance, "vkQueueSubmit"));
+    t->vkQueueWaitIdle = (PFN_vkQueueWaitIdle)(device ? gdpa(device, "vkQueueWaitIdle") : gipa(instance, "vkQueueWaitIdle"));
+    t->vkDeviceWaitIdle = (PFN_vkDeviceWaitIdle)(device ? gdpa(device, "vkDeviceWaitIdle") : gipa(instance, "vkDeviceWaitIdle"));
+    t->vkAllocateMemory = (PFN_vkAllocateMemory)(device ? gdpa(device, "vkAllocateMemory") : gipa(instance, "vkAllocateMemory"));
+    t->vkFreeMemory = (PFN_vkFreeMemory)(device ? gdpa(device, "vkFreeMemory") : gipa(instance, "vkFreeMemory"));
+    t->vkMapMemory = (PFN_vkMapMemory)(device ? gdpa(device, "vkMapMemory") : gipa(instance, "vkMapMemory"));
+    t->vkUnmapMemory = (PFN_vkUnmapMemory)(device ? gdpa(device, "vkUnmapMemory") : gipa(instance, "vkUnmapMemory"));
+    t->vkFlushMappedMemoryRanges = (PFN_vkFlushMappedMemoryRanges)(device ? gdpa(device, "vkFlushMappedMemoryRanges") : gipa(instance, "vkFlushMappedMemoryRanges"));
+    t->vkInvalidateMappedMemoryRanges = (PFN_vkInvalidateMappedMemoryRanges)(device ? gdpa(device, "vkInvalidateMappedMemoryRanges") : gipa(instance, "vkInvalidateMappedMemoryRanges"));
+    t->vkGetDeviceMemoryCommitment = (PFN_vkGetDeviceMemoryCommitment)(device ? gdpa(device, "vkGetDeviceMemoryCommitment") : gipa(instance, "vkGetDeviceMemoryCommitment"));
+    t->vkBindBufferMemory = (PFN_vkBindBufferMemory)(device ? gdpa(device, "vkBindBufferMemory") : gipa(instance, "vkBindBufferMemory"));
+    t->vkBindImageMemory = (PFN_vkBindImageMemory)(device ? gdpa(device, "vkBindImageMemory") : gipa(instance, "vkBindImageMemory"));
+    t->vkGetBufferMemoryRequirements = (PFN_vkGetBufferMemoryRequirements)(device ? gdpa(device, "vkGetBufferMemoryRequirements") : gipa(instance, "vkGetBufferMemoryRequirements"));
+    t->vkGetImageMemoryRequirements = (PFN_vkGetImageMemoryRequirements)(device ? gdpa(device, "vkGetImageMemoryRequirements") : gipa(instance, "vkGetImageMemoryRequirements"));
+    t->vkGetImageSparseMemoryRequirements = (PFN_vkGetImageSparseMemoryRequirements)(device ? gdpa(device, "vkGetImageSparseMemoryRequirements") : gipa(instance, "vkGetImageSparseMemoryRequirements"));
     t->vkGetPhysicalDeviceSparseImageFormatProperties = (PFN_vkGetPhysicalDeviceSparseImageFormatProperties)gipa(instance, "vkGetPhysicalDeviceSparseImageFormatProperties");
-    t->vkQueueBindSparse = (PFN_vkQueueBindSparse)(device ? gdpa(device, "vkQueueBindSparse") : NULL);
-    if (!t->vkQueueBindSparse)
-        t->vkQueueBindSparse = (PFN_vkQueueBindSparse)gipa(instance, "vkQueueBindSparse");
-    t->vkCreateFence = (PFN_vkCreateFence)(device ? gdpa(device, "vkCreateFence") : NULL);
-    if (!t->vkCreateFence)
-        t->vkCreateFence = (PFN_vkCreateFence)gipa(instance, "vkCreateFence");
-    t->vkDestroyFence = (PFN_vkDestroyFence)(device ? gdpa(device, "vkDestroyFence") : NULL);
-    if (!t->vkDestroyFence)
-        t->vkDestroyFence = (PFN_vkDestroyFence)gipa(instance, "vkDestroyFence");
-    t->vkResetFences = (PFN_vkResetFences)(device ? gdpa(device, "vkResetFences") : NULL);
-    if (!t->vkResetFences)
-        t->vkResetFences = (PFN_vkResetFences)gipa(instance, "vkResetFences");
-    t->vkGetFenceStatus = (PFN_vkGetFenceStatus)(device ? gdpa(device, "vkGetFenceStatus") : NULL);
-    if (!t->vkGetFenceStatus)
-        t->vkGetFenceStatus = (PFN_vkGetFenceStatus)gipa(instance, "vkGetFenceStatus");
-    t->vkWaitForFences = (PFN_vkWaitForFences)(device ? gdpa(device, "vkWaitForFences") : NULL);
-    if (!t->vkWaitForFences)
-        t->vkWaitForFences = (PFN_vkWaitForFences)gipa(instance, "vkWaitForFences");
-    t->vkCreateSemaphore = (PFN_vkCreateSemaphore)(device ? gdpa(device, "vkCreateSemaphore") : NULL);
-    if (!t->vkCreateSemaphore)
-        t->vkCreateSemaphore = (PFN_vkCreateSemaphore)gipa(instance, "vkCreateSemaphore");
-    t->vkDestroySemaphore = (PFN_vkDestroySemaphore)(device ? gdpa(device, "vkDestroySemaphore") : NULL);
-    if (!t->vkDestroySemaphore)
-        t->vkDestroySemaphore = (PFN_vkDestroySemaphore)gipa(instance, "vkDestroySemaphore");
-    t->vkCreateQueryPool = (PFN_vkCreateQueryPool)(device ? gdpa(device, "vkCreateQueryPool") : NULL);
-    if (!t->vkCreateQueryPool)
-        t->vkCreateQueryPool = (PFN_vkCreateQueryPool)gipa(instance, "vkCreateQueryPool");
-    t->vkDestroyQueryPool = (PFN_vkDestroyQueryPool)(device ? gdpa(device, "vkDestroyQueryPool") : NULL);
-    if (!t->vkDestroyQueryPool)
-        t->vkDestroyQueryPool = (PFN_vkDestroyQueryPool)gipa(instance, "vkDestroyQueryPool");
-    t->vkGetQueryPoolResults = (PFN_vkGetQueryPoolResults)(device ? gdpa(device, "vkGetQueryPoolResults") : NULL);
-    if (!t->vkGetQueryPoolResults)
-        t->vkGetQueryPoolResults = (PFN_vkGetQueryPoolResults)gipa(instance, "vkGetQueryPoolResults");
-    t->vkCreateBuffer = (PFN_vkCreateBuffer)(device ? gdpa(device, "vkCreateBuffer") : NULL);
-    if (!t->vkCreateBuffer)
-        t->vkCreateBuffer = (PFN_vkCreateBuffer)gipa(instance, "vkCreateBuffer");
-    t->vkDestroyBuffer = (PFN_vkDestroyBuffer)(device ? gdpa(device, "vkDestroyBuffer") : NULL);
-    if (!t->vkDestroyBuffer)
-        t->vkDestroyBuffer = (PFN_vkDestroyBuffer)gipa(instance, "vkDestroyBuffer");
-    t->vkCreateImage = (PFN_vkCreateImage)(device ? gdpa(device, "vkCreateImage") : NULL);
-    if (!t->vkCreateImage)
-        t->vkCreateImage = (PFN_vkCreateImage)gipa(instance, "vkCreateImage");
-    t->vkDestroyImage = (PFN_vkDestroyImage)(device ? gdpa(device, "vkDestroyImage") : NULL);
-    if (!t->vkDestroyImage)
-        t->vkDestroyImage = (PFN_vkDestroyImage)gipa(instance, "vkDestroyImage");
-    t->vkGetImageSubresourceLayout = (PFN_vkGetImageSubresourceLayout)(device ? gdpa(device, "vkGetImageSubresourceLayout") : NULL);
-    if (!t->vkGetImageSubresourceLayout)
-        t->vkGetImageSubresourceLayout = (PFN_vkGetImageSubresourceLayout)gipa(instance, "vkGetImageSubresourceLayout");
-    t->vkCreateImageView = (PFN_vkCreateImageView)(device ? gdpa(device, "vkCreateImageView") : NULL);
-    if (!t->vkCreateImageView)
-        t->vkCreateImageView = (PFN_vkCreateImageView)gipa(instance, "vkCreateImageView");
-    t->vkDestroyImageView = (PFN_vkDestroyImageView)(device ? gdpa(device, "vkDestroyImageView") : NULL);
-    if (!t->vkDestroyImageView)
-        t->vkDestroyImageView = (PFN_vkDestroyImageView)gipa(instance, "vkDestroyImageView");
-    t->vkCreateCommandPool = (PFN_vkCreateCommandPool)(device ? gdpa(device, "vkCreateCommandPool") : NULL);
-    if (!t->vkCreateCommandPool)
-        t->vkCreateCommandPool = (PFN_vkCreateCommandPool)gipa(instance, "vkCreateCommandPool");
-    t->vkDestroyCommandPool = (PFN_vkDestroyCommandPool)(device ? gdpa(device, "vkDestroyCommandPool") : NULL);
-    if (!t->vkDestroyCommandPool)
-        t->vkDestroyCommandPool = (PFN_vkDestroyCommandPool)gipa(instance, "vkDestroyCommandPool");
-    t->vkResetCommandPool = (PFN_vkResetCommandPool)(device ? gdpa(device, "vkResetCommandPool") : NULL);
-    if (!t->vkResetCommandPool)
-        t->vkResetCommandPool = (PFN_vkResetCommandPool)gipa(instance, "vkResetCommandPool");
-    t->vkAllocateCommandBuffers = (PFN_vkAllocateCommandBuffers)(device ? gdpa(device, "vkAllocateCommandBuffers") : NULL);
-    if (!t->vkAllocateCommandBuffers)
-        t->vkAllocateCommandBuffers = (PFN_vkAllocateCommandBuffers)gipa(instance, "vkAllocateCommandBuffers");
-    t->vkFreeCommandBuffers = (PFN_vkFreeCommandBuffers)(device ? gdpa(device, "vkFreeCommandBuffers") : NULL);
-    if (!t->vkFreeCommandBuffers)
-        t->vkFreeCommandBuffers = (PFN_vkFreeCommandBuffers)gipa(instance, "vkFreeCommandBuffers");
-    t->vkBeginCommandBuffer = (PFN_vkBeginCommandBuffer)(device ? gdpa(device, "vkBeginCommandBuffer") : NULL);
-    if (!t->vkBeginCommandBuffer)
-        t->vkBeginCommandBuffer = (PFN_vkBeginCommandBuffer)gipa(instance, "vkBeginCommandBuffer");
-    t->vkEndCommandBuffer = (PFN_vkEndCommandBuffer)(device ? gdpa(device, "vkEndCommandBuffer") : NULL);
-    if (!t->vkEndCommandBuffer)
-        t->vkEndCommandBuffer = (PFN_vkEndCommandBuffer)gipa(instance, "vkEndCommandBuffer");
-    t->vkResetCommandBuffer = (PFN_vkResetCommandBuffer)(device ? gdpa(device, "vkResetCommandBuffer") : NULL);
-    if (!t->vkResetCommandBuffer)
-        t->vkResetCommandBuffer = (PFN_vkResetCommandBuffer)gipa(instance, "vkResetCommandBuffer");
-    t->vkCmdCopyBuffer = (PFN_vkCmdCopyBuffer)(device ? gdpa(device, "vkCmdCopyBuffer") : NULL);
-    if (!t->vkCmdCopyBuffer)
-        t->vkCmdCopyBuffer = (PFN_vkCmdCopyBuffer)gipa(instance, "vkCmdCopyBuffer");
-    t->vkCmdCopyImage = (PFN_vkCmdCopyImage)(device ? gdpa(device, "vkCmdCopyImage") : NULL);
-    if (!t->vkCmdCopyImage)
-        t->vkCmdCopyImage = (PFN_vkCmdCopyImage)gipa(instance, "vkCmdCopyImage");
-    t->vkCmdCopyBufferToImage = (PFN_vkCmdCopyBufferToImage)(device ? gdpa(device, "vkCmdCopyBufferToImage") : NULL);
-    if (!t->vkCmdCopyBufferToImage)
-        t->vkCmdCopyBufferToImage = (PFN_vkCmdCopyBufferToImage)gipa(instance, "vkCmdCopyBufferToImage");
-    t->vkCmdCopyImageToBuffer = (PFN_vkCmdCopyImageToBuffer)(device ? gdpa(device, "vkCmdCopyImageToBuffer") : NULL);
-    if (!t->vkCmdCopyImageToBuffer)
-        t->vkCmdCopyImageToBuffer = (PFN_vkCmdCopyImageToBuffer)gipa(instance, "vkCmdCopyImageToBuffer");
-    t->vkCmdUpdateBuffer = (PFN_vkCmdUpdateBuffer)(device ? gdpa(device, "vkCmdUpdateBuffer") : NULL);
-    if (!t->vkCmdUpdateBuffer)
-        t->vkCmdUpdateBuffer = (PFN_vkCmdUpdateBuffer)gipa(instance, "vkCmdUpdateBuffer");
-    t->vkCmdFillBuffer = (PFN_vkCmdFillBuffer)(device ? gdpa(device, "vkCmdFillBuffer") : NULL);
-    if (!t->vkCmdFillBuffer)
-        t->vkCmdFillBuffer = (PFN_vkCmdFillBuffer)gipa(instance, "vkCmdFillBuffer");
-    t->vkCmdPipelineBarrier = (PFN_vkCmdPipelineBarrier)(device ? gdpa(device, "vkCmdPipelineBarrier") : NULL);
-    if (!t->vkCmdPipelineBarrier)
-        t->vkCmdPipelineBarrier = (PFN_vkCmdPipelineBarrier)gipa(instance, "vkCmdPipelineBarrier");
-    t->vkCmdBeginQuery = (PFN_vkCmdBeginQuery)(device ? gdpa(device, "vkCmdBeginQuery") : NULL);
-    if (!t->vkCmdBeginQuery)
-        t->vkCmdBeginQuery = (PFN_vkCmdBeginQuery)gipa(instance, "vkCmdBeginQuery");
-    t->vkCmdEndQuery = (PFN_vkCmdEndQuery)(device ? gdpa(device, "vkCmdEndQuery") : NULL);
-    if (!t->vkCmdEndQuery)
-        t->vkCmdEndQuery = (PFN_vkCmdEndQuery)gipa(instance, "vkCmdEndQuery");
-    t->vkCmdResetQueryPool = (PFN_vkCmdResetQueryPool)(device ? gdpa(device, "vkCmdResetQueryPool") : NULL);
-    if (!t->vkCmdResetQueryPool)
-        t->vkCmdResetQueryPool = (PFN_vkCmdResetQueryPool)gipa(instance, "vkCmdResetQueryPool");
-    t->vkCmdWriteTimestamp = (PFN_vkCmdWriteTimestamp)(device ? gdpa(device, "vkCmdWriteTimestamp") : NULL);
-    if (!t->vkCmdWriteTimestamp)
-        t->vkCmdWriteTimestamp = (PFN_vkCmdWriteTimestamp)gipa(instance, "vkCmdWriteTimestamp");
-    t->vkCmdCopyQueryPoolResults = (PFN_vkCmdCopyQueryPoolResults)(device ? gdpa(device, "vkCmdCopyQueryPoolResults") : NULL);
-    if (!t->vkCmdCopyQueryPoolResults)
-        t->vkCmdCopyQueryPoolResults = (PFN_vkCmdCopyQueryPoolResults)gipa(instance, "vkCmdCopyQueryPoolResults");
-    t->vkCmdExecuteCommands = (PFN_vkCmdExecuteCommands)(device ? gdpa(device, "vkCmdExecuteCommands") : NULL);
-    if (!t->vkCmdExecuteCommands)
-        t->vkCmdExecuteCommands = (PFN_vkCmdExecuteCommands)gipa(instance, "vkCmdExecuteCommands");
-    t->vkCreateEvent = (PFN_vkCreateEvent)(device ? gdpa(device, "vkCreateEvent") : NULL);
-    if (!t->vkCreateEvent)
-        t->vkCreateEvent = (PFN_vkCreateEvent)gipa(instance, "vkCreateEvent");
-    t->vkDestroyEvent = (PFN_vkDestroyEvent)(device ? gdpa(device, "vkDestroyEvent") : NULL);
-    if (!t->vkDestroyEvent)
-        t->vkDestroyEvent = (PFN_vkDestroyEvent)gipa(instance, "vkDestroyEvent");
-    t->vkGetEventStatus = (PFN_vkGetEventStatus)(device ? gdpa(device, "vkGetEventStatus") : NULL);
-    if (!t->vkGetEventStatus)
-        t->vkGetEventStatus = (PFN_vkGetEventStatus)gipa(instance, "vkGetEventStatus");
-    t->vkSetEvent = (PFN_vkSetEvent)(device ? gdpa(device, "vkSetEvent") : NULL);
-    if (!t->vkSetEvent)
-        t->vkSetEvent = (PFN_vkSetEvent)gipa(instance, "vkSetEvent");
-    t->vkResetEvent = (PFN_vkResetEvent)(device ? gdpa(device, "vkResetEvent") : NULL);
-    if (!t->vkResetEvent)
-        t->vkResetEvent = (PFN_vkResetEvent)gipa(instance, "vkResetEvent");
-    t->vkCreateBufferView = (PFN_vkCreateBufferView)(device ? gdpa(device, "vkCreateBufferView") : NULL);
-    if (!t->vkCreateBufferView)
-        t->vkCreateBufferView = (PFN_vkCreateBufferView)gipa(instance, "vkCreateBufferView");
-    t->vkDestroyBufferView = (PFN_vkDestroyBufferView)(device ? gdpa(device, "vkDestroyBufferView") : NULL);
-    if (!t->vkDestroyBufferView)
-        t->vkDestroyBufferView = (PFN_vkDestroyBufferView)gipa(instance, "vkDestroyBufferView");
-    t->vkCreateShaderModule = (PFN_vkCreateShaderModule)(device ? gdpa(device, "vkCreateShaderModule") : NULL);
-    if (!t->vkCreateShaderModule)
-        t->vkCreateShaderModule = (PFN_vkCreateShaderModule)gipa(instance, "vkCreateShaderModule");
-    t->vkDestroyShaderModule = (PFN_vkDestroyShaderModule)(device ? gdpa(device, "vkDestroyShaderModule") : NULL);
-    if (!t->vkDestroyShaderModule)
-        t->vkDestroyShaderModule = (PFN_vkDestroyShaderModule)gipa(instance, "vkDestroyShaderModule");
-    t->vkCreatePipelineCache = (PFN_vkCreatePipelineCache)(device ? gdpa(device, "vkCreatePipelineCache") : NULL);
-    if (!t->vkCreatePipelineCache)
-        t->vkCreatePipelineCache = (PFN_vkCreatePipelineCache)gipa(instance, "vkCreatePipelineCache");
-    t->vkDestroyPipelineCache = (PFN_vkDestroyPipelineCache)(device ? gdpa(device, "vkDestroyPipelineCache") : NULL);
-    if (!t->vkDestroyPipelineCache)
-        t->vkDestroyPipelineCache = (PFN_vkDestroyPipelineCache)gipa(instance, "vkDestroyPipelineCache");
-    t->vkGetPipelineCacheData = (PFN_vkGetPipelineCacheData)(device ? gdpa(device, "vkGetPipelineCacheData") : NULL);
-    if (!t->vkGetPipelineCacheData)
-        t->vkGetPipelineCacheData = (PFN_vkGetPipelineCacheData)gipa(instance, "vkGetPipelineCacheData");
-    t->vkMergePipelineCaches = (PFN_vkMergePipelineCaches)(device ? gdpa(device, "vkMergePipelineCaches") : NULL);
-    if (!t->vkMergePipelineCaches)
-        t->vkMergePipelineCaches = (PFN_vkMergePipelineCaches)gipa(instance, "vkMergePipelineCaches");
-    t->vkCreateComputePipelines = (PFN_vkCreateComputePipelines)(device ? gdpa(device, "vkCreateComputePipelines") : NULL);
-    if (!t->vkCreateComputePipelines)
-        t->vkCreateComputePipelines = (PFN_vkCreateComputePipelines)gipa(instance, "vkCreateComputePipelines");
-    t->vkDestroyPipeline = (PFN_vkDestroyPipeline)(device ? gdpa(device, "vkDestroyPipeline") : NULL);
-    if (!t->vkDestroyPipeline)
-        t->vkDestroyPipeline = (PFN_vkDestroyPipeline)gipa(instance, "vkDestroyPipeline");
-    t->vkCreatePipelineLayout = (PFN_vkCreatePipelineLayout)(device ? gdpa(device, "vkCreatePipelineLayout") : NULL);
-    if (!t->vkCreatePipelineLayout)
-        t->vkCreatePipelineLayout = (PFN_vkCreatePipelineLayout)gipa(instance, "vkCreatePipelineLayout");
-    t->vkDestroyPipelineLayout = (PFN_vkDestroyPipelineLayout)(device ? gdpa(device, "vkDestroyPipelineLayout") : NULL);
-    if (!t->vkDestroyPipelineLayout)
-        t->vkDestroyPipelineLayout = (PFN_vkDestroyPipelineLayout)gipa(instance, "vkDestroyPipelineLayout");
-    t->vkCreateSampler = (PFN_vkCreateSampler)(device ? gdpa(device, "vkCreateSampler") : NULL);
-    if (!t->vkCreateSampler)
-        t->vkCreateSampler = (PFN_vkCreateSampler)gipa(instance, "vkCreateSampler");
-    t->vkDestroySampler = (PFN_vkDestroySampler)(device ? gdpa(device, "vkDestroySampler") : NULL);
-    if (!t->vkDestroySampler)
-        t->vkDestroySampler = (PFN_vkDestroySampler)gipa(instance, "vkDestroySampler");
-    t->vkCreateDescriptorSetLayout = (PFN_vkCreateDescriptorSetLayout)(device ? gdpa(device, "vkCreateDescriptorSetLayout") : NULL);
-    if (!t->vkCreateDescriptorSetLayout)
-        t->vkCreateDescriptorSetLayout = (PFN_vkCreateDescriptorSetLayout)gipa(instance, "vkCreateDescriptorSetLayout");
-    t->vkDestroyDescriptorSetLayout = (PFN_vkDestroyDescriptorSetLayout)(device ? gdpa(device, "vkDestroyDescriptorSetLayout") : NULL);
-    if (!t->vkDestroyDescriptorSetLayout)
-        t->vkDestroyDescriptorSetLayout = (PFN_vkDestroyDescriptorSetLayout)gipa(instance, "vkDestroyDescriptorSetLayout");
-    t->vkCreateDescriptorPool = (PFN_vkCreateDescriptorPool)(device ? gdpa(device, "vkCreateDescriptorPool") : NULL);
-    if (!t->vkCreateDescriptorPool)
-        t->vkCreateDescriptorPool = (PFN_vkCreateDescriptorPool)gipa(instance, "vkCreateDescriptorPool");
-    t->vkDestroyDescriptorPool = (PFN_vkDestroyDescriptorPool)(device ? gdpa(device, "vkDestroyDescriptorPool") : NULL);
-    if (!t->vkDestroyDescriptorPool)
-        t->vkDestroyDescriptorPool = (PFN_vkDestroyDescriptorPool)gipa(instance, "vkDestroyDescriptorPool");
-    t->vkResetDescriptorPool = (PFN_vkResetDescriptorPool)(device ? gdpa(device, "vkResetDescriptorPool") : NULL);
-    if (!t->vkResetDescriptorPool)
-        t->vkResetDescriptorPool = (PFN_vkResetDescriptorPool)gipa(instance, "vkResetDescriptorPool");
-    t->vkAllocateDescriptorSets = (PFN_vkAllocateDescriptorSets)(device ? gdpa(device, "vkAllocateDescriptorSets") : NULL);
-    if (!t->vkAllocateDescriptorSets)
-        t->vkAllocateDescriptorSets = (PFN_vkAllocateDescriptorSets)gipa(instance, "vkAllocateDescriptorSets");
-    t->vkFreeDescriptorSets = (PFN_vkFreeDescriptorSets)(device ? gdpa(device, "vkFreeDescriptorSets") : NULL);
-    if (!t->vkFreeDescriptorSets)
-        t->vkFreeDescriptorSets = (PFN_vkFreeDescriptorSets)gipa(instance, "vkFreeDescriptorSets");
-    t->vkUpdateDescriptorSets = (PFN_vkUpdateDescriptorSets)(device ? gdpa(device, "vkUpdateDescriptorSets") : NULL);
-    if (!t->vkUpdateDescriptorSets)
-        t->vkUpdateDescriptorSets = (PFN_vkUpdateDescriptorSets)gipa(instance, "vkUpdateDescriptorSets");
-    t->vkCmdBindPipeline = (PFN_vkCmdBindPipeline)(device ? gdpa(device, "vkCmdBindPipeline") : NULL);
-    if (!t->vkCmdBindPipeline)
-        t->vkCmdBindPipeline = (PFN_vkCmdBindPipeline)gipa(instance, "vkCmdBindPipeline");
-    t->vkCmdBindDescriptorSets = (PFN_vkCmdBindDescriptorSets)(device ? gdpa(device, "vkCmdBindDescriptorSets") : NULL);
-    if (!t->vkCmdBindDescriptorSets)
-        t->vkCmdBindDescriptorSets = (PFN_vkCmdBindDescriptorSets)gipa(instance, "vkCmdBindDescriptorSets");
-    t->vkCmdClearColorImage = (PFN_vkCmdClearColorImage)(device ? gdpa(device, "vkCmdClearColorImage") : NULL);
-    if (!t->vkCmdClearColorImage)
-        t->vkCmdClearColorImage = (PFN_vkCmdClearColorImage)gipa(instance, "vkCmdClearColorImage");
-    t->vkCmdDispatch = (PFN_vkCmdDispatch)(device ? gdpa(device, "vkCmdDispatch") : NULL);
-    if (!t->vkCmdDispatch)
-        t->vkCmdDispatch = (PFN_vkCmdDispatch)gipa(instance, "vkCmdDispatch");
-    t->vkCmdDispatchIndirect = (PFN_vkCmdDispatchIndirect)(device ? gdpa(device, "vkCmdDispatchIndirect") : NULL);
-    if (!t->vkCmdDispatchIndirect)
-        t->vkCmdDispatchIndirect = (PFN_vkCmdDispatchIndirect)gipa(instance, "vkCmdDispatchIndirect");
-    t->vkCmdSetEvent = (PFN_vkCmdSetEvent)(device ? gdpa(device, "vkCmdSetEvent") : NULL);
-    if (!t->vkCmdSetEvent)
-        t->vkCmdSetEvent = (PFN_vkCmdSetEvent)gipa(instance, "vkCmdSetEvent");
-    t->vkCmdResetEvent = (PFN_vkCmdResetEvent)(device ? gdpa(device, "vkCmdResetEvent") : NULL);
-    if (!t->vkCmdResetEvent)
-        t->vkCmdResetEvent = (PFN_vkCmdResetEvent)gipa(instance, "vkCmdResetEvent");
-    t->vkCmdWaitEvents = (PFN_vkCmdWaitEvents)(device ? gdpa(device, "vkCmdWaitEvents") : NULL);
-    if (!t->vkCmdWaitEvents)
-        t->vkCmdWaitEvents = (PFN_vkCmdWaitEvents)gipa(instance, "vkCmdWaitEvents");
-    t->vkCmdPushConstants = (PFN_vkCmdPushConstants)(device ? gdpa(device, "vkCmdPushConstants") : NULL);
-    if (!t->vkCmdPushConstants)
-        t->vkCmdPushConstants = (PFN_vkCmdPushConstants)gipa(instance, "vkCmdPushConstants");
-    t->vkCreateGraphicsPipelines = (PFN_vkCreateGraphicsPipelines)(device ? gdpa(device, "vkCreateGraphicsPipelines") : NULL);
-    if (!t->vkCreateGraphicsPipelines)
-        t->vkCreateGraphicsPipelines = (PFN_vkCreateGraphicsPipelines)gipa(instance, "vkCreateGraphicsPipelines");
-    t->vkCreateFramebuffer = (PFN_vkCreateFramebuffer)(device ? gdpa(device, "vkCreateFramebuffer") : NULL);
-    if (!t->vkCreateFramebuffer)
-        t->vkCreateFramebuffer = (PFN_vkCreateFramebuffer)gipa(instance, "vkCreateFramebuffer");
-    t->vkDestroyFramebuffer = (PFN_vkDestroyFramebuffer)(device ? gdpa(device, "vkDestroyFramebuffer") : NULL);
-    if (!t->vkDestroyFramebuffer)
-        t->vkDestroyFramebuffer = (PFN_vkDestroyFramebuffer)gipa(instance, "vkDestroyFramebuffer");
-    t->vkCreateRenderPass = (PFN_vkCreateRenderPass)(device ? gdpa(device, "vkCreateRenderPass") : NULL);
-    if (!t->vkCreateRenderPass)
-        t->vkCreateRenderPass = (PFN_vkCreateRenderPass)gipa(instance, "vkCreateRenderPass");
-    t->vkDestroyRenderPass = (PFN_vkDestroyRenderPass)(device ? gdpa(device, "vkDestroyRenderPass") : NULL);
-    if (!t->vkDestroyRenderPass)
-        t->vkDestroyRenderPass = (PFN_vkDestroyRenderPass)gipa(instance, "vkDestroyRenderPass");
-    t->vkGetRenderAreaGranularity = (PFN_vkGetRenderAreaGranularity)(device ? gdpa(device, "vkGetRenderAreaGranularity") : NULL);
-    if (!t->vkGetRenderAreaGranularity)
-        t->vkGetRenderAreaGranularity = (PFN_vkGetRenderAreaGranularity)gipa(instance, "vkGetRenderAreaGranularity");
-    t->vkCmdSetViewport = (PFN_vkCmdSetViewport)(device ? gdpa(device, "vkCmdSetViewport") : NULL);
-    if (!t->vkCmdSetViewport)
-        t->vkCmdSetViewport = (PFN_vkCmdSetViewport)gipa(instance, "vkCmdSetViewport");
-    t->vkCmdSetScissor = (PFN_vkCmdSetScissor)(device ? gdpa(device, "vkCmdSetScissor") : NULL);
-    if (!t->vkCmdSetScissor)
-        t->vkCmdSetScissor = (PFN_vkCmdSetScissor)gipa(instance, "vkCmdSetScissor");
-    t->vkCmdSetLineWidth = (PFN_vkCmdSetLineWidth)(device ? gdpa(device, "vkCmdSetLineWidth") : NULL);
-    if (!t->vkCmdSetLineWidth)
-        t->vkCmdSetLineWidth = (PFN_vkCmdSetLineWidth)gipa(instance, "vkCmdSetLineWidth");
-    t->vkCmdSetDepthBias = (PFN_vkCmdSetDepthBias)(device ? gdpa(device, "vkCmdSetDepthBias") : NULL);
-    if (!t->vkCmdSetDepthBias)
-        t->vkCmdSetDepthBias = (PFN_vkCmdSetDepthBias)gipa(instance, "vkCmdSetDepthBias");
-    t->vkCmdSetBlendConstants = (PFN_vkCmdSetBlendConstants)(device ? gdpa(device, "vkCmdSetBlendConstants") : NULL);
-    if (!t->vkCmdSetBlendConstants)
-        t->vkCmdSetBlendConstants = (PFN_vkCmdSetBlendConstants)gipa(instance, "vkCmdSetBlendConstants");
-    t->vkCmdSetDepthBounds = (PFN_vkCmdSetDepthBounds)(device ? gdpa(device, "vkCmdSetDepthBounds") : NULL);
-    if (!t->vkCmdSetDepthBounds)
-        t->vkCmdSetDepthBounds = (PFN_vkCmdSetDepthBounds)gipa(instance, "vkCmdSetDepthBounds");
-    t->vkCmdSetStencilCompareMask = (PFN_vkCmdSetStencilCompareMask)(device ? gdpa(device, "vkCmdSetStencilCompareMask") : NULL);
-    if (!t->vkCmdSetStencilCompareMask)
-        t->vkCmdSetStencilCompareMask = (PFN_vkCmdSetStencilCompareMask)gipa(instance, "vkCmdSetStencilCompareMask");
-    t->vkCmdSetStencilWriteMask = (PFN_vkCmdSetStencilWriteMask)(device ? gdpa(device, "vkCmdSetStencilWriteMask") : NULL);
-    if (!t->vkCmdSetStencilWriteMask)
-        t->vkCmdSetStencilWriteMask = (PFN_vkCmdSetStencilWriteMask)gipa(instance, "vkCmdSetStencilWriteMask");
-    t->vkCmdSetStencilReference = (PFN_vkCmdSetStencilReference)(device ? gdpa(device, "vkCmdSetStencilReference") : NULL);
-    if (!t->vkCmdSetStencilReference)
-        t->vkCmdSetStencilReference = (PFN_vkCmdSetStencilReference)gipa(instance, "vkCmdSetStencilReference");
-    t->vkCmdBindIndexBuffer = (PFN_vkCmdBindIndexBuffer)(device ? gdpa(device, "vkCmdBindIndexBuffer") : NULL);
-    if (!t->vkCmdBindIndexBuffer)
-        t->vkCmdBindIndexBuffer = (PFN_vkCmdBindIndexBuffer)gipa(instance, "vkCmdBindIndexBuffer");
-    t->vkCmdBindVertexBuffers = (PFN_vkCmdBindVertexBuffers)(device ? gdpa(device, "vkCmdBindVertexBuffers") : NULL);
-    if (!t->vkCmdBindVertexBuffers)
-        t->vkCmdBindVertexBuffers = (PFN_vkCmdBindVertexBuffers)gipa(instance, "vkCmdBindVertexBuffers");
-    t->vkCmdDraw = (PFN_vkCmdDraw)(device ? gdpa(device, "vkCmdDraw") : NULL);
-    if (!t->vkCmdDraw)
-        t->vkCmdDraw = (PFN_vkCmdDraw)gipa(instance, "vkCmdDraw");
-    t->vkCmdDrawIndexed = (PFN_vkCmdDrawIndexed)(device ? gdpa(device, "vkCmdDrawIndexed") : NULL);
-    if (!t->vkCmdDrawIndexed)
-        t->vkCmdDrawIndexed = (PFN_vkCmdDrawIndexed)gipa(instance, "vkCmdDrawIndexed");
-    t->vkCmdDrawIndirect = (PFN_vkCmdDrawIndirect)(device ? gdpa(device, "vkCmdDrawIndirect") : NULL);
-    if (!t->vkCmdDrawIndirect)
-        t->vkCmdDrawIndirect = (PFN_vkCmdDrawIndirect)gipa(instance, "vkCmdDrawIndirect");
-    t->vkCmdDrawIndexedIndirect = (PFN_vkCmdDrawIndexedIndirect)(device ? gdpa(device, "vkCmdDrawIndexedIndirect") : NULL);
-    if (!t->vkCmdDrawIndexedIndirect)
-        t->vkCmdDrawIndexedIndirect = (PFN_vkCmdDrawIndexedIndirect)gipa(instance, "vkCmdDrawIndexedIndirect");
-    t->vkCmdBlitImage = (PFN_vkCmdBlitImage)(device ? gdpa(device, "vkCmdBlitImage") : NULL);
-    if (!t->vkCmdBlitImage)
-        t->vkCmdBlitImage = (PFN_vkCmdBlitImage)gipa(instance, "vkCmdBlitImage");
-    t->vkCmdClearDepthStencilImage = (PFN_vkCmdClearDepthStencilImage)(device ? gdpa(device, "vkCmdClearDepthStencilImage") : NULL);
-    if (!t->vkCmdClearDepthStencilImage)
-        t->vkCmdClearDepthStencilImage = (PFN_vkCmdClearDepthStencilImage)gipa(instance, "vkCmdClearDepthStencilImage");
-    t->vkCmdClearAttachments = (PFN_vkCmdClearAttachments)(device ? gdpa(device, "vkCmdClearAttachments") : NULL);
-    if (!t->vkCmdClearAttachments)
-        t->vkCmdClearAttachments = (PFN_vkCmdClearAttachments)gipa(instance, "vkCmdClearAttachments");
-    t->vkCmdResolveImage = (PFN_vkCmdResolveImage)(device ? gdpa(device, "vkCmdResolveImage") : NULL);
-    if (!t->vkCmdResolveImage)
-        t->vkCmdResolveImage = (PFN_vkCmdResolveImage)gipa(instance, "vkCmdResolveImage");
-    t->vkCmdBeginRenderPass = (PFN_vkCmdBeginRenderPass)(device ? gdpa(device, "vkCmdBeginRenderPass") : NULL);
-    if (!t->vkCmdBeginRenderPass)
-        t->vkCmdBeginRenderPass = (PFN_vkCmdBeginRenderPass)gipa(instance, "vkCmdBeginRenderPass");
-    t->vkCmdNextSubpass = (PFN_vkCmdNextSubpass)(device ? gdpa(device, "vkCmdNextSubpass") : NULL);
-    if (!t->vkCmdNextSubpass)
-        t->vkCmdNextSubpass = (PFN_vkCmdNextSubpass)gipa(instance, "vkCmdNextSubpass");
-    t->vkCmdEndRenderPass = (PFN_vkCmdEndRenderPass)(device ? gdpa(device, "vkCmdEndRenderPass") : NULL);
-    if (!t->vkCmdEndRenderPass)
-        t->vkCmdEndRenderPass = (PFN_vkCmdEndRenderPass)gipa(instance, "vkCmdEndRenderPass");
+    t->vkQueueBindSparse = (PFN_vkQueueBindSparse)(device ? gdpa(device, "vkQueueBindSparse") : gipa(instance, "vkQueueBindSparse"));
+    t->vkCreateFence = (PFN_vkCreateFence)(device ? gdpa(device, "vkCreateFence") : gipa(instance, "vkCreateFence"));
+    t->vkDestroyFence = (PFN_vkDestroyFence)(device ? gdpa(device, "vkDestroyFence") : gipa(instance, "vkDestroyFence"));
+    t->vkResetFences = (PFN_vkResetFences)(device ? gdpa(device, "vkResetFences") : gipa(instance, "vkResetFences"));
+    t->vkGetFenceStatus = (PFN_vkGetFenceStatus)(device ? gdpa(device, "vkGetFenceStatus") : gipa(instance, "vkGetFenceStatus"));
+    t->vkWaitForFences = (PFN_vkWaitForFences)(device ? gdpa(device, "vkWaitForFences") : gipa(instance, "vkWaitForFences"));
+    t->vkCreateSemaphore = (PFN_vkCreateSemaphore)(device ? gdpa(device, "vkCreateSemaphore") : gipa(instance, "vkCreateSemaphore"));
+    t->vkDestroySemaphore = (PFN_vkDestroySemaphore)(device ? gdpa(device, "vkDestroySemaphore") : gipa(instance, "vkDestroySemaphore"));
+    t->vkCreateQueryPool = (PFN_vkCreateQueryPool)(device ? gdpa(device, "vkCreateQueryPool") : gipa(instance, "vkCreateQueryPool"));
+    t->vkDestroyQueryPool = (PFN_vkDestroyQueryPool)(device ? gdpa(device, "vkDestroyQueryPool") : gipa(instance, "vkDestroyQueryPool"));
+    t->vkGetQueryPoolResults = (PFN_vkGetQueryPoolResults)(device ? gdpa(device, "vkGetQueryPoolResults") : gipa(instance, "vkGetQueryPoolResults"));
+    t->vkCreateBuffer = (PFN_vkCreateBuffer)(device ? gdpa(device, "vkCreateBuffer") : gipa(instance, "vkCreateBuffer"));
+    t->vkDestroyBuffer = (PFN_vkDestroyBuffer)(device ? gdpa(device, "vkDestroyBuffer") : gipa(instance, "vkDestroyBuffer"));
+    t->vkCreateImage = (PFN_vkCreateImage)(device ? gdpa(device, "vkCreateImage") : gipa(instance, "vkCreateImage"));
+    t->vkDestroyImage = (PFN_vkDestroyImage)(device ? gdpa(device, "vkDestroyImage") : gipa(instance, "vkDestroyImage"));
+    t->vkGetImageSubresourceLayout = (PFN_vkGetImageSubresourceLayout)(device ? gdpa(device, "vkGetImageSubresourceLayout") : gipa(instance, "vkGetImageSubresourceLayout"));
+    t->vkCreateImageView = (PFN_vkCreateImageView)(device ? gdpa(device, "vkCreateImageView") : gipa(instance, "vkCreateImageView"));
+    t->vkDestroyImageView = (PFN_vkDestroyImageView)(device ? gdpa(device, "vkDestroyImageView") : gipa(instance, "vkDestroyImageView"));
+    t->vkCreateCommandPool = (PFN_vkCreateCommandPool)(device ? gdpa(device, "vkCreateCommandPool") : gipa(instance, "vkCreateCommandPool"));
+    t->vkDestroyCommandPool = (PFN_vkDestroyCommandPool)(device ? gdpa(device, "vkDestroyCommandPool") : gipa(instance, "vkDestroyCommandPool"));
+    t->vkResetCommandPool = (PFN_vkResetCommandPool)(device ? gdpa(device, "vkResetCommandPool") : gipa(instance, "vkResetCommandPool"));
+    t->vkAllocateCommandBuffers = (PFN_vkAllocateCommandBuffers)(device ? gdpa(device, "vkAllocateCommandBuffers") : gipa(instance, "vkAllocateCommandBuffers"));
+    t->vkFreeCommandBuffers = (PFN_vkFreeCommandBuffers)(device ? gdpa(device, "vkFreeCommandBuffers") : gipa(instance, "vkFreeCommandBuffers"));
+    t->vkBeginCommandBuffer = (PFN_vkBeginCommandBuffer)(device ? gdpa(device, "vkBeginCommandBuffer") : gipa(instance, "vkBeginCommandBuffer"));
+    t->vkEndCommandBuffer = (PFN_vkEndCommandBuffer)(device ? gdpa(device, "vkEndCommandBuffer") : gipa(instance, "vkEndCommandBuffer"));
+    t->vkResetCommandBuffer = (PFN_vkResetCommandBuffer)(device ? gdpa(device, "vkResetCommandBuffer") : gipa(instance, "vkResetCommandBuffer"));
+    t->vkCmdCopyBuffer = (PFN_vkCmdCopyBuffer)(device ? gdpa(device, "vkCmdCopyBuffer") : gipa(instance, "vkCmdCopyBuffer"));
+    t->vkCmdCopyImage = (PFN_vkCmdCopyImage)(device ? gdpa(device, "vkCmdCopyImage") : gipa(instance, "vkCmdCopyImage"));
+    t->vkCmdCopyBufferToImage = (PFN_vkCmdCopyBufferToImage)(device ? gdpa(device, "vkCmdCopyBufferToImage") : gipa(instance, "vkCmdCopyBufferToImage"));
+    t->vkCmdCopyImageToBuffer = (PFN_vkCmdCopyImageToBuffer)(device ? gdpa(device, "vkCmdCopyImageToBuffer") : gipa(instance, "vkCmdCopyImageToBuffer"));
+    t->vkCmdUpdateBuffer = (PFN_vkCmdUpdateBuffer)(device ? gdpa(device, "vkCmdUpdateBuffer") : gipa(instance, "vkCmdUpdateBuffer"));
+    t->vkCmdFillBuffer = (PFN_vkCmdFillBuffer)(device ? gdpa(device, "vkCmdFillBuffer") : gipa(instance, "vkCmdFillBuffer"));
+    t->vkCmdPipelineBarrier = (PFN_vkCmdPipelineBarrier)(device ? gdpa(device, "vkCmdPipelineBarrier") : gipa(instance, "vkCmdPipelineBarrier"));
+    t->vkCmdBeginQuery = (PFN_vkCmdBeginQuery)(device ? gdpa(device, "vkCmdBeginQuery") : gipa(instance, "vkCmdBeginQuery"));
+    t->vkCmdEndQuery = (PFN_vkCmdEndQuery)(device ? gdpa(device, "vkCmdEndQuery") : gipa(instance, "vkCmdEndQuery"));
+    t->vkCmdResetQueryPool = (PFN_vkCmdResetQueryPool)(device ? gdpa(device, "vkCmdResetQueryPool") : gipa(instance, "vkCmdResetQueryPool"));
+    t->vkCmdWriteTimestamp = (PFN_vkCmdWriteTimestamp)(device ? gdpa(device, "vkCmdWriteTimestamp") : gipa(instance, "vkCmdWriteTimestamp"));
+    t->vkCmdCopyQueryPoolResults = (PFN_vkCmdCopyQueryPoolResults)(device ? gdpa(device, "vkCmdCopyQueryPoolResults") : gipa(instance, "vkCmdCopyQueryPoolResults"));
+    t->vkCmdExecuteCommands = (PFN_vkCmdExecuteCommands)(device ? gdpa(device, "vkCmdExecuteCommands") : gipa(instance, "vkCmdExecuteCommands"));
+    t->vkCreateEvent = (PFN_vkCreateEvent)(device ? gdpa(device, "vkCreateEvent") : gipa(instance, "vkCreateEvent"));
+    t->vkDestroyEvent = (PFN_vkDestroyEvent)(device ? gdpa(device, "vkDestroyEvent") : gipa(instance, "vkDestroyEvent"));
+    t->vkGetEventStatus = (PFN_vkGetEventStatus)(device ? gdpa(device, "vkGetEventStatus") : gipa(instance, "vkGetEventStatus"));
+    t->vkSetEvent = (PFN_vkSetEvent)(device ? gdpa(device, "vkSetEvent") : gipa(instance, "vkSetEvent"));
+    t->vkResetEvent = (PFN_vkResetEvent)(device ? gdpa(device, "vkResetEvent") : gipa(instance, "vkResetEvent"));
+    t->vkCreateBufferView = (PFN_vkCreateBufferView)(device ? gdpa(device, "vkCreateBufferView") : gipa(instance, "vkCreateBufferView"));
+    t->vkDestroyBufferView = (PFN_vkDestroyBufferView)(device ? gdpa(device, "vkDestroyBufferView") : gipa(instance, "vkDestroyBufferView"));
+    t->vkCreateShaderModule = (PFN_vkCreateShaderModule)(device ? gdpa(device, "vkCreateShaderModule") : gipa(instance, "vkCreateShaderModule"));
+    t->vkDestroyShaderModule = (PFN_vkDestroyShaderModule)(device ? gdpa(device, "vkDestroyShaderModule") : gipa(instance, "vkDestroyShaderModule"));
+    t->vkCreatePipelineCache = (PFN_vkCreatePipelineCache)(device ? gdpa(device, "vkCreatePipelineCache") : gipa(instance, "vkCreatePipelineCache"));
+    t->vkDestroyPipelineCache = (PFN_vkDestroyPipelineCache)(device ? gdpa(device, "vkDestroyPipelineCache") : gipa(instance, "vkDestroyPipelineCache"));
+    t->vkGetPipelineCacheData = (PFN_vkGetPipelineCacheData)(device ? gdpa(device, "vkGetPipelineCacheData") : gipa(instance, "vkGetPipelineCacheData"));
+    t->vkMergePipelineCaches = (PFN_vkMergePipelineCaches)(device ? gdpa(device, "vkMergePipelineCaches") : gipa(instance, "vkMergePipelineCaches"));
+    t->vkCreateComputePipelines = (PFN_vkCreateComputePipelines)(device ? gdpa(device, "vkCreateComputePipelines") : gipa(instance, "vkCreateComputePipelines"));
+    t->vkDestroyPipeline = (PFN_vkDestroyPipeline)(device ? gdpa(device, "vkDestroyPipeline") : gipa(instance, "vkDestroyPipeline"));
+    t->vkCreatePipelineLayout = (PFN_vkCreatePipelineLayout)(device ? gdpa(device, "vkCreatePipelineLayout") : gipa(instance, "vkCreatePipelineLayout"));
+    t->vkDestroyPipelineLayout = (PFN_vkDestroyPipelineLayout)(device ? gdpa(device, "vkDestroyPipelineLayout") : gipa(instance, "vkDestroyPipelineLayout"));
+    t->vkCreateSampler = (PFN_vkCreateSampler)(device ? gdpa(device, "vkCreateSampler") : gipa(instance, "vkCreateSampler"));
+    t->vkDestroySampler = (PFN_vkDestroySampler)(device ? gdpa(device, "vkDestroySampler") : gipa(instance, "vkDestroySampler"));
+    t->vkCreateDescriptorSetLayout = (PFN_vkCreateDescriptorSetLayout)(device ? gdpa(device, "vkCreateDescriptorSetLayout") : gipa(instance, "vkCreateDescriptorSetLayout"));
+    t->vkDestroyDescriptorSetLayout = (PFN_vkDestroyDescriptorSetLayout)(device ? gdpa(device, "vkDestroyDescriptorSetLayout") : gipa(instance, "vkDestroyDescriptorSetLayout"));
+    t->vkCreateDescriptorPool = (PFN_vkCreateDescriptorPool)(device ? gdpa(device, "vkCreateDescriptorPool") : gipa(instance, "vkCreateDescriptorPool"));
+    t->vkDestroyDescriptorPool = (PFN_vkDestroyDescriptorPool)(device ? gdpa(device, "vkDestroyDescriptorPool") : gipa(instance, "vkDestroyDescriptorPool"));
+    t->vkResetDescriptorPool = (PFN_vkResetDescriptorPool)(device ? gdpa(device, "vkResetDescriptorPool") : gipa(instance, "vkResetDescriptorPool"));
+    t->vkAllocateDescriptorSets = (PFN_vkAllocateDescriptorSets)(device ? gdpa(device, "vkAllocateDescriptorSets") : gipa(instance, "vkAllocateDescriptorSets"));
+    t->vkFreeDescriptorSets = (PFN_vkFreeDescriptorSets)(device ? gdpa(device, "vkFreeDescriptorSets") : gipa(instance, "vkFreeDescriptorSets"));
+    t->vkUpdateDescriptorSets = (PFN_vkUpdateDescriptorSets)(device ? gdpa(device, "vkUpdateDescriptorSets") : gipa(instance, "vkUpdateDescriptorSets"));
+    t->vkCmdBindPipeline = (PFN_vkCmdBindPipeline)(device ? gdpa(device, "vkCmdBindPipeline") : gipa(instance, "vkCmdBindPipeline"));
+    t->vkCmdBindDescriptorSets = (PFN_vkCmdBindDescriptorSets)(device ? gdpa(device, "vkCmdBindDescriptorSets") : gipa(instance, "vkCmdBindDescriptorSets"));
+    t->vkCmdClearColorImage = (PFN_vkCmdClearColorImage)(device ? gdpa(device, "vkCmdClearColorImage") : gipa(instance, "vkCmdClearColorImage"));
+    t->vkCmdDispatch = (PFN_vkCmdDispatch)(device ? gdpa(device, "vkCmdDispatch") : gipa(instance, "vkCmdDispatch"));
+    t->vkCmdDispatchIndirect = (PFN_vkCmdDispatchIndirect)(device ? gdpa(device, "vkCmdDispatchIndirect") : gipa(instance, "vkCmdDispatchIndirect"));
+    t->vkCmdSetEvent = (PFN_vkCmdSetEvent)(device ? gdpa(device, "vkCmdSetEvent") : gipa(instance, "vkCmdSetEvent"));
+    t->vkCmdResetEvent = (PFN_vkCmdResetEvent)(device ? gdpa(device, "vkCmdResetEvent") : gipa(instance, "vkCmdResetEvent"));
+    t->vkCmdWaitEvents = (PFN_vkCmdWaitEvents)(device ? gdpa(device, "vkCmdWaitEvents") : gipa(instance, "vkCmdWaitEvents"));
+    t->vkCmdPushConstants = (PFN_vkCmdPushConstants)(device ? gdpa(device, "vkCmdPushConstants") : gipa(instance, "vkCmdPushConstants"));
+    t->vkCreateGraphicsPipelines = (PFN_vkCreateGraphicsPipelines)(device ? gdpa(device, "vkCreateGraphicsPipelines") : gipa(instance, "vkCreateGraphicsPipelines"));
+    t->vkCreateFramebuffer = (PFN_vkCreateFramebuffer)(device ? gdpa(device, "vkCreateFramebuffer") : gipa(instance, "vkCreateFramebuffer"));
+    t->vkDestroyFramebuffer = (PFN_vkDestroyFramebuffer)(device ? gdpa(device, "vkDestroyFramebuffer") : gipa(instance, "vkDestroyFramebuffer"));
+    t->vkCreateRenderPass = (PFN_vkCreateRenderPass)(device ? gdpa(device, "vkCreateRenderPass") : gipa(instance, "vkCreateRenderPass"));
+    t->vkDestroyRenderPass = (PFN_vkDestroyRenderPass)(device ? gdpa(device, "vkDestroyRenderPass") : gipa(instance, "vkDestroyRenderPass"));
+    t->vkGetRenderAreaGranularity = (PFN_vkGetRenderAreaGranularity)(device ? gdpa(device, "vkGetRenderAreaGranularity") : gipa(instance, "vkGetRenderAreaGranularity"));
+    t->vkCmdSetViewport = (PFN_vkCmdSetViewport)(device ? gdpa(device, "vkCmdSetViewport") : gipa(instance, "vkCmdSetViewport"));
+    t->vkCmdSetScissor = (PFN_vkCmdSetScissor)(device ? gdpa(device, "vkCmdSetScissor") : gipa(instance, "vkCmdSetScissor"));
+    t->vkCmdSetLineWidth = (PFN_vkCmdSetLineWidth)(device ? gdpa(device, "vkCmdSetLineWidth") : gipa(instance, "vkCmdSetLineWidth"));
+    t->vkCmdSetDepthBias = (PFN_vkCmdSetDepthBias)(device ? gdpa(device, "vkCmdSetDepthBias") : gipa(instance, "vkCmdSetDepthBias"));
+    t->vkCmdSetBlendConstants = (PFN_vkCmdSetBlendConstants)(device ? gdpa(device, "vkCmdSetBlendConstants") : gipa(instance, "vkCmdSetBlendConstants"));
+    t->vkCmdSetDepthBounds = (PFN_vkCmdSetDepthBounds)(device ? gdpa(device, "vkCmdSetDepthBounds") : gipa(instance, "vkCmdSetDepthBounds"));
+    t->vkCmdSetStencilCompareMask = (PFN_vkCmdSetStencilCompareMask)(device ? gdpa(device, "vkCmdSetStencilCompareMask") : gipa(instance, "vkCmdSetStencilCompareMask"));
+    t->vkCmdSetStencilWriteMask = (PFN_vkCmdSetStencilWriteMask)(device ? gdpa(device, "vkCmdSetStencilWriteMask") : gipa(instance, "vkCmdSetStencilWriteMask"));
+    t->vkCmdSetStencilReference = (PFN_vkCmdSetStencilReference)(device ? gdpa(device, "vkCmdSetStencilReference") : gipa(instance, "vkCmdSetStencilReference"));
+    t->vkCmdBindIndexBuffer = (PFN_vkCmdBindIndexBuffer)(device ? gdpa(device, "vkCmdBindIndexBuffer") : gipa(instance, "vkCmdBindIndexBuffer"));
+    t->vkCmdBindVertexBuffers = (PFN_vkCmdBindVertexBuffers)(device ? gdpa(device, "vkCmdBindVertexBuffers") : gipa(instance, "vkCmdBindVertexBuffers"));
+    t->vkCmdDraw = (PFN_vkCmdDraw)(device ? gdpa(device, "vkCmdDraw") : gipa(instance, "vkCmdDraw"));
+    t->vkCmdDrawIndexed = (PFN_vkCmdDrawIndexed)(device ? gdpa(device, "vkCmdDrawIndexed") : gipa(instance, "vkCmdDrawIndexed"));
+    t->vkCmdDrawIndirect = (PFN_vkCmdDrawIndirect)(device ? gdpa(device, "vkCmdDrawIndirect") : gipa(instance, "vkCmdDrawIndirect"));
+    t->vkCmdDrawIndexedIndirect = (PFN_vkCmdDrawIndexedIndirect)(device ? gdpa(device, "vkCmdDrawIndexedIndirect") : gipa(instance, "vkCmdDrawIndexedIndirect"));
+    t->vkCmdBlitImage = (PFN_vkCmdBlitImage)(device ? gdpa(device, "vkCmdBlitImage") : gipa(instance, "vkCmdBlitImage"));
+    t->vkCmdClearDepthStencilImage = (PFN_vkCmdClearDepthStencilImage)(device ? gdpa(device, "vkCmdClearDepthStencilImage") : gipa(instance, "vkCmdClearDepthStencilImage"));
+    t->vkCmdClearAttachments = (PFN_vkCmdClearAttachments)(device ? gdpa(device, "vkCmdClearAttachments") : gipa(instance, "vkCmdClearAttachments"));
+    t->vkCmdResolveImage = (PFN_vkCmdResolveImage)(device ? gdpa(device, "vkCmdResolveImage") : gipa(instance, "vkCmdResolveImage"));
+    t->vkCmdBeginRenderPass = (PFN_vkCmdBeginRenderPass)(device ? gdpa(device, "vkCmdBeginRenderPass") : gipa(instance, "vkCmdBeginRenderPass"));
+    t->vkCmdNextSubpass = (PFN_vkCmdNextSubpass)(device ? gdpa(device, "vkCmdNextSubpass") : gipa(instance, "vkCmdNextSubpass"));
+    t->vkCmdEndRenderPass = (PFN_vkCmdEndRenderPass)(device ? gdpa(device, "vkCmdEndRenderPass") : gipa(instance, "vkCmdEndRenderPass"));
     t->vkEnumerateInstanceVersion = (PFN_vkEnumerateInstanceVersion)gipa(instance, "vkEnumerateInstanceVersion");
-    t->vkBindBufferMemory2 = (PFN_vkBindBufferMemory2)(device ? gdpa(device, "vkBindBufferMemory2") : NULL);
-    if (!t->vkBindBufferMemory2)
-        t->vkBindBufferMemory2 = (PFN_vkBindBufferMemory2)gipa(instance, "vkBindBufferMemory2");
-    t->vkBindImageMemory2 = (PFN_vkBindImageMemory2)(device ? gdpa(device, "vkBindImageMemory2") : NULL);
-    if (!t->vkBindImageMemory2)
-        t->vkBindImageMemory2 = (PFN_vkBindImageMemory2)gipa(instance, "vkBindImageMemory2");
-    t->vkGetDeviceGroupPeerMemoryFeatures = (PFN_vkGetDeviceGroupPeerMemoryFeatures)(device ? gdpa(device, "vkGetDeviceGroupPeerMemoryFeatures") : NULL);
-    if (!t->vkGetDeviceGroupPeerMemoryFeatures)
-        t->vkGetDeviceGroupPeerMemoryFeatures = (PFN_vkGetDeviceGroupPeerMemoryFeatures)gipa(instance, "vkGetDeviceGroupPeerMemoryFeatures");
-    t->vkCmdSetDeviceMask = (PFN_vkCmdSetDeviceMask)(device ? gdpa(device, "vkCmdSetDeviceMask") : NULL);
-    if (!t->vkCmdSetDeviceMask)
-        t->vkCmdSetDeviceMask = (PFN_vkCmdSetDeviceMask)gipa(instance, "vkCmdSetDeviceMask");
+    t->vkBindBufferMemory2 = (PFN_vkBindBufferMemory2)(device ? gdpa(device, "vkBindBufferMemory2") : gipa(instance, "vkBindBufferMemory2"));
+    t->vkBindImageMemory2 = (PFN_vkBindImageMemory2)(device ? gdpa(device, "vkBindImageMemory2") : gipa(instance, "vkBindImageMemory2"));
+    t->vkGetDeviceGroupPeerMemoryFeatures = (PFN_vkGetDeviceGroupPeerMemoryFeatures)(device ? gdpa(device, "vkGetDeviceGroupPeerMemoryFeatures") : gipa(instance, "vkGetDeviceGroupPeerMemoryFeatures"));
+    t->vkCmdSetDeviceMask = (PFN_vkCmdSetDeviceMask)(device ? gdpa(device, "vkCmdSetDeviceMask") : gipa(instance, "vkCmdSetDeviceMask"));
     t->vkEnumeratePhysicalDeviceGroups = (PFN_vkEnumeratePhysicalDeviceGroups)gipa(instance, "vkEnumeratePhysicalDeviceGroups");
-    t->vkGetImageMemoryRequirements2 = (PFN_vkGetImageMemoryRequirements2)(device ? gdpa(device, "vkGetImageMemoryRequirements2") : NULL);
-    if (!t->vkGetImageMemoryRequirements2)
-        t->vkGetImageMemoryRequirements2 = (PFN_vkGetImageMemoryRequirements2)gipa(instance, "vkGetImageMemoryRequirements2");
-    t->vkGetBufferMemoryRequirements2 = (PFN_vkGetBufferMemoryRequirements2)(device ? gdpa(device, "vkGetBufferMemoryRequirements2") : NULL);
-    if (!t->vkGetBufferMemoryRequirements2)
-        t->vkGetBufferMemoryRequirements2 = (PFN_vkGetBufferMemoryRequirements2)gipa(instance, "vkGetBufferMemoryRequirements2");
-    t->vkGetImageSparseMemoryRequirements2 = (PFN_vkGetImageSparseMemoryRequirements2)(device ? gdpa(device, "vkGetImageSparseMemoryRequirements2") : NULL);
-    if (!t->vkGetImageSparseMemoryRequirements2)
-        t->vkGetImageSparseMemoryRequirements2 = (PFN_vkGetImageSparseMemoryRequirements2)gipa(instance, "vkGetImageSparseMemoryRequirements2");
+    t->vkGetImageMemoryRequirements2 = (PFN_vkGetImageMemoryRequirements2)(device ? gdpa(device, "vkGetImageMemoryRequirements2") : gipa(instance, "vkGetImageMemoryRequirements2"));
+    t->vkGetBufferMemoryRequirements2 = (PFN_vkGetBufferMemoryRequirements2)(device ? gdpa(device, "vkGetBufferMemoryRequirements2") : gipa(instance, "vkGetBufferMemoryRequirements2"));
+    t->vkGetImageSparseMemoryRequirements2 = (PFN_vkGetImageSparseMemoryRequirements2)(device ? gdpa(device, "vkGetImageSparseMemoryRequirements2") : gipa(instance, "vkGetImageSparseMemoryRequirements2"));
     t->vkGetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)gipa(instance, "vkGetPhysicalDeviceFeatures2");
     t->vkGetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2");
     t->vkGetPhysicalDeviceFormatProperties2 = (PFN_vkGetPhysicalDeviceFormatProperties2)gipa(instance, "vkGetPhysicalDeviceFormatProperties2");
@@ -1237,286 +988,102 @@ static inline void mvk_load_dispatch(MvkDispatch *t, PFN_vkGetInstanceProcAddr g
     t->vkGetPhysicalDeviceQueueFamilyProperties2 = (PFN_vkGetPhysicalDeviceQueueFamilyProperties2)gipa(instance, "vkGetPhysicalDeviceQueueFamilyProperties2");
     t->vkGetPhysicalDeviceMemoryProperties2 = (PFN_vkGetPhysicalDeviceMemoryProperties2)gipa(instance, "vkGetPhysicalDeviceMemoryProperties2");
     t->vkGetPhysicalDeviceSparseImageFormatProperties2 = (PFN_vkGetPhysicalDeviceSparseImageFormatProperties2)gipa(instance, "vkGetPhysicalDeviceSparseImageFormatProperties2");
-    t->vkTrimCommandPool = (PFN_vkTrimCommandPool)(device ? gdpa(device, "vkTrimCommandPool") : NULL);
-    if (!t->vkTrimCommandPool)
-        t->vkTrimCommandPool = (PFN_vkTrimCommandPool)gipa(instance, "vkTrimCommandPool");
-    t->vkGetDeviceQueue2 = (PFN_vkGetDeviceQueue2)(device ? gdpa(device, "vkGetDeviceQueue2") : NULL);
-    if (!t->vkGetDeviceQueue2)
-        t->vkGetDeviceQueue2 = (PFN_vkGetDeviceQueue2)gipa(instance, "vkGetDeviceQueue2");
+    t->vkTrimCommandPool = (PFN_vkTrimCommandPool)(device ? gdpa(device, "vkTrimCommandPool") : gipa(instance, "vkTrimCommandPool"));
+    t->vkGetDeviceQueue2 = (PFN_vkGetDeviceQueue2)(device ? gdpa(device, "vkGetDeviceQueue2") : gipa(instance, "vkGetDeviceQueue2"));
     t->vkGetPhysicalDeviceExternalBufferProperties = (PFN_vkGetPhysicalDeviceExternalBufferProperties)gipa(instance, "vkGetPhysicalDeviceExternalBufferProperties");
     t->vkGetPhysicalDeviceExternalFenceProperties = (PFN_vkGetPhysicalDeviceExternalFenceProperties)gipa(instance, "vkGetPhysicalDeviceExternalFenceProperties");
     t->vkGetPhysicalDeviceExternalSemaphoreProperties = (PFN_vkGetPhysicalDeviceExternalSemaphoreProperties)gipa(instance, "vkGetPhysicalDeviceExternalSemaphoreProperties");
-    t->vkCmdDispatchBase = (PFN_vkCmdDispatchBase)(device ? gdpa(device, "vkCmdDispatchBase") : NULL);
-    if (!t->vkCmdDispatchBase)
-        t->vkCmdDispatchBase = (PFN_vkCmdDispatchBase)gipa(instance, "vkCmdDispatchBase");
-    t->vkCreateDescriptorUpdateTemplate = (PFN_vkCreateDescriptorUpdateTemplate)(device ? gdpa(device, "vkCreateDescriptorUpdateTemplate") : NULL);
-    if (!t->vkCreateDescriptorUpdateTemplate)
-        t->vkCreateDescriptorUpdateTemplate = (PFN_vkCreateDescriptorUpdateTemplate)gipa(instance, "vkCreateDescriptorUpdateTemplate");
-    t->vkDestroyDescriptorUpdateTemplate = (PFN_vkDestroyDescriptorUpdateTemplate)(device ? gdpa(device, "vkDestroyDescriptorUpdateTemplate") : NULL);
-    if (!t->vkDestroyDescriptorUpdateTemplate)
-        t->vkDestroyDescriptorUpdateTemplate = (PFN_vkDestroyDescriptorUpdateTemplate)gipa(instance, "vkDestroyDescriptorUpdateTemplate");
-    t->vkUpdateDescriptorSetWithTemplate = (PFN_vkUpdateDescriptorSetWithTemplate)(device ? gdpa(device, "vkUpdateDescriptorSetWithTemplate") : NULL);
-    if (!t->vkUpdateDescriptorSetWithTemplate)
-        t->vkUpdateDescriptorSetWithTemplate = (PFN_vkUpdateDescriptorSetWithTemplate)gipa(instance, "vkUpdateDescriptorSetWithTemplate");
-    t->vkGetDescriptorSetLayoutSupport = (PFN_vkGetDescriptorSetLayoutSupport)(device ? gdpa(device, "vkGetDescriptorSetLayoutSupport") : NULL);
-    if (!t->vkGetDescriptorSetLayoutSupport)
-        t->vkGetDescriptorSetLayoutSupport = (PFN_vkGetDescriptorSetLayoutSupport)gipa(instance, "vkGetDescriptorSetLayoutSupport");
-    t->vkCreateSamplerYcbcrConversion = (PFN_vkCreateSamplerYcbcrConversion)(device ? gdpa(device, "vkCreateSamplerYcbcrConversion") : NULL);
-    if (!t->vkCreateSamplerYcbcrConversion)
-        t->vkCreateSamplerYcbcrConversion = (PFN_vkCreateSamplerYcbcrConversion)gipa(instance, "vkCreateSamplerYcbcrConversion");
-    t->vkDestroySamplerYcbcrConversion = (PFN_vkDestroySamplerYcbcrConversion)(device ? gdpa(device, "vkDestroySamplerYcbcrConversion") : NULL);
-    if (!t->vkDestroySamplerYcbcrConversion)
-        t->vkDestroySamplerYcbcrConversion = (PFN_vkDestroySamplerYcbcrConversion)gipa(instance, "vkDestroySamplerYcbcrConversion");
-    t->vkResetQueryPool = (PFN_vkResetQueryPool)(device ? gdpa(device, "vkResetQueryPool") : NULL);
-    if (!t->vkResetQueryPool)
-        t->vkResetQueryPool = (PFN_vkResetQueryPool)gipa(instance, "vkResetQueryPool");
-    t->vkGetSemaphoreCounterValue = (PFN_vkGetSemaphoreCounterValue)(device ? gdpa(device, "vkGetSemaphoreCounterValue") : NULL);
-    if (!t->vkGetSemaphoreCounterValue)
-        t->vkGetSemaphoreCounterValue = (PFN_vkGetSemaphoreCounterValue)gipa(instance, "vkGetSemaphoreCounterValue");
-    t->vkWaitSemaphores = (PFN_vkWaitSemaphores)(device ? gdpa(device, "vkWaitSemaphores") : NULL);
-    if (!t->vkWaitSemaphores)
-        t->vkWaitSemaphores = (PFN_vkWaitSemaphores)gipa(instance, "vkWaitSemaphores");
-    t->vkSignalSemaphore = (PFN_vkSignalSemaphore)(device ? gdpa(device, "vkSignalSemaphore") : NULL);
-    if (!t->vkSignalSemaphore)
-        t->vkSignalSemaphore = (PFN_vkSignalSemaphore)gipa(instance, "vkSignalSemaphore");
-    t->vkGetBufferDeviceAddress = (PFN_vkGetBufferDeviceAddress)(device ? gdpa(device, "vkGetBufferDeviceAddress") : NULL);
-    if (!t->vkGetBufferDeviceAddress)
-        t->vkGetBufferDeviceAddress = (PFN_vkGetBufferDeviceAddress)gipa(instance, "vkGetBufferDeviceAddress");
-    t->vkGetBufferOpaqueCaptureAddress = (PFN_vkGetBufferOpaqueCaptureAddress)(device ? gdpa(device, "vkGetBufferOpaqueCaptureAddress") : NULL);
-    if (!t->vkGetBufferOpaqueCaptureAddress)
-        t->vkGetBufferOpaqueCaptureAddress = (PFN_vkGetBufferOpaqueCaptureAddress)gipa(instance, "vkGetBufferOpaqueCaptureAddress");
-    t->vkGetDeviceMemoryOpaqueCaptureAddress = (PFN_vkGetDeviceMemoryOpaqueCaptureAddress)(device ? gdpa(device, "vkGetDeviceMemoryOpaqueCaptureAddress") : NULL);
-    if (!t->vkGetDeviceMemoryOpaqueCaptureAddress)
-        t->vkGetDeviceMemoryOpaqueCaptureAddress = (PFN_vkGetDeviceMemoryOpaqueCaptureAddress)gipa(instance, "vkGetDeviceMemoryOpaqueCaptureAddress");
-    t->vkCmdDrawIndirectCount = (PFN_vkCmdDrawIndirectCount)(device ? gdpa(device, "vkCmdDrawIndirectCount") : NULL);
-    if (!t->vkCmdDrawIndirectCount)
-        t->vkCmdDrawIndirectCount = (PFN_vkCmdDrawIndirectCount)gipa(instance, "vkCmdDrawIndirectCount");
-    t->vkCmdDrawIndexedIndirectCount = (PFN_vkCmdDrawIndexedIndirectCount)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCount") : NULL);
-    if (!t->vkCmdDrawIndexedIndirectCount)
-        t->vkCmdDrawIndexedIndirectCount = (PFN_vkCmdDrawIndexedIndirectCount)gipa(instance, "vkCmdDrawIndexedIndirectCount");
-    t->vkCreateRenderPass2 = (PFN_vkCreateRenderPass2)(device ? gdpa(device, "vkCreateRenderPass2") : NULL);
-    if (!t->vkCreateRenderPass2)
-        t->vkCreateRenderPass2 = (PFN_vkCreateRenderPass2)gipa(instance, "vkCreateRenderPass2");
-    t->vkCmdBeginRenderPass2 = (PFN_vkCmdBeginRenderPass2)(device ? gdpa(device, "vkCmdBeginRenderPass2") : NULL);
-    if (!t->vkCmdBeginRenderPass2)
-        t->vkCmdBeginRenderPass2 = (PFN_vkCmdBeginRenderPass2)gipa(instance, "vkCmdBeginRenderPass2");
-    t->vkCmdNextSubpass2 = (PFN_vkCmdNextSubpass2)(device ? gdpa(device, "vkCmdNextSubpass2") : NULL);
-    if (!t->vkCmdNextSubpass2)
-        t->vkCmdNextSubpass2 = (PFN_vkCmdNextSubpass2)gipa(instance, "vkCmdNextSubpass2");
-    t->vkCmdEndRenderPass2 = (PFN_vkCmdEndRenderPass2)(device ? gdpa(device, "vkCmdEndRenderPass2") : NULL);
-    if (!t->vkCmdEndRenderPass2)
-        t->vkCmdEndRenderPass2 = (PFN_vkCmdEndRenderPass2)gipa(instance, "vkCmdEndRenderPass2");
+    t->vkCmdDispatchBase = (PFN_vkCmdDispatchBase)(device ? gdpa(device, "vkCmdDispatchBase") : gipa(instance, "vkCmdDispatchBase"));
+    t->vkCreateDescriptorUpdateTemplate = (PFN_vkCreateDescriptorUpdateTemplate)(device ? gdpa(device, "vkCreateDescriptorUpdateTemplate") : gipa(instance, "vkCreateDescriptorUpdateTemplate"));
+    t->vkDestroyDescriptorUpdateTemplate = (PFN_vkDestroyDescriptorUpdateTemplate)(device ? gdpa(device, "vkDestroyDescriptorUpdateTemplate") : gipa(instance, "vkDestroyDescriptorUpdateTemplate"));
+    t->vkUpdateDescriptorSetWithTemplate = (PFN_vkUpdateDescriptorSetWithTemplate)(device ? gdpa(device, "vkUpdateDescriptorSetWithTemplate") : gipa(instance, "vkUpdateDescriptorSetWithTemplate"));
+    t->vkGetDescriptorSetLayoutSupport = (PFN_vkGetDescriptorSetLayoutSupport)(device ? gdpa(device, "vkGetDescriptorSetLayoutSupport") : gipa(instance, "vkGetDescriptorSetLayoutSupport"));
+    t->vkCreateSamplerYcbcrConversion = (PFN_vkCreateSamplerYcbcrConversion)(device ? gdpa(device, "vkCreateSamplerYcbcrConversion") : gipa(instance, "vkCreateSamplerYcbcrConversion"));
+    t->vkDestroySamplerYcbcrConversion = (PFN_vkDestroySamplerYcbcrConversion)(device ? gdpa(device, "vkDestroySamplerYcbcrConversion") : gipa(instance, "vkDestroySamplerYcbcrConversion"));
+    t->vkResetQueryPool = (PFN_vkResetQueryPool)(device ? gdpa(device, "vkResetQueryPool") : gipa(instance, "vkResetQueryPool"));
+    t->vkGetSemaphoreCounterValue = (PFN_vkGetSemaphoreCounterValue)(device ? gdpa(device, "vkGetSemaphoreCounterValue") : gipa(instance, "vkGetSemaphoreCounterValue"));
+    t->vkWaitSemaphores = (PFN_vkWaitSemaphores)(device ? gdpa(device, "vkWaitSemaphores") : gipa(instance, "vkWaitSemaphores"));
+    t->vkSignalSemaphore = (PFN_vkSignalSemaphore)(device ? gdpa(device, "vkSignalSemaphore") : gipa(instance, "vkSignalSemaphore"));
+    t->vkGetBufferDeviceAddress = (PFN_vkGetBufferDeviceAddress)(device ? gdpa(device, "vkGetBufferDeviceAddress") : gipa(instance, "vkGetBufferDeviceAddress"));
+    t->vkGetBufferOpaqueCaptureAddress = (PFN_vkGetBufferOpaqueCaptureAddress)(device ? gdpa(device, "vkGetBufferOpaqueCaptureAddress") : gipa(instance, "vkGetBufferOpaqueCaptureAddress"));
+    t->vkGetDeviceMemoryOpaqueCaptureAddress = (PFN_vkGetDeviceMemoryOpaqueCaptureAddress)(device ? gdpa(device, "vkGetDeviceMemoryOpaqueCaptureAddress") : gipa(instance, "vkGetDeviceMemoryOpaqueCaptureAddress"));
+    t->vkCmdDrawIndirectCount = (PFN_vkCmdDrawIndirectCount)(device ? gdpa(device, "vkCmdDrawIndirectCount") : gipa(instance, "vkCmdDrawIndirectCount"));
+    t->vkCmdDrawIndexedIndirectCount = (PFN_vkCmdDrawIndexedIndirectCount)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCount") : gipa(instance, "vkCmdDrawIndexedIndirectCount"));
+    t->vkCreateRenderPass2 = (PFN_vkCreateRenderPass2)(device ? gdpa(device, "vkCreateRenderPass2") : gipa(instance, "vkCreateRenderPass2"));
+    t->vkCmdBeginRenderPass2 = (PFN_vkCmdBeginRenderPass2)(device ? gdpa(device, "vkCmdBeginRenderPass2") : gipa(instance, "vkCmdBeginRenderPass2"));
+    t->vkCmdNextSubpass2 = (PFN_vkCmdNextSubpass2)(device ? gdpa(device, "vkCmdNextSubpass2") : gipa(instance, "vkCmdNextSubpass2"));
+    t->vkCmdEndRenderPass2 = (PFN_vkCmdEndRenderPass2)(device ? gdpa(device, "vkCmdEndRenderPass2") : gipa(instance, "vkCmdEndRenderPass2"));
     t->vkGetPhysicalDeviceToolProperties = (PFN_vkGetPhysicalDeviceToolProperties)gipa(instance, "vkGetPhysicalDeviceToolProperties");
-    t->vkCreatePrivateDataSlot = (PFN_vkCreatePrivateDataSlot)(device ? gdpa(device, "vkCreatePrivateDataSlot") : NULL);
-    if (!t->vkCreatePrivateDataSlot)
-        t->vkCreatePrivateDataSlot = (PFN_vkCreatePrivateDataSlot)gipa(instance, "vkCreatePrivateDataSlot");
-    t->vkDestroyPrivateDataSlot = (PFN_vkDestroyPrivateDataSlot)(device ? gdpa(device, "vkDestroyPrivateDataSlot") : NULL);
-    if (!t->vkDestroyPrivateDataSlot)
-        t->vkDestroyPrivateDataSlot = (PFN_vkDestroyPrivateDataSlot)gipa(instance, "vkDestroyPrivateDataSlot");
-    t->vkSetPrivateData = (PFN_vkSetPrivateData)(device ? gdpa(device, "vkSetPrivateData") : NULL);
-    if (!t->vkSetPrivateData)
-        t->vkSetPrivateData = (PFN_vkSetPrivateData)gipa(instance, "vkSetPrivateData");
-    t->vkGetPrivateData = (PFN_vkGetPrivateData)(device ? gdpa(device, "vkGetPrivateData") : NULL);
-    if (!t->vkGetPrivateData)
-        t->vkGetPrivateData = (PFN_vkGetPrivateData)gipa(instance, "vkGetPrivateData");
-    t->vkCmdPipelineBarrier2 = (PFN_vkCmdPipelineBarrier2)(device ? gdpa(device, "vkCmdPipelineBarrier2") : NULL);
-    if (!t->vkCmdPipelineBarrier2)
-        t->vkCmdPipelineBarrier2 = (PFN_vkCmdPipelineBarrier2)gipa(instance, "vkCmdPipelineBarrier2");
-    t->vkCmdWriteTimestamp2 = (PFN_vkCmdWriteTimestamp2)(device ? gdpa(device, "vkCmdWriteTimestamp2") : NULL);
-    if (!t->vkCmdWriteTimestamp2)
-        t->vkCmdWriteTimestamp2 = (PFN_vkCmdWriteTimestamp2)gipa(instance, "vkCmdWriteTimestamp2");
-    t->vkQueueSubmit2 = (PFN_vkQueueSubmit2)(device ? gdpa(device, "vkQueueSubmit2") : NULL);
-    if (!t->vkQueueSubmit2)
-        t->vkQueueSubmit2 = (PFN_vkQueueSubmit2)gipa(instance, "vkQueueSubmit2");
-    t->vkCmdCopyBuffer2 = (PFN_vkCmdCopyBuffer2)(device ? gdpa(device, "vkCmdCopyBuffer2") : NULL);
-    if (!t->vkCmdCopyBuffer2)
-        t->vkCmdCopyBuffer2 = (PFN_vkCmdCopyBuffer2)gipa(instance, "vkCmdCopyBuffer2");
-    t->vkCmdCopyImage2 = (PFN_vkCmdCopyImage2)(device ? gdpa(device, "vkCmdCopyImage2") : NULL);
-    if (!t->vkCmdCopyImage2)
-        t->vkCmdCopyImage2 = (PFN_vkCmdCopyImage2)gipa(instance, "vkCmdCopyImage2");
-    t->vkCmdCopyBufferToImage2 = (PFN_vkCmdCopyBufferToImage2)(device ? gdpa(device, "vkCmdCopyBufferToImage2") : NULL);
-    if (!t->vkCmdCopyBufferToImage2)
-        t->vkCmdCopyBufferToImage2 = (PFN_vkCmdCopyBufferToImage2)gipa(instance, "vkCmdCopyBufferToImage2");
-    t->vkCmdCopyImageToBuffer2 = (PFN_vkCmdCopyImageToBuffer2)(device ? gdpa(device, "vkCmdCopyImageToBuffer2") : NULL);
-    if (!t->vkCmdCopyImageToBuffer2)
-        t->vkCmdCopyImageToBuffer2 = (PFN_vkCmdCopyImageToBuffer2)gipa(instance, "vkCmdCopyImageToBuffer2");
-    t->vkGetDeviceBufferMemoryRequirements = (PFN_vkGetDeviceBufferMemoryRequirements)(device ? gdpa(device, "vkGetDeviceBufferMemoryRequirements") : NULL);
-    if (!t->vkGetDeviceBufferMemoryRequirements)
-        t->vkGetDeviceBufferMemoryRequirements = (PFN_vkGetDeviceBufferMemoryRequirements)gipa(instance, "vkGetDeviceBufferMemoryRequirements");
-    t->vkGetDeviceImageMemoryRequirements = (PFN_vkGetDeviceImageMemoryRequirements)(device ? gdpa(device, "vkGetDeviceImageMemoryRequirements") : NULL);
-    if (!t->vkGetDeviceImageMemoryRequirements)
-        t->vkGetDeviceImageMemoryRequirements = (PFN_vkGetDeviceImageMemoryRequirements)gipa(instance, "vkGetDeviceImageMemoryRequirements");
-    t->vkGetDeviceImageSparseMemoryRequirements = (PFN_vkGetDeviceImageSparseMemoryRequirements)(device ? gdpa(device, "vkGetDeviceImageSparseMemoryRequirements") : NULL);
-    if (!t->vkGetDeviceImageSparseMemoryRequirements)
-        t->vkGetDeviceImageSparseMemoryRequirements = (PFN_vkGetDeviceImageSparseMemoryRequirements)gipa(instance, "vkGetDeviceImageSparseMemoryRequirements");
-    t->vkCmdSetEvent2 = (PFN_vkCmdSetEvent2)(device ? gdpa(device, "vkCmdSetEvent2") : NULL);
-    if (!t->vkCmdSetEvent2)
-        t->vkCmdSetEvent2 = (PFN_vkCmdSetEvent2)gipa(instance, "vkCmdSetEvent2");
-    t->vkCmdResetEvent2 = (PFN_vkCmdResetEvent2)(device ? gdpa(device, "vkCmdResetEvent2") : NULL);
-    if (!t->vkCmdResetEvent2)
-        t->vkCmdResetEvent2 = (PFN_vkCmdResetEvent2)gipa(instance, "vkCmdResetEvent2");
-    t->vkCmdWaitEvents2 = (PFN_vkCmdWaitEvents2)(device ? gdpa(device, "vkCmdWaitEvents2") : NULL);
-    if (!t->vkCmdWaitEvents2)
-        t->vkCmdWaitEvents2 = (PFN_vkCmdWaitEvents2)gipa(instance, "vkCmdWaitEvents2");
-    t->vkCmdBlitImage2 = (PFN_vkCmdBlitImage2)(device ? gdpa(device, "vkCmdBlitImage2") : NULL);
-    if (!t->vkCmdBlitImage2)
-        t->vkCmdBlitImage2 = (PFN_vkCmdBlitImage2)gipa(instance, "vkCmdBlitImage2");
-    t->vkCmdResolveImage2 = (PFN_vkCmdResolveImage2)(device ? gdpa(device, "vkCmdResolveImage2") : NULL);
-    if (!t->vkCmdResolveImage2)
-        t->vkCmdResolveImage2 = (PFN_vkCmdResolveImage2)gipa(instance, "vkCmdResolveImage2");
-    t->vkCmdBeginRendering = (PFN_vkCmdBeginRendering)(device ? gdpa(device, "vkCmdBeginRendering") : NULL);
-    if (!t->vkCmdBeginRendering)
-        t->vkCmdBeginRendering = (PFN_vkCmdBeginRendering)gipa(instance, "vkCmdBeginRendering");
-    t->vkCmdEndRendering = (PFN_vkCmdEndRendering)(device ? gdpa(device, "vkCmdEndRendering") : NULL);
-    if (!t->vkCmdEndRendering)
-        t->vkCmdEndRendering = (PFN_vkCmdEndRendering)gipa(instance, "vkCmdEndRendering");
-    t->vkCmdSetCullMode = (PFN_vkCmdSetCullMode)(device ? gdpa(device, "vkCmdSetCullMode") : NULL);
-    if (!t->vkCmdSetCullMode)
-        t->vkCmdSetCullMode = (PFN_vkCmdSetCullMode)gipa(instance, "vkCmdSetCullMode");
-    t->vkCmdSetFrontFace = (PFN_vkCmdSetFrontFace)(device ? gdpa(device, "vkCmdSetFrontFace") : NULL);
-    if (!t->vkCmdSetFrontFace)
-        t->vkCmdSetFrontFace = (PFN_vkCmdSetFrontFace)gipa(instance, "vkCmdSetFrontFace");
-    t->vkCmdSetPrimitiveTopology = (PFN_vkCmdSetPrimitiveTopology)(device ? gdpa(device, "vkCmdSetPrimitiveTopology") : NULL);
-    if (!t->vkCmdSetPrimitiveTopology)
-        t->vkCmdSetPrimitiveTopology = (PFN_vkCmdSetPrimitiveTopology)gipa(instance, "vkCmdSetPrimitiveTopology");
-    t->vkCmdSetViewportWithCount = (PFN_vkCmdSetViewportWithCount)(device ? gdpa(device, "vkCmdSetViewportWithCount") : NULL);
-    if (!t->vkCmdSetViewportWithCount)
-        t->vkCmdSetViewportWithCount = (PFN_vkCmdSetViewportWithCount)gipa(instance, "vkCmdSetViewportWithCount");
-    t->vkCmdSetScissorWithCount = (PFN_vkCmdSetScissorWithCount)(device ? gdpa(device, "vkCmdSetScissorWithCount") : NULL);
-    if (!t->vkCmdSetScissorWithCount)
-        t->vkCmdSetScissorWithCount = (PFN_vkCmdSetScissorWithCount)gipa(instance, "vkCmdSetScissorWithCount");
-    t->vkCmdBindVertexBuffers2 = (PFN_vkCmdBindVertexBuffers2)(device ? gdpa(device, "vkCmdBindVertexBuffers2") : NULL);
-    if (!t->vkCmdBindVertexBuffers2)
-        t->vkCmdBindVertexBuffers2 = (PFN_vkCmdBindVertexBuffers2)gipa(instance, "vkCmdBindVertexBuffers2");
-    t->vkCmdSetDepthTestEnable = (PFN_vkCmdSetDepthTestEnable)(device ? gdpa(device, "vkCmdSetDepthTestEnable") : NULL);
-    if (!t->vkCmdSetDepthTestEnable)
-        t->vkCmdSetDepthTestEnable = (PFN_vkCmdSetDepthTestEnable)gipa(instance, "vkCmdSetDepthTestEnable");
-    t->vkCmdSetDepthWriteEnable = (PFN_vkCmdSetDepthWriteEnable)(device ? gdpa(device, "vkCmdSetDepthWriteEnable") : NULL);
-    if (!t->vkCmdSetDepthWriteEnable)
-        t->vkCmdSetDepthWriteEnable = (PFN_vkCmdSetDepthWriteEnable)gipa(instance, "vkCmdSetDepthWriteEnable");
-    t->vkCmdSetDepthCompareOp = (PFN_vkCmdSetDepthCompareOp)(device ? gdpa(device, "vkCmdSetDepthCompareOp") : NULL);
-    if (!t->vkCmdSetDepthCompareOp)
-        t->vkCmdSetDepthCompareOp = (PFN_vkCmdSetDepthCompareOp)gipa(instance, "vkCmdSetDepthCompareOp");
-    t->vkCmdSetDepthBoundsTestEnable = (PFN_vkCmdSetDepthBoundsTestEnable)(device ? gdpa(device, "vkCmdSetDepthBoundsTestEnable") : NULL);
-    if (!t->vkCmdSetDepthBoundsTestEnable)
-        t->vkCmdSetDepthBoundsTestEnable = (PFN_vkCmdSetDepthBoundsTestEnable)gipa(instance, "vkCmdSetDepthBoundsTestEnable");
-    t->vkCmdSetStencilTestEnable = (PFN_vkCmdSetStencilTestEnable)(device ? gdpa(device, "vkCmdSetStencilTestEnable") : NULL);
-    if (!t->vkCmdSetStencilTestEnable)
-        t->vkCmdSetStencilTestEnable = (PFN_vkCmdSetStencilTestEnable)gipa(instance, "vkCmdSetStencilTestEnable");
-    t->vkCmdSetStencilOp = (PFN_vkCmdSetStencilOp)(device ? gdpa(device, "vkCmdSetStencilOp") : NULL);
-    if (!t->vkCmdSetStencilOp)
-        t->vkCmdSetStencilOp = (PFN_vkCmdSetStencilOp)gipa(instance, "vkCmdSetStencilOp");
-    t->vkCmdSetRasterizerDiscardEnable = (PFN_vkCmdSetRasterizerDiscardEnable)(device ? gdpa(device, "vkCmdSetRasterizerDiscardEnable") : NULL);
-    if (!t->vkCmdSetRasterizerDiscardEnable)
-        t->vkCmdSetRasterizerDiscardEnable = (PFN_vkCmdSetRasterizerDiscardEnable)gipa(instance, "vkCmdSetRasterizerDiscardEnable");
-    t->vkCmdSetDepthBiasEnable = (PFN_vkCmdSetDepthBiasEnable)(device ? gdpa(device, "vkCmdSetDepthBiasEnable") : NULL);
-    if (!t->vkCmdSetDepthBiasEnable)
-        t->vkCmdSetDepthBiasEnable = (PFN_vkCmdSetDepthBiasEnable)gipa(instance, "vkCmdSetDepthBiasEnable");
-    t->vkCmdSetPrimitiveRestartEnable = (PFN_vkCmdSetPrimitiveRestartEnable)(device ? gdpa(device, "vkCmdSetPrimitiveRestartEnable") : NULL);
-    if (!t->vkCmdSetPrimitiveRestartEnable)
-        t->vkCmdSetPrimitiveRestartEnable = (PFN_vkCmdSetPrimitiveRestartEnable)gipa(instance, "vkCmdSetPrimitiveRestartEnable");
-    t->vkMapMemory2 = (PFN_vkMapMemory2)(device ? gdpa(device, "vkMapMemory2") : NULL);
-    if (!t->vkMapMemory2)
-        t->vkMapMemory2 = (PFN_vkMapMemory2)gipa(instance, "vkMapMemory2");
-    t->vkUnmapMemory2 = (PFN_vkUnmapMemory2)(device ? gdpa(device, "vkUnmapMemory2") : NULL);
-    if (!t->vkUnmapMemory2)
-        t->vkUnmapMemory2 = (PFN_vkUnmapMemory2)gipa(instance, "vkUnmapMemory2");
-    t->vkGetDeviceImageSubresourceLayout = (PFN_vkGetDeviceImageSubresourceLayout)(device ? gdpa(device, "vkGetDeviceImageSubresourceLayout") : NULL);
-    if (!t->vkGetDeviceImageSubresourceLayout)
-        t->vkGetDeviceImageSubresourceLayout = (PFN_vkGetDeviceImageSubresourceLayout)gipa(instance, "vkGetDeviceImageSubresourceLayout");
-    t->vkGetImageSubresourceLayout2 = (PFN_vkGetImageSubresourceLayout2)(device ? gdpa(device, "vkGetImageSubresourceLayout2") : NULL);
-    if (!t->vkGetImageSubresourceLayout2)
-        t->vkGetImageSubresourceLayout2 = (PFN_vkGetImageSubresourceLayout2)gipa(instance, "vkGetImageSubresourceLayout2");
-    t->vkCopyMemoryToImage = (PFN_vkCopyMemoryToImage)(device ? gdpa(device, "vkCopyMemoryToImage") : NULL);
-    if (!t->vkCopyMemoryToImage)
-        t->vkCopyMemoryToImage = (PFN_vkCopyMemoryToImage)gipa(instance, "vkCopyMemoryToImage");
-    t->vkCopyImageToMemory = (PFN_vkCopyImageToMemory)(device ? gdpa(device, "vkCopyImageToMemory") : NULL);
-    if (!t->vkCopyImageToMemory)
-        t->vkCopyImageToMemory = (PFN_vkCopyImageToMemory)gipa(instance, "vkCopyImageToMemory");
-    t->vkCopyImageToImage = (PFN_vkCopyImageToImage)(device ? gdpa(device, "vkCopyImageToImage") : NULL);
-    if (!t->vkCopyImageToImage)
-        t->vkCopyImageToImage = (PFN_vkCopyImageToImage)gipa(instance, "vkCopyImageToImage");
-    t->vkTransitionImageLayout = (PFN_vkTransitionImageLayout)(device ? gdpa(device, "vkTransitionImageLayout") : NULL);
-    if (!t->vkTransitionImageLayout)
-        t->vkTransitionImageLayout = (PFN_vkTransitionImageLayout)gipa(instance, "vkTransitionImageLayout");
-    t->vkCmdPushDescriptorSet = (PFN_vkCmdPushDescriptorSet)(device ? gdpa(device, "vkCmdPushDescriptorSet") : NULL);
-    if (!t->vkCmdPushDescriptorSet)
-        t->vkCmdPushDescriptorSet = (PFN_vkCmdPushDescriptorSet)gipa(instance, "vkCmdPushDescriptorSet");
-    t->vkCmdPushDescriptorSetWithTemplate = (PFN_vkCmdPushDescriptorSetWithTemplate)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplate") : NULL);
-    if (!t->vkCmdPushDescriptorSetWithTemplate)
-        t->vkCmdPushDescriptorSetWithTemplate = (PFN_vkCmdPushDescriptorSetWithTemplate)gipa(instance, "vkCmdPushDescriptorSetWithTemplate");
-    t->vkCmdBindDescriptorSets2 = (PFN_vkCmdBindDescriptorSets2)(device ? gdpa(device, "vkCmdBindDescriptorSets2") : NULL);
-    if (!t->vkCmdBindDescriptorSets2)
-        t->vkCmdBindDescriptorSets2 = (PFN_vkCmdBindDescriptorSets2)gipa(instance, "vkCmdBindDescriptorSets2");
-    t->vkCmdPushConstants2 = (PFN_vkCmdPushConstants2)(device ? gdpa(device, "vkCmdPushConstants2") : NULL);
-    if (!t->vkCmdPushConstants2)
-        t->vkCmdPushConstants2 = (PFN_vkCmdPushConstants2)gipa(instance, "vkCmdPushConstants2");
-    t->vkCmdPushDescriptorSet2 = (PFN_vkCmdPushDescriptorSet2)(device ? gdpa(device, "vkCmdPushDescriptorSet2") : NULL);
-    if (!t->vkCmdPushDescriptorSet2)
-        t->vkCmdPushDescriptorSet2 = (PFN_vkCmdPushDescriptorSet2)gipa(instance, "vkCmdPushDescriptorSet2");
-    t->vkCmdPushDescriptorSetWithTemplate2 = (PFN_vkCmdPushDescriptorSetWithTemplate2)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplate2") : NULL);
-    if (!t->vkCmdPushDescriptorSetWithTemplate2)
-        t->vkCmdPushDescriptorSetWithTemplate2 = (PFN_vkCmdPushDescriptorSetWithTemplate2)gipa(instance, "vkCmdPushDescriptorSetWithTemplate2");
-    t->vkCmdSetLineStipple = (PFN_vkCmdSetLineStipple)(device ? gdpa(device, "vkCmdSetLineStipple") : NULL);
-    if (!t->vkCmdSetLineStipple)
-        t->vkCmdSetLineStipple = (PFN_vkCmdSetLineStipple)gipa(instance, "vkCmdSetLineStipple");
-    t->vkCmdBindIndexBuffer2 = (PFN_vkCmdBindIndexBuffer2)(device ? gdpa(device, "vkCmdBindIndexBuffer2") : NULL);
-    if (!t->vkCmdBindIndexBuffer2)
-        t->vkCmdBindIndexBuffer2 = (PFN_vkCmdBindIndexBuffer2)gipa(instance, "vkCmdBindIndexBuffer2");
-    t->vkGetRenderingAreaGranularity = (PFN_vkGetRenderingAreaGranularity)(device ? gdpa(device, "vkGetRenderingAreaGranularity") : NULL);
-    if (!t->vkGetRenderingAreaGranularity)
-        t->vkGetRenderingAreaGranularity = (PFN_vkGetRenderingAreaGranularity)gipa(instance, "vkGetRenderingAreaGranularity");
-    t->vkCmdSetRenderingAttachmentLocations = (PFN_vkCmdSetRenderingAttachmentLocations)(device ? gdpa(device, "vkCmdSetRenderingAttachmentLocations") : NULL);
-    if (!t->vkCmdSetRenderingAttachmentLocations)
-        t->vkCmdSetRenderingAttachmentLocations = (PFN_vkCmdSetRenderingAttachmentLocations)gipa(instance, "vkCmdSetRenderingAttachmentLocations");
-    t->vkCmdSetRenderingInputAttachmentIndices = (PFN_vkCmdSetRenderingInputAttachmentIndices)(device ? gdpa(device, "vkCmdSetRenderingInputAttachmentIndices") : NULL);
-    if (!t->vkCmdSetRenderingInputAttachmentIndices)
-        t->vkCmdSetRenderingInputAttachmentIndices = (PFN_vkCmdSetRenderingInputAttachmentIndices)gipa(instance, "vkCmdSetRenderingInputAttachmentIndices");
-    t->vkCmdBindTransformFeedbackBuffersEXT = (PFN_vkCmdBindTransformFeedbackBuffersEXT)(device ? gdpa(device, "vkCmdBindTransformFeedbackBuffersEXT") : NULL);
-    if (!t->vkCmdBindTransformFeedbackBuffersEXT)
-        t->vkCmdBindTransformFeedbackBuffersEXT = (PFN_vkCmdBindTransformFeedbackBuffersEXT)gipa(instance, "vkCmdBindTransformFeedbackBuffersEXT");
-    t->vkCmdBeginTransformFeedbackEXT = (PFN_vkCmdBeginTransformFeedbackEXT)(device ? gdpa(device, "vkCmdBeginTransformFeedbackEXT") : NULL);
-    if (!t->vkCmdBeginTransformFeedbackEXT)
-        t->vkCmdBeginTransformFeedbackEXT = (PFN_vkCmdBeginTransformFeedbackEXT)gipa(instance, "vkCmdBeginTransformFeedbackEXT");
-    t->vkCmdEndTransformFeedbackEXT = (PFN_vkCmdEndTransformFeedbackEXT)(device ? gdpa(device, "vkCmdEndTransformFeedbackEXT") : NULL);
-    if (!t->vkCmdEndTransformFeedbackEXT)
-        t->vkCmdEndTransformFeedbackEXT = (PFN_vkCmdEndTransformFeedbackEXT)gipa(instance, "vkCmdEndTransformFeedbackEXT");
-    t->vkCmdBeginQueryIndexedEXT = (PFN_vkCmdBeginQueryIndexedEXT)(device ? gdpa(device, "vkCmdBeginQueryIndexedEXT") : NULL);
-    if (!t->vkCmdBeginQueryIndexedEXT)
-        t->vkCmdBeginQueryIndexedEXT = (PFN_vkCmdBeginQueryIndexedEXT)gipa(instance, "vkCmdBeginQueryIndexedEXT");
-    t->vkCmdEndQueryIndexedEXT = (PFN_vkCmdEndQueryIndexedEXT)(device ? gdpa(device, "vkCmdEndQueryIndexedEXT") : NULL);
-    if (!t->vkCmdEndQueryIndexedEXT)
-        t->vkCmdEndQueryIndexedEXT = (PFN_vkCmdEndQueryIndexedEXT)gipa(instance, "vkCmdEndQueryIndexedEXT");
-    t->vkCmdDrawIndirectByteCountEXT = (PFN_vkCmdDrawIndirectByteCountEXT)(device ? gdpa(device, "vkCmdDrawIndirectByteCountEXT") : NULL);
-    if (!t->vkCmdDrawIndirectByteCountEXT)
-        t->vkCmdDrawIndirectByteCountEXT = (PFN_vkCmdDrawIndirectByteCountEXT)gipa(instance, "vkCmdDrawIndirectByteCountEXT");
-    t->vkGetImageViewHandleNVX = (PFN_vkGetImageViewHandleNVX)(device ? gdpa(device, "vkGetImageViewHandleNVX") : NULL);
-    if (!t->vkGetImageViewHandleNVX)
-        t->vkGetImageViewHandleNVX = (PFN_vkGetImageViewHandleNVX)gipa(instance, "vkGetImageViewHandleNVX");
-    t->vkGetImageViewHandle64NVX = (PFN_vkGetImageViewHandle64NVX)(device ? gdpa(device, "vkGetImageViewHandle64NVX") : NULL);
-    if (!t->vkGetImageViewHandle64NVX)
-        t->vkGetImageViewHandle64NVX = (PFN_vkGetImageViewHandle64NVX)gipa(instance, "vkGetImageViewHandle64NVX");
-    t->vkGetImageViewAddressNVX = (PFN_vkGetImageViewAddressNVX)(device ? gdpa(device, "vkGetImageViewAddressNVX") : NULL);
-    if (!t->vkGetImageViewAddressNVX)
-        t->vkGetImageViewAddressNVX = (PFN_vkGetImageViewAddressNVX)gipa(instance, "vkGetImageViewAddressNVX");
-    t->vkGetDeviceCombinedImageSamplerIndexNVX = (PFN_vkGetDeviceCombinedImageSamplerIndexNVX)(device ? gdpa(device, "vkGetDeviceCombinedImageSamplerIndexNVX") : NULL);
-    if (!t->vkGetDeviceCombinedImageSamplerIndexNVX)
-        t->vkGetDeviceCombinedImageSamplerIndexNVX = (PFN_vkGetDeviceCombinedImageSamplerIndexNVX)gipa(instance, "vkGetDeviceCombinedImageSamplerIndexNVX");
-    t->vkCmdDrawIndirectCountAMD = (PFN_vkCmdDrawIndirectCountAMD)(device ? gdpa(device, "vkCmdDrawIndirectCountAMD") : NULL);
-    if (!t->vkCmdDrawIndirectCountAMD)
-        t->vkCmdDrawIndirectCountAMD = (PFN_vkCmdDrawIndirectCountAMD)gipa(instance, "vkCmdDrawIndirectCountAMD");
-    t->vkCmdDrawIndexedIndirectCountAMD = (PFN_vkCmdDrawIndexedIndirectCountAMD)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCountAMD") : NULL);
-    if (!t->vkCmdDrawIndexedIndirectCountAMD)
-        t->vkCmdDrawIndexedIndirectCountAMD = (PFN_vkCmdDrawIndexedIndirectCountAMD)gipa(instance, "vkCmdDrawIndexedIndirectCountAMD");
-    t->vkGetShaderInfoAMD = (PFN_vkGetShaderInfoAMD)(device ? gdpa(device, "vkGetShaderInfoAMD") : NULL);
-    if (!t->vkGetShaderInfoAMD)
-        t->vkGetShaderInfoAMD = (PFN_vkGetShaderInfoAMD)gipa(instance, "vkGetShaderInfoAMD");
-    t->vkCmdBeginRenderingKHR = (PFN_vkCmdBeginRenderingKHR)(device ? gdpa(device, "vkCmdBeginRenderingKHR") : NULL);
-    if (!t->vkCmdBeginRenderingKHR)
-        t->vkCmdBeginRenderingKHR = (PFN_vkCmdBeginRenderingKHR)gipa(instance, "vkCmdBeginRenderingKHR");
-    t->vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)(device ? gdpa(device, "vkCmdEndRenderingKHR") : NULL);
-    if (!t->vkCmdEndRenderingKHR)
-        t->vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)gipa(instance, "vkCmdEndRenderingKHR");
+    t->vkCreatePrivateDataSlot = (PFN_vkCreatePrivateDataSlot)(device ? gdpa(device, "vkCreatePrivateDataSlot") : gipa(instance, "vkCreatePrivateDataSlot"));
+    t->vkDestroyPrivateDataSlot = (PFN_vkDestroyPrivateDataSlot)(device ? gdpa(device, "vkDestroyPrivateDataSlot") : gipa(instance, "vkDestroyPrivateDataSlot"));
+    t->vkSetPrivateData = (PFN_vkSetPrivateData)(device ? gdpa(device, "vkSetPrivateData") : gipa(instance, "vkSetPrivateData"));
+    t->vkGetPrivateData = (PFN_vkGetPrivateData)(device ? gdpa(device, "vkGetPrivateData") : gipa(instance, "vkGetPrivateData"));
+    t->vkCmdPipelineBarrier2 = (PFN_vkCmdPipelineBarrier2)(device ? gdpa(device, "vkCmdPipelineBarrier2") : gipa(instance, "vkCmdPipelineBarrier2"));
+    t->vkCmdWriteTimestamp2 = (PFN_vkCmdWriteTimestamp2)(device ? gdpa(device, "vkCmdWriteTimestamp2") : gipa(instance, "vkCmdWriteTimestamp2"));
+    t->vkQueueSubmit2 = (PFN_vkQueueSubmit2)(device ? gdpa(device, "vkQueueSubmit2") : gipa(instance, "vkQueueSubmit2"));
+    t->vkCmdCopyBuffer2 = (PFN_vkCmdCopyBuffer2)(device ? gdpa(device, "vkCmdCopyBuffer2") : gipa(instance, "vkCmdCopyBuffer2"));
+    t->vkCmdCopyImage2 = (PFN_vkCmdCopyImage2)(device ? gdpa(device, "vkCmdCopyImage2") : gipa(instance, "vkCmdCopyImage2"));
+    t->vkCmdCopyBufferToImage2 = (PFN_vkCmdCopyBufferToImage2)(device ? gdpa(device, "vkCmdCopyBufferToImage2") : gipa(instance, "vkCmdCopyBufferToImage2"));
+    t->vkCmdCopyImageToBuffer2 = (PFN_vkCmdCopyImageToBuffer2)(device ? gdpa(device, "vkCmdCopyImageToBuffer2") : gipa(instance, "vkCmdCopyImageToBuffer2"));
+    t->vkGetDeviceBufferMemoryRequirements = (PFN_vkGetDeviceBufferMemoryRequirements)(device ? gdpa(device, "vkGetDeviceBufferMemoryRequirements") : gipa(instance, "vkGetDeviceBufferMemoryRequirements"));
+    t->vkGetDeviceImageMemoryRequirements = (PFN_vkGetDeviceImageMemoryRequirements)(device ? gdpa(device, "vkGetDeviceImageMemoryRequirements") : gipa(instance, "vkGetDeviceImageMemoryRequirements"));
+    t->vkGetDeviceImageSparseMemoryRequirements = (PFN_vkGetDeviceImageSparseMemoryRequirements)(device ? gdpa(device, "vkGetDeviceImageSparseMemoryRequirements") : gipa(instance, "vkGetDeviceImageSparseMemoryRequirements"));
+    t->vkCmdSetEvent2 = (PFN_vkCmdSetEvent2)(device ? gdpa(device, "vkCmdSetEvent2") : gipa(instance, "vkCmdSetEvent2"));
+    t->vkCmdResetEvent2 = (PFN_vkCmdResetEvent2)(device ? gdpa(device, "vkCmdResetEvent2") : gipa(instance, "vkCmdResetEvent2"));
+    t->vkCmdWaitEvents2 = (PFN_vkCmdWaitEvents2)(device ? gdpa(device, "vkCmdWaitEvents2") : gipa(instance, "vkCmdWaitEvents2"));
+    t->vkCmdBlitImage2 = (PFN_vkCmdBlitImage2)(device ? gdpa(device, "vkCmdBlitImage2") : gipa(instance, "vkCmdBlitImage2"));
+    t->vkCmdResolveImage2 = (PFN_vkCmdResolveImage2)(device ? gdpa(device, "vkCmdResolveImage2") : gipa(instance, "vkCmdResolveImage2"));
+    t->vkCmdBeginRendering = (PFN_vkCmdBeginRendering)(device ? gdpa(device, "vkCmdBeginRendering") : gipa(instance, "vkCmdBeginRendering"));
+    t->vkCmdEndRendering = (PFN_vkCmdEndRendering)(device ? gdpa(device, "vkCmdEndRendering") : gipa(instance, "vkCmdEndRendering"));
+    t->vkCmdSetCullMode = (PFN_vkCmdSetCullMode)(device ? gdpa(device, "vkCmdSetCullMode") : gipa(instance, "vkCmdSetCullMode"));
+    t->vkCmdSetFrontFace = (PFN_vkCmdSetFrontFace)(device ? gdpa(device, "vkCmdSetFrontFace") : gipa(instance, "vkCmdSetFrontFace"));
+    t->vkCmdSetPrimitiveTopology = (PFN_vkCmdSetPrimitiveTopology)(device ? gdpa(device, "vkCmdSetPrimitiveTopology") : gipa(instance, "vkCmdSetPrimitiveTopology"));
+    t->vkCmdSetViewportWithCount = (PFN_vkCmdSetViewportWithCount)(device ? gdpa(device, "vkCmdSetViewportWithCount") : gipa(instance, "vkCmdSetViewportWithCount"));
+    t->vkCmdSetScissorWithCount = (PFN_vkCmdSetScissorWithCount)(device ? gdpa(device, "vkCmdSetScissorWithCount") : gipa(instance, "vkCmdSetScissorWithCount"));
+    t->vkCmdBindVertexBuffers2 = (PFN_vkCmdBindVertexBuffers2)(device ? gdpa(device, "vkCmdBindVertexBuffers2") : gipa(instance, "vkCmdBindVertexBuffers2"));
+    t->vkCmdSetDepthTestEnable = (PFN_vkCmdSetDepthTestEnable)(device ? gdpa(device, "vkCmdSetDepthTestEnable") : gipa(instance, "vkCmdSetDepthTestEnable"));
+    t->vkCmdSetDepthWriteEnable = (PFN_vkCmdSetDepthWriteEnable)(device ? gdpa(device, "vkCmdSetDepthWriteEnable") : gipa(instance, "vkCmdSetDepthWriteEnable"));
+    t->vkCmdSetDepthCompareOp = (PFN_vkCmdSetDepthCompareOp)(device ? gdpa(device, "vkCmdSetDepthCompareOp") : gipa(instance, "vkCmdSetDepthCompareOp"));
+    t->vkCmdSetDepthBoundsTestEnable = (PFN_vkCmdSetDepthBoundsTestEnable)(device ? gdpa(device, "vkCmdSetDepthBoundsTestEnable") : gipa(instance, "vkCmdSetDepthBoundsTestEnable"));
+    t->vkCmdSetStencilTestEnable = (PFN_vkCmdSetStencilTestEnable)(device ? gdpa(device, "vkCmdSetStencilTestEnable") : gipa(instance, "vkCmdSetStencilTestEnable"));
+    t->vkCmdSetStencilOp = (PFN_vkCmdSetStencilOp)(device ? gdpa(device, "vkCmdSetStencilOp") : gipa(instance, "vkCmdSetStencilOp"));
+    t->vkCmdSetRasterizerDiscardEnable = (PFN_vkCmdSetRasterizerDiscardEnable)(device ? gdpa(device, "vkCmdSetRasterizerDiscardEnable") : gipa(instance, "vkCmdSetRasterizerDiscardEnable"));
+    t->vkCmdSetDepthBiasEnable = (PFN_vkCmdSetDepthBiasEnable)(device ? gdpa(device, "vkCmdSetDepthBiasEnable") : gipa(instance, "vkCmdSetDepthBiasEnable"));
+    t->vkCmdSetPrimitiveRestartEnable = (PFN_vkCmdSetPrimitiveRestartEnable)(device ? gdpa(device, "vkCmdSetPrimitiveRestartEnable") : gipa(instance, "vkCmdSetPrimitiveRestartEnable"));
+    t->vkMapMemory2 = (PFN_vkMapMemory2)(device ? gdpa(device, "vkMapMemory2") : gipa(instance, "vkMapMemory2"));
+    t->vkUnmapMemory2 = (PFN_vkUnmapMemory2)(device ? gdpa(device, "vkUnmapMemory2") : gipa(instance, "vkUnmapMemory2"));
+    t->vkGetDeviceImageSubresourceLayout = (PFN_vkGetDeviceImageSubresourceLayout)(device ? gdpa(device, "vkGetDeviceImageSubresourceLayout") : gipa(instance, "vkGetDeviceImageSubresourceLayout"));
+    t->vkGetImageSubresourceLayout2 = (PFN_vkGetImageSubresourceLayout2)(device ? gdpa(device, "vkGetImageSubresourceLayout2") : gipa(instance, "vkGetImageSubresourceLayout2"));
+    t->vkCopyMemoryToImage = (PFN_vkCopyMemoryToImage)(device ? gdpa(device, "vkCopyMemoryToImage") : gipa(instance, "vkCopyMemoryToImage"));
+    t->vkCopyImageToMemory = (PFN_vkCopyImageToMemory)(device ? gdpa(device, "vkCopyImageToMemory") : gipa(instance, "vkCopyImageToMemory"));
+    t->vkCopyImageToImage = (PFN_vkCopyImageToImage)(device ? gdpa(device, "vkCopyImageToImage") : gipa(instance, "vkCopyImageToImage"));
+    t->vkTransitionImageLayout = (PFN_vkTransitionImageLayout)(device ? gdpa(device, "vkTransitionImageLayout") : gipa(instance, "vkTransitionImageLayout"));
+    t->vkCmdPushDescriptorSet = (PFN_vkCmdPushDescriptorSet)(device ? gdpa(device, "vkCmdPushDescriptorSet") : gipa(instance, "vkCmdPushDescriptorSet"));
+    t->vkCmdPushDescriptorSetWithTemplate = (PFN_vkCmdPushDescriptorSetWithTemplate)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplate") : gipa(instance, "vkCmdPushDescriptorSetWithTemplate"));
+    t->vkCmdBindDescriptorSets2 = (PFN_vkCmdBindDescriptorSets2)(device ? gdpa(device, "vkCmdBindDescriptorSets2") : gipa(instance, "vkCmdBindDescriptorSets2"));
+    t->vkCmdPushConstants2 = (PFN_vkCmdPushConstants2)(device ? gdpa(device, "vkCmdPushConstants2") : gipa(instance, "vkCmdPushConstants2"));
+    t->vkCmdPushDescriptorSet2 = (PFN_vkCmdPushDescriptorSet2)(device ? gdpa(device, "vkCmdPushDescriptorSet2") : gipa(instance, "vkCmdPushDescriptorSet2"));
+    t->vkCmdPushDescriptorSetWithTemplate2 = (PFN_vkCmdPushDescriptorSetWithTemplate2)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplate2") : gipa(instance, "vkCmdPushDescriptorSetWithTemplate2"));
+    t->vkCmdSetLineStipple = (PFN_vkCmdSetLineStipple)(device ? gdpa(device, "vkCmdSetLineStipple") : gipa(instance, "vkCmdSetLineStipple"));
+    t->vkCmdBindIndexBuffer2 = (PFN_vkCmdBindIndexBuffer2)(device ? gdpa(device, "vkCmdBindIndexBuffer2") : gipa(instance, "vkCmdBindIndexBuffer2"));
+    t->vkGetRenderingAreaGranularity = (PFN_vkGetRenderingAreaGranularity)(device ? gdpa(device, "vkGetRenderingAreaGranularity") : gipa(instance, "vkGetRenderingAreaGranularity"));
+    t->vkCmdSetRenderingAttachmentLocations = (PFN_vkCmdSetRenderingAttachmentLocations)(device ? gdpa(device, "vkCmdSetRenderingAttachmentLocations") : gipa(instance, "vkCmdSetRenderingAttachmentLocations"));
+    t->vkCmdSetRenderingInputAttachmentIndices = (PFN_vkCmdSetRenderingInputAttachmentIndices)(device ? gdpa(device, "vkCmdSetRenderingInputAttachmentIndices") : gipa(instance, "vkCmdSetRenderingInputAttachmentIndices"));
+    t->vkCmdBindTransformFeedbackBuffersEXT = (PFN_vkCmdBindTransformFeedbackBuffersEXT)(device ? gdpa(device, "vkCmdBindTransformFeedbackBuffersEXT") : gipa(instance, "vkCmdBindTransformFeedbackBuffersEXT"));
+    t->vkCmdBeginTransformFeedbackEXT = (PFN_vkCmdBeginTransformFeedbackEXT)(device ? gdpa(device, "vkCmdBeginTransformFeedbackEXT") : gipa(instance, "vkCmdBeginTransformFeedbackEXT"));
+    t->vkCmdEndTransformFeedbackEXT = (PFN_vkCmdEndTransformFeedbackEXT)(device ? gdpa(device, "vkCmdEndTransformFeedbackEXT") : gipa(instance, "vkCmdEndTransformFeedbackEXT"));
+    t->vkCmdBeginQueryIndexedEXT = (PFN_vkCmdBeginQueryIndexedEXT)(device ? gdpa(device, "vkCmdBeginQueryIndexedEXT") : gipa(instance, "vkCmdBeginQueryIndexedEXT"));
+    t->vkCmdEndQueryIndexedEXT = (PFN_vkCmdEndQueryIndexedEXT)(device ? gdpa(device, "vkCmdEndQueryIndexedEXT") : gipa(instance, "vkCmdEndQueryIndexedEXT"));
+    t->vkCmdDrawIndirectByteCountEXT = (PFN_vkCmdDrawIndirectByteCountEXT)(device ? gdpa(device, "vkCmdDrawIndirectByteCountEXT") : gipa(instance, "vkCmdDrawIndirectByteCountEXT"));
+    t->vkGetImageViewHandleNVX = (PFN_vkGetImageViewHandleNVX)(device ? gdpa(device, "vkGetImageViewHandleNVX") : gipa(instance, "vkGetImageViewHandleNVX"));
+    t->vkGetImageViewHandle64NVX = (PFN_vkGetImageViewHandle64NVX)(device ? gdpa(device, "vkGetImageViewHandle64NVX") : gipa(instance, "vkGetImageViewHandle64NVX"));
+    t->vkGetImageViewAddressNVX = (PFN_vkGetImageViewAddressNVX)(device ? gdpa(device, "vkGetImageViewAddressNVX") : gipa(instance, "vkGetImageViewAddressNVX"));
+    t->vkGetDeviceCombinedImageSamplerIndexNVX = (PFN_vkGetDeviceCombinedImageSamplerIndexNVX)(device ? gdpa(device, "vkGetDeviceCombinedImageSamplerIndexNVX") : gipa(instance, "vkGetDeviceCombinedImageSamplerIndexNVX"));
+    t->vkCmdDrawIndirectCountAMD = (PFN_vkCmdDrawIndirectCountAMD)(device ? gdpa(device, "vkCmdDrawIndirectCountAMD") : gipa(instance, "vkCmdDrawIndirectCountAMD"));
+    t->vkCmdDrawIndexedIndirectCountAMD = (PFN_vkCmdDrawIndexedIndirectCountAMD)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCountAMD") : gipa(instance, "vkCmdDrawIndexedIndirectCountAMD"));
+    t->vkGetShaderInfoAMD = (PFN_vkGetShaderInfoAMD)(device ? gdpa(device, "vkGetShaderInfoAMD") : gipa(instance, "vkGetShaderInfoAMD"));
+    t->vkCmdBeginRenderingKHR = (PFN_vkCmdBeginRenderingKHR)(device ? gdpa(device, "vkCmdBeginRenderingKHR") : gipa(instance, "vkCmdBeginRenderingKHR"));
+    t->vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)(device ? gdpa(device, "vkCmdEndRenderingKHR") : gipa(instance, "vkCmdEndRenderingKHR"));
     t->vkGetPhysicalDeviceExternalImageFormatPropertiesNV = (PFN_vkGetPhysicalDeviceExternalImageFormatPropertiesNV)gipa(instance, "vkGetPhysicalDeviceExternalImageFormatPropertiesNV");
     t->vkGetPhysicalDeviceFeatures2KHR = (PFN_vkGetPhysicalDeviceFeatures2KHR)gipa(instance, "vkGetPhysicalDeviceFeatures2KHR");
     t->vkGetPhysicalDeviceProperties2KHR = (PFN_vkGetPhysicalDeviceProperties2KHR)gipa(instance, "vkGetPhysicalDeviceProperties2KHR");
@@ -1525,1105 +1092,771 @@ static inline void mvk_load_dispatch(MvkDispatch *t, PFN_vkGetInstanceProcAddr g
     t->vkGetPhysicalDeviceQueueFamilyProperties2KHR = (PFN_vkGetPhysicalDeviceQueueFamilyProperties2KHR)gipa(instance, "vkGetPhysicalDeviceQueueFamilyProperties2KHR");
     t->vkGetPhysicalDeviceMemoryProperties2KHR = (PFN_vkGetPhysicalDeviceMemoryProperties2KHR)gipa(instance, "vkGetPhysicalDeviceMemoryProperties2KHR");
     t->vkGetPhysicalDeviceSparseImageFormatProperties2KHR = (PFN_vkGetPhysicalDeviceSparseImageFormatProperties2KHR)gipa(instance, "vkGetPhysicalDeviceSparseImageFormatProperties2KHR");
-    t->vkGetDeviceGroupPeerMemoryFeaturesKHR = (PFN_vkGetDeviceGroupPeerMemoryFeaturesKHR)(device ? gdpa(device, "vkGetDeviceGroupPeerMemoryFeaturesKHR") : NULL);
-    if (!t->vkGetDeviceGroupPeerMemoryFeaturesKHR)
-        t->vkGetDeviceGroupPeerMemoryFeaturesKHR = (PFN_vkGetDeviceGroupPeerMemoryFeaturesKHR)gipa(instance, "vkGetDeviceGroupPeerMemoryFeaturesKHR");
-    t->vkCmdSetDeviceMaskKHR = (PFN_vkCmdSetDeviceMaskKHR)(device ? gdpa(device, "vkCmdSetDeviceMaskKHR") : NULL);
-    if (!t->vkCmdSetDeviceMaskKHR)
-        t->vkCmdSetDeviceMaskKHR = (PFN_vkCmdSetDeviceMaskKHR)gipa(instance, "vkCmdSetDeviceMaskKHR");
-    t->vkCmdDispatchBaseKHR = (PFN_vkCmdDispatchBaseKHR)(device ? gdpa(device, "vkCmdDispatchBaseKHR") : NULL);
-    if (!t->vkCmdDispatchBaseKHR)
-        t->vkCmdDispatchBaseKHR = (PFN_vkCmdDispatchBaseKHR)gipa(instance, "vkCmdDispatchBaseKHR");
-    t->vkGetDeviceGroupPresentCapabilitiesKHR = (PFN_vkGetDeviceGroupPresentCapabilitiesKHR)(device ? gdpa(device, "vkGetDeviceGroupPresentCapabilitiesKHR") : NULL);
-    if (!t->vkGetDeviceGroupPresentCapabilitiesKHR)
-        t->vkGetDeviceGroupPresentCapabilitiesKHR = (PFN_vkGetDeviceGroupPresentCapabilitiesKHR)gipa(instance, "vkGetDeviceGroupPresentCapabilitiesKHR");
-    t->vkGetDeviceGroupSurfacePresentModesKHR = (PFN_vkGetDeviceGroupSurfacePresentModesKHR)(device ? gdpa(device, "vkGetDeviceGroupSurfacePresentModesKHR") : NULL);
-    if (!t->vkGetDeviceGroupSurfacePresentModesKHR)
-        t->vkGetDeviceGroupSurfacePresentModesKHR = (PFN_vkGetDeviceGroupSurfacePresentModesKHR)gipa(instance, "vkGetDeviceGroupSurfacePresentModesKHR");
+    t->vkGetDeviceGroupPeerMemoryFeaturesKHR = (PFN_vkGetDeviceGroupPeerMemoryFeaturesKHR)(device ? gdpa(device, "vkGetDeviceGroupPeerMemoryFeaturesKHR") : gipa(instance, "vkGetDeviceGroupPeerMemoryFeaturesKHR"));
+    t->vkCmdSetDeviceMaskKHR = (PFN_vkCmdSetDeviceMaskKHR)(device ? gdpa(device, "vkCmdSetDeviceMaskKHR") : gipa(instance, "vkCmdSetDeviceMaskKHR"));
+    t->vkCmdDispatchBaseKHR = (PFN_vkCmdDispatchBaseKHR)(device ? gdpa(device, "vkCmdDispatchBaseKHR") : gipa(instance, "vkCmdDispatchBaseKHR"));
+    t->vkGetDeviceGroupPresentCapabilitiesKHR = (PFN_vkGetDeviceGroupPresentCapabilitiesKHR)(device ? gdpa(device, "vkGetDeviceGroupPresentCapabilitiesKHR") : gipa(instance, "vkGetDeviceGroupPresentCapabilitiesKHR"));
+    t->vkGetDeviceGroupSurfacePresentModesKHR = (PFN_vkGetDeviceGroupSurfacePresentModesKHR)(device ? gdpa(device, "vkGetDeviceGroupSurfacePresentModesKHR") : gipa(instance, "vkGetDeviceGroupSurfacePresentModesKHR"));
     t->vkGetPhysicalDevicePresentRectanglesKHR = (PFN_vkGetPhysicalDevicePresentRectanglesKHR)gipa(instance, "vkGetPhysicalDevicePresentRectanglesKHR");
-    t->vkAcquireNextImage2KHR = (PFN_vkAcquireNextImage2KHR)(device ? gdpa(device, "vkAcquireNextImage2KHR") : NULL);
-    if (!t->vkAcquireNextImage2KHR)
-        t->vkAcquireNextImage2KHR = (PFN_vkAcquireNextImage2KHR)gipa(instance, "vkAcquireNextImage2KHR");
-    t->vkTrimCommandPoolKHR = (PFN_vkTrimCommandPoolKHR)(device ? gdpa(device, "vkTrimCommandPoolKHR") : NULL);
-    if (!t->vkTrimCommandPoolKHR)
-        t->vkTrimCommandPoolKHR = (PFN_vkTrimCommandPoolKHR)gipa(instance, "vkTrimCommandPoolKHR");
+    t->vkAcquireNextImage2KHR = (PFN_vkAcquireNextImage2KHR)(device ? gdpa(device, "vkAcquireNextImage2KHR") : gipa(instance, "vkAcquireNextImage2KHR"));
+    t->vkTrimCommandPoolKHR = (PFN_vkTrimCommandPoolKHR)(device ? gdpa(device, "vkTrimCommandPoolKHR") : gipa(instance, "vkTrimCommandPoolKHR"));
     t->vkEnumeratePhysicalDeviceGroupsKHR = (PFN_vkEnumeratePhysicalDeviceGroupsKHR)gipa(instance, "vkEnumeratePhysicalDeviceGroupsKHR");
     t->vkGetPhysicalDeviceExternalBufferPropertiesKHR = (PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR)gipa(instance, "vkGetPhysicalDeviceExternalBufferPropertiesKHR");
     t->vkGetPhysicalDeviceExternalSemaphorePropertiesKHR = (PFN_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR)gipa(instance, "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR");
-    t->vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)(device ? gdpa(device, "vkCmdPushDescriptorSetKHR") : NULL);
-    if (!t->vkCmdPushDescriptorSetKHR)
-        t->vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)gipa(instance, "vkCmdPushDescriptorSetKHR");
-    t->vkCmdPushDescriptorSetWithTemplateKHR = (PFN_vkCmdPushDescriptorSetWithTemplateKHR)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplateKHR") : NULL);
-    if (!t->vkCmdPushDescriptorSetWithTemplateKHR)
-        t->vkCmdPushDescriptorSetWithTemplateKHR = (PFN_vkCmdPushDescriptorSetWithTemplateKHR)gipa(instance, "vkCmdPushDescriptorSetWithTemplateKHR");
-    t->vkCmdBeginConditionalRenderingEXT = (PFN_vkCmdBeginConditionalRenderingEXT)(device ? gdpa(device, "vkCmdBeginConditionalRenderingEXT") : NULL);
-    if (!t->vkCmdBeginConditionalRenderingEXT)
-        t->vkCmdBeginConditionalRenderingEXT = (PFN_vkCmdBeginConditionalRenderingEXT)gipa(instance, "vkCmdBeginConditionalRenderingEXT");
-    t->vkCmdEndConditionalRenderingEXT = (PFN_vkCmdEndConditionalRenderingEXT)(device ? gdpa(device, "vkCmdEndConditionalRenderingEXT") : NULL);
-    if (!t->vkCmdEndConditionalRenderingEXT)
-        t->vkCmdEndConditionalRenderingEXT = (PFN_vkCmdEndConditionalRenderingEXT)gipa(instance, "vkCmdEndConditionalRenderingEXT");
-    t->vkCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)(device ? gdpa(device, "vkCreateDescriptorUpdateTemplateKHR") : NULL);
-    if (!t->vkCreateDescriptorUpdateTemplateKHR)
-        t->vkCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)gipa(instance, "vkCreateDescriptorUpdateTemplateKHR");
-    t->vkDestroyDescriptorUpdateTemplateKHR = (PFN_vkDestroyDescriptorUpdateTemplateKHR)(device ? gdpa(device, "vkDestroyDescriptorUpdateTemplateKHR") : NULL);
-    if (!t->vkDestroyDescriptorUpdateTemplateKHR)
-        t->vkDestroyDescriptorUpdateTemplateKHR = (PFN_vkDestroyDescriptorUpdateTemplateKHR)gipa(instance, "vkDestroyDescriptorUpdateTemplateKHR");
-    t->vkUpdateDescriptorSetWithTemplateKHR = (PFN_vkUpdateDescriptorSetWithTemplateKHR)(device ? gdpa(device, "vkUpdateDescriptorSetWithTemplateKHR") : NULL);
-    if (!t->vkUpdateDescriptorSetWithTemplateKHR)
-        t->vkUpdateDescriptorSetWithTemplateKHR = (PFN_vkUpdateDescriptorSetWithTemplateKHR)gipa(instance, "vkUpdateDescriptorSetWithTemplateKHR");
-    t->vkCmdSetViewportWScalingNV = (PFN_vkCmdSetViewportWScalingNV)(device ? gdpa(device, "vkCmdSetViewportWScalingNV") : NULL);
-    if (!t->vkCmdSetViewportWScalingNV)
-        t->vkCmdSetViewportWScalingNV = (PFN_vkCmdSetViewportWScalingNV)gipa(instance, "vkCmdSetViewportWScalingNV");
-    t->vkCmdSetDiscardRectangleEXT = (PFN_vkCmdSetDiscardRectangleEXT)(device ? gdpa(device, "vkCmdSetDiscardRectangleEXT") : NULL);
-    if (!t->vkCmdSetDiscardRectangleEXT)
-        t->vkCmdSetDiscardRectangleEXT = (PFN_vkCmdSetDiscardRectangleEXT)gipa(instance, "vkCmdSetDiscardRectangleEXT");
-    t->vkCmdSetDiscardRectangleEnableEXT = (PFN_vkCmdSetDiscardRectangleEnableEXT)(device ? gdpa(device, "vkCmdSetDiscardRectangleEnableEXT") : NULL);
-    if (!t->vkCmdSetDiscardRectangleEnableEXT)
-        t->vkCmdSetDiscardRectangleEnableEXT = (PFN_vkCmdSetDiscardRectangleEnableEXT)gipa(instance, "vkCmdSetDiscardRectangleEnableEXT");
-    t->vkCmdSetDiscardRectangleModeEXT = (PFN_vkCmdSetDiscardRectangleModeEXT)(device ? gdpa(device, "vkCmdSetDiscardRectangleModeEXT") : NULL);
-    if (!t->vkCmdSetDiscardRectangleModeEXT)
-        t->vkCmdSetDiscardRectangleModeEXT = (PFN_vkCmdSetDiscardRectangleModeEXT)gipa(instance, "vkCmdSetDiscardRectangleModeEXT");
-    t->vkCreateRenderPass2KHR = (PFN_vkCreateRenderPass2KHR)(device ? gdpa(device, "vkCreateRenderPass2KHR") : NULL);
-    if (!t->vkCreateRenderPass2KHR)
-        t->vkCreateRenderPass2KHR = (PFN_vkCreateRenderPass2KHR)gipa(instance, "vkCreateRenderPass2KHR");
-    t->vkCmdBeginRenderPass2KHR = (PFN_vkCmdBeginRenderPass2KHR)(device ? gdpa(device, "vkCmdBeginRenderPass2KHR") : NULL);
-    if (!t->vkCmdBeginRenderPass2KHR)
-        t->vkCmdBeginRenderPass2KHR = (PFN_vkCmdBeginRenderPass2KHR)gipa(instance, "vkCmdBeginRenderPass2KHR");
-    t->vkCmdNextSubpass2KHR = (PFN_vkCmdNextSubpass2KHR)(device ? gdpa(device, "vkCmdNextSubpass2KHR") : NULL);
-    if (!t->vkCmdNextSubpass2KHR)
-        t->vkCmdNextSubpass2KHR = (PFN_vkCmdNextSubpass2KHR)gipa(instance, "vkCmdNextSubpass2KHR");
-    t->vkCmdEndRenderPass2KHR = (PFN_vkCmdEndRenderPass2KHR)(device ? gdpa(device, "vkCmdEndRenderPass2KHR") : NULL);
-    if (!t->vkCmdEndRenderPass2KHR)
-        t->vkCmdEndRenderPass2KHR = (PFN_vkCmdEndRenderPass2KHR)gipa(instance, "vkCmdEndRenderPass2KHR");
+    t->vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)(device ? gdpa(device, "vkCmdPushDescriptorSetKHR") : gipa(instance, "vkCmdPushDescriptorSetKHR"));
+    t->vkCmdPushDescriptorSetWithTemplateKHR = (PFN_vkCmdPushDescriptorSetWithTemplateKHR)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplateKHR") : gipa(instance, "vkCmdPushDescriptorSetWithTemplateKHR"));
+    t->vkCmdBeginConditionalRenderingEXT = (PFN_vkCmdBeginConditionalRenderingEXT)(device ? gdpa(device, "vkCmdBeginConditionalRenderingEXT") : gipa(instance, "vkCmdBeginConditionalRenderingEXT"));
+    t->vkCmdEndConditionalRenderingEXT = (PFN_vkCmdEndConditionalRenderingEXT)(device ? gdpa(device, "vkCmdEndConditionalRenderingEXT") : gipa(instance, "vkCmdEndConditionalRenderingEXT"));
+    t->vkCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)(device ? gdpa(device, "vkCreateDescriptorUpdateTemplateKHR") : gipa(instance, "vkCreateDescriptorUpdateTemplateKHR"));
+    t->vkDestroyDescriptorUpdateTemplateKHR = (PFN_vkDestroyDescriptorUpdateTemplateKHR)(device ? gdpa(device, "vkDestroyDescriptorUpdateTemplateKHR") : gipa(instance, "vkDestroyDescriptorUpdateTemplateKHR"));
+    t->vkUpdateDescriptorSetWithTemplateKHR = (PFN_vkUpdateDescriptorSetWithTemplateKHR)(device ? gdpa(device, "vkUpdateDescriptorSetWithTemplateKHR") : gipa(instance, "vkUpdateDescriptorSetWithTemplateKHR"));
+    t->vkCmdSetViewportWScalingNV = (PFN_vkCmdSetViewportWScalingNV)(device ? gdpa(device, "vkCmdSetViewportWScalingNV") : gipa(instance, "vkCmdSetViewportWScalingNV"));
+    t->vkCmdSetDiscardRectangleEXT = (PFN_vkCmdSetDiscardRectangleEXT)(device ? gdpa(device, "vkCmdSetDiscardRectangleEXT") : gipa(instance, "vkCmdSetDiscardRectangleEXT"));
+    t->vkCmdSetDiscardRectangleEnableEXT = (PFN_vkCmdSetDiscardRectangleEnableEXT)(device ? gdpa(device, "vkCmdSetDiscardRectangleEnableEXT") : gipa(instance, "vkCmdSetDiscardRectangleEnableEXT"));
+    t->vkCmdSetDiscardRectangleModeEXT = (PFN_vkCmdSetDiscardRectangleModeEXT)(device ? gdpa(device, "vkCmdSetDiscardRectangleModeEXT") : gipa(instance, "vkCmdSetDiscardRectangleModeEXT"));
+    t->vkCreateRenderPass2KHR = (PFN_vkCreateRenderPass2KHR)(device ? gdpa(device, "vkCreateRenderPass2KHR") : gipa(instance, "vkCreateRenderPass2KHR"));
+    t->vkCmdBeginRenderPass2KHR = (PFN_vkCmdBeginRenderPass2KHR)(device ? gdpa(device, "vkCmdBeginRenderPass2KHR") : gipa(instance, "vkCmdBeginRenderPass2KHR"));
+    t->vkCmdNextSubpass2KHR = (PFN_vkCmdNextSubpass2KHR)(device ? gdpa(device, "vkCmdNextSubpass2KHR") : gipa(instance, "vkCmdNextSubpass2KHR"));
+    t->vkCmdEndRenderPass2KHR = (PFN_vkCmdEndRenderPass2KHR)(device ? gdpa(device, "vkCmdEndRenderPass2KHR") : gipa(instance, "vkCmdEndRenderPass2KHR"));
     t->vkGetPhysicalDeviceExternalFencePropertiesKHR = (PFN_vkGetPhysicalDeviceExternalFencePropertiesKHR)gipa(instance, "vkGetPhysicalDeviceExternalFencePropertiesKHR");
     t->vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR = (PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR)gipa(instance, "vkEnumeratePhysicalDeviceQueueFamilyPerformanceQueryCountersKHR");
     t->vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR = (PFN_vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR)gipa(instance, "vkGetPhysicalDeviceQueueFamilyPerformanceQueryPassesKHR");
-    t->vkAcquireProfilingLockKHR = (PFN_vkAcquireProfilingLockKHR)(device ? gdpa(device, "vkAcquireProfilingLockKHR") : NULL);
-    if (!t->vkAcquireProfilingLockKHR)
-        t->vkAcquireProfilingLockKHR = (PFN_vkAcquireProfilingLockKHR)gipa(instance, "vkAcquireProfilingLockKHR");
-    t->vkReleaseProfilingLockKHR = (PFN_vkReleaseProfilingLockKHR)(device ? gdpa(device, "vkReleaseProfilingLockKHR") : NULL);
-    if (!t->vkReleaseProfilingLockKHR)
-        t->vkReleaseProfilingLockKHR = (PFN_vkReleaseProfilingLockKHR)gipa(instance, "vkReleaseProfilingLockKHR");
-    t->vkCreateGpaSessionAMD = (PFN_vkCreateGpaSessionAMD)(device ? gdpa(device, "vkCreateGpaSessionAMD") : NULL);
-    if (!t->vkCreateGpaSessionAMD)
-        t->vkCreateGpaSessionAMD = (PFN_vkCreateGpaSessionAMD)gipa(instance, "vkCreateGpaSessionAMD");
-    t->vkDestroyGpaSessionAMD = (PFN_vkDestroyGpaSessionAMD)(device ? gdpa(device, "vkDestroyGpaSessionAMD") : NULL);
-    if (!t->vkDestroyGpaSessionAMD)
-        t->vkDestroyGpaSessionAMD = (PFN_vkDestroyGpaSessionAMD)gipa(instance, "vkDestroyGpaSessionAMD");
-    t->vkSetGpaDeviceClockModeAMD = (PFN_vkSetGpaDeviceClockModeAMD)(device ? gdpa(device, "vkSetGpaDeviceClockModeAMD") : NULL);
-    if (!t->vkSetGpaDeviceClockModeAMD)
-        t->vkSetGpaDeviceClockModeAMD = (PFN_vkSetGpaDeviceClockModeAMD)gipa(instance, "vkSetGpaDeviceClockModeAMD");
-    t->vkGetGpaDeviceClockInfoAMD = (PFN_vkGetGpaDeviceClockInfoAMD)(device ? gdpa(device, "vkGetGpaDeviceClockInfoAMD") : NULL);
-    if (!t->vkGetGpaDeviceClockInfoAMD)
-        t->vkGetGpaDeviceClockInfoAMD = (PFN_vkGetGpaDeviceClockInfoAMD)gipa(instance, "vkGetGpaDeviceClockInfoAMD");
-    t->vkCmdBeginGpaSessionAMD = (PFN_vkCmdBeginGpaSessionAMD)(device ? gdpa(device, "vkCmdBeginGpaSessionAMD") : NULL);
-    if (!t->vkCmdBeginGpaSessionAMD)
-        t->vkCmdBeginGpaSessionAMD = (PFN_vkCmdBeginGpaSessionAMD)gipa(instance, "vkCmdBeginGpaSessionAMD");
-    t->vkCmdEndGpaSessionAMD = (PFN_vkCmdEndGpaSessionAMD)(device ? gdpa(device, "vkCmdEndGpaSessionAMD") : NULL);
-    if (!t->vkCmdEndGpaSessionAMD)
-        t->vkCmdEndGpaSessionAMD = (PFN_vkCmdEndGpaSessionAMD)gipa(instance, "vkCmdEndGpaSessionAMD");
-    t->vkCmdBeginGpaSampleAMD = (PFN_vkCmdBeginGpaSampleAMD)(device ? gdpa(device, "vkCmdBeginGpaSampleAMD") : NULL);
-    if (!t->vkCmdBeginGpaSampleAMD)
-        t->vkCmdBeginGpaSampleAMD = (PFN_vkCmdBeginGpaSampleAMD)gipa(instance, "vkCmdBeginGpaSampleAMD");
-    t->vkCmdEndGpaSampleAMD = (PFN_vkCmdEndGpaSampleAMD)(device ? gdpa(device, "vkCmdEndGpaSampleAMD") : NULL);
-    if (!t->vkCmdEndGpaSampleAMD)
-        t->vkCmdEndGpaSampleAMD = (PFN_vkCmdEndGpaSampleAMD)gipa(instance, "vkCmdEndGpaSampleAMD");
-    t->vkGetGpaSessionStatusAMD = (PFN_vkGetGpaSessionStatusAMD)(device ? gdpa(device, "vkGetGpaSessionStatusAMD") : NULL);
-    if (!t->vkGetGpaSessionStatusAMD)
-        t->vkGetGpaSessionStatusAMD = (PFN_vkGetGpaSessionStatusAMD)gipa(instance, "vkGetGpaSessionStatusAMD");
-    t->vkGetGpaSessionResultsAMD = (PFN_vkGetGpaSessionResultsAMD)(device ? gdpa(device, "vkGetGpaSessionResultsAMD") : NULL);
-    if (!t->vkGetGpaSessionResultsAMD)
-        t->vkGetGpaSessionResultsAMD = (PFN_vkGetGpaSessionResultsAMD)gipa(instance, "vkGetGpaSessionResultsAMD");
-    t->vkResetGpaSessionAMD = (PFN_vkResetGpaSessionAMD)(device ? gdpa(device, "vkResetGpaSessionAMD") : NULL);
-    if (!t->vkResetGpaSessionAMD)
-        t->vkResetGpaSessionAMD = (PFN_vkResetGpaSessionAMD)gipa(instance, "vkResetGpaSessionAMD");
-    t->vkCmdCopyGpaSessionResultsAMD = (PFN_vkCmdCopyGpaSessionResultsAMD)(device ? gdpa(device, "vkCmdCopyGpaSessionResultsAMD") : NULL);
-    if (!t->vkCmdCopyGpaSessionResultsAMD)
-        t->vkCmdCopyGpaSessionResultsAMD = (PFN_vkCmdCopyGpaSessionResultsAMD)gipa(instance, "vkCmdCopyGpaSessionResultsAMD");
-    t->vkWriteSamplerDescriptorsEXT = (PFN_vkWriteSamplerDescriptorsEXT)(device ? gdpa(device, "vkWriteSamplerDescriptorsEXT") : NULL);
-    if (!t->vkWriteSamplerDescriptorsEXT)
-        t->vkWriteSamplerDescriptorsEXT = (PFN_vkWriteSamplerDescriptorsEXT)gipa(instance, "vkWriteSamplerDescriptorsEXT");
-    t->vkWriteResourceDescriptorsEXT = (PFN_vkWriteResourceDescriptorsEXT)(device ? gdpa(device, "vkWriteResourceDescriptorsEXT") : NULL);
-    if (!t->vkWriteResourceDescriptorsEXT)
-        t->vkWriteResourceDescriptorsEXT = (PFN_vkWriteResourceDescriptorsEXT)gipa(instance, "vkWriteResourceDescriptorsEXT");
-    t->vkCmdBindSamplerHeapEXT = (PFN_vkCmdBindSamplerHeapEXT)(device ? gdpa(device, "vkCmdBindSamplerHeapEXT") : NULL);
-    if (!t->vkCmdBindSamplerHeapEXT)
-        t->vkCmdBindSamplerHeapEXT = (PFN_vkCmdBindSamplerHeapEXT)gipa(instance, "vkCmdBindSamplerHeapEXT");
-    t->vkCmdBindResourceHeapEXT = (PFN_vkCmdBindResourceHeapEXT)(device ? gdpa(device, "vkCmdBindResourceHeapEXT") : NULL);
-    if (!t->vkCmdBindResourceHeapEXT)
-        t->vkCmdBindResourceHeapEXT = (PFN_vkCmdBindResourceHeapEXT)gipa(instance, "vkCmdBindResourceHeapEXT");
-    t->vkCmdPushDataEXT = (PFN_vkCmdPushDataEXT)(device ? gdpa(device, "vkCmdPushDataEXT") : NULL);
-    if (!t->vkCmdPushDataEXT)
-        t->vkCmdPushDataEXT = (PFN_vkCmdPushDataEXT)gipa(instance, "vkCmdPushDataEXT");
-    t->vkGetImageOpaqueCaptureDataEXT = (PFN_vkGetImageOpaqueCaptureDataEXT)(device ? gdpa(device, "vkGetImageOpaqueCaptureDataEXT") : NULL);
-    if (!t->vkGetImageOpaqueCaptureDataEXT)
-        t->vkGetImageOpaqueCaptureDataEXT = (PFN_vkGetImageOpaqueCaptureDataEXT)gipa(instance, "vkGetImageOpaqueCaptureDataEXT");
+    t->vkAcquireProfilingLockKHR = (PFN_vkAcquireProfilingLockKHR)(device ? gdpa(device, "vkAcquireProfilingLockKHR") : gipa(instance, "vkAcquireProfilingLockKHR"));
+    t->vkReleaseProfilingLockKHR = (PFN_vkReleaseProfilingLockKHR)(device ? gdpa(device, "vkReleaseProfilingLockKHR") : gipa(instance, "vkReleaseProfilingLockKHR"));
+    t->vkCreateGpaSessionAMD = (PFN_vkCreateGpaSessionAMD)(device ? gdpa(device, "vkCreateGpaSessionAMD") : gipa(instance, "vkCreateGpaSessionAMD"));
+    t->vkDestroyGpaSessionAMD = (PFN_vkDestroyGpaSessionAMD)(device ? gdpa(device, "vkDestroyGpaSessionAMD") : gipa(instance, "vkDestroyGpaSessionAMD"));
+    t->vkSetGpaDeviceClockModeAMD = (PFN_vkSetGpaDeviceClockModeAMD)(device ? gdpa(device, "vkSetGpaDeviceClockModeAMD") : gipa(instance, "vkSetGpaDeviceClockModeAMD"));
+    t->vkGetGpaDeviceClockInfoAMD = (PFN_vkGetGpaDeviceClockInfoAMD)(device ? gdpa(device, "vkGetGpaDeviceClockInfoAMD") : gipa(instance, "vkGetGpaDeviceClockInfoAMD"));
+    t->vkCmdBeginGpaSessionAMD = (PFN_vkCmdBeginGpaSessionAMD)(device ? gdpa(device, "vkCmdBeginGpaSessionAMD") : gipa(instance, "vkCmdBeginGpaSessionAMD"));
+    t->vkCmdEndGpaSessionAMD = (PFN_vkCmdEndGpaSessionAMD)(device ? gdpa(device, "vkCmdEndGpaSessionAMD") : gipa(instance, "vkCmdEndGpaSessionAMD"));
+    t->vkCmdBeginGpaSampleAMD = (PFN_vkCmdBeginGpaSampleAMD)(device ? gdpa(device, "vkCmdBeginGpaSampleAMD") : gipa(instance, "vkCmdBeginGpaSampleAMD"));
+    t->vkCmdEndGpaSampleAMD = (PFN_vkCmdEndGpaSampleAMD)(device ? gdpa(device, "vkCmdEndGpaSampleAMD") : gipa(instance, "vkCmdEndGpaSampleAMD"));
+    t->vkGetGpaSessionStatusAMD = (PFN_vkGetGpaSessionStatusAMD)(device ? gdpa(device, "vkGetGpaSessionStatusAMD") : gipa(instance, "vkGetGpaSessionStatusAMD"));
+    t->vkGetGpaSessionResultsAMD = (PFN_vkGetGpaSessionResultsAMD)(device ? gdpa(device, "vkGetGpaSessionResultsAMD") : gipa(instance, "vkGetGpaSessionResultsAMD"));
+    t->vkResetGpaSessionAMD = (PFN_vkResetGpaSessionAMD)(device ? gdpa(device, "vkResetGpaSessionAMD") : gipa(instance, "vkResetGpaSessionAMD"));
+    t->vkCmdCopyGpaSessionResultsAMD = (PFN_vkCmdCopyGpaSessionResultsAMD)(device ? gdpa(device, "vkCmdCopyGpaSessionResultsAMD") : gipa(instance, "vkCmdCopyGpaSessionResultsAMD"));
+    t->vkWriteSamplerDescriptorsEXT = (PFN_vkWriteSamplerDescriptorsEXT)(device ? gdpa(device, "vkWriteSamplerDescriptorsEXT") : gipa(instance, "vkWriteSamplerDescriptorsEXT"));
+    t->vkWriteResourceDescriptorsEXT = (PFN_vkWriteResourceDescriptorsEXT)(device ? gdpa(device, "vkWriteResourceDescriptorsEXT") : gipa(instance, "vkWriteResourceDescriptorsEXT"));
+    t->vkCmdBindSamplerHeapEXT = (PFN_vkCmdBindSamplerHeapEXT)(device ? gdpa(device, "vkCmdBindSamplerHeapEXT") : gipa(instance, "vkCmdBindSamplerHeapEXT"));
+    t->vkCmdBindResourceHeapEXT = (PFN_vkCmdBindResourceHeapEXT)(device ? gdpa(device, "vkCmdBindResourceHeapEXT") : gipa(instance, "vkCmdBindResourceHeapEXT"));
+    t->vkCmdPushDataEXT = (PFN_vkCmdPushDataEXT)(device ? gdpa(device, "vkCmdPushDataEXT") : gipa(instance, "vkCmdPushDataEXT"));
+    t->vkGetImageOpaqueCaptureDataEXT = (PFN_vkGetImageOpaqueCaptureDataEXT)(device ? gdpa(device, "vkGetImageOpaqueCaptureDataEXT") : gipa(instance, "vkGetImageOpaqueCaptureDataEXT"));
     t->vkGetPhysicalDeviceDescriptorSizeEXT = (PFN_vkGetPhysicalDeviceDescriptorSizeEXT)gipa(instance, "vkGetPhysicalDeviceDescriptorSizeEXT");
-    t->vkRegisterCustomBorderColorEXT = (PFN_vkRegisterCustomBorderColorEXT)(device ? gdpa(device, "vkRegisterCustomBorderColorEXT") : NULL);
-    if (!t->vkRegisterCustomBorderColorEXT)
-        t->vkRegisterCustomBorderColorEXT = (PFN_vkRegisterCustomBorderColorEXT)gipa(instance, "vkRegisterCustomBorderColorEXT");
-    t->vkUnregisterCustomBorderColorEXT = (PFN_vkUnregisterCustomBorderColorEXT)(device ? gdpa(device, "vkUnregisterCustomBorderColorEXT") : NULL);
-    if (!t->vkUnregisterCustomBorderColorEXT)
-        t->vkUnregisterCustomBorderColorEXT = (PFN_vkUnregisterCustomBorderColorEXT)gipa(instance, "vkUnregisterCustomBorderColorEXT");
-    t->vkGetTensorOpaqueCaptureDataARM = (PFN_vkGetTensorOpaqueCaptureDataARM)(device ? gdpa(device, "vkGetTensorOpaqueCaptureDataARM") : NULL);
-    if (!t->vkGetTensorOpaqueCaptureDataARM)
-        t->vkGetTensorOpaqueCaptureDataARM = (PFN_vkGetTensorOpaqueCaptureDataARM)gipa(instance, "vkGetTensorOpaqueCaptureDataARM");
-    t->vkCmdSetSampleLocationsEXT = (PFN_vkCmdSetSampleLocationsEXT)(device ? gdpa(device, "vkCmdSetSampleLocationsEXT") : NULL);
-    if (!t->vkCmdSetSampleLocationsEXT)
-        t->vkCmdSetSampleLocationsEXT = (PFN_vkCmdSetSampleLocationsEXT)gipa(instance, "vkCmdSetSampleLocationsEXT");
+    t->vkRegisterCustomBorderColorEXT = (PFN_vkRegisterCustomBorderColorEXT)(device ? gdpa(device, "vkRegisterCustomBorderColorEXT") : gipa(instance, "vkRegisterCustomBorderColorEXT"));
+    t->vkUnregisterCustomBorderColorEXT = (PFN_vkUnregisterCustomBorderColorEXT)(device ? gdpa(device, "vkUnregisterCustomBorderColorEXT") : gipa(instance, "vkUnregisterCustomBorderColorEXT"));
+    t->vkGetTensorOpaqueCaptureDataARM = (PFN_vkGetTensorOpaqueCaptureDataARM)(device ? gdpa(device, "vkGetTensorOpaqueCaptureDataARM") : gipa(instance, "vkGetTensorOpaqueCaptureDataARM"));
+    t->vkCmdSetSampleLocationsEXT = (PFN_vkCmdSetSampleLocationsEXT)(device ? gdpa(device, "vkCmdSetSampleLocationsEXT") : gipa(instance, "vkCmdSetSampleLocationsEXT"));
     t->vkGetPhysicalDeviceMultisamplePropertiesEXT = (PFN_vkGetPhysicalDeviceMultisamplePropertiesEXT)gipa(instance, "vkGetPhysicalDeviceMultisamplePropertiesEXT");
-    t->vkGetImageMemoryRequirements2KHR = (PFN_vkGetImageMemoryRequirements2KHR)(device ? gdpa(device, "vkGetImageMemoryRequirements2KHR") : NULL);
-    if (!t->vkGetImageMemoryRequirements2KHR)
-        t->vkGetImageMemoryRequirements2KHR = (PFN_vkGetImageMemoryRequirements2KHR)gipa(instance, "vkGetImageMemoryRequirements2KHR");
-    t->vkGetBufferMemoryRequirements2KHR = (PFN_vkGetBufferMemoryRequirements2KHR)(device ? gdpa(device, "vkGetBufferMemoryRequirements2KHR") : NULL);
-    if (!t->vkGetBufferMemoryRequirements2KHR)
-        t->vkGetBufferMemoryRequirements2KHR = (PFN_vkGetBufferMemoryRequirements2KHR)gipa(instance, "vkGetBufferMemoryRequirements2KHR");
-    t->vkGetImageSparseMemoryRequirements2KHR = (PFN_vkGetImageSparseMemoryRequirements2KHR)(device ? gdpa(device, "vkGetImageSparseMemoryRequirements2KHR") : NULL);
-    if (!t->vkGetImageSparseMemoryRequirements2KHR)
-        t->vkGetImageSparseMemoryRequirements2KHR = (PFN_vkGetImageSparseMemoryRequirements2KHR)gipa(instance, "vkGetImageSparseMemoryRequirements2KHR");
-    t->vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)(device ? gdpa(device, "vkCreateAccelerationStructureKHR") : NULL);
-    if (!t->vkCreateAccelerationStructureKHR)
-        t->vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)gipa(instance, "vkCreateAccelerationStructureKHR");
-    t->vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)(device ? gdpa(device, "vkDestroyAccelerationStructureKHR") : NULL);
-    if (!t->vkDestroyAccelerationStructureKHR)
-        t->vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)gipa(instance, "vkDestroyAccelerationStructureKHR");
-    t->vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)(device ? gdpa(device, "vkCmdBuildAccelerationStructuresKHR") : NULL);
-    if (!t->vkCmdBuildAccelerationStructuresKHR)
-        t->vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)gipa(instance, "vkCmdBuildAccelerationStructuresKHR");
-    t->vkCmdBuildAccelerationStructuresIndirectKHR = (PFN_vkCmdBuildAccelerationStructuresIndirectKHR)(device ? gdpa(device, "vkCmdBuildAccelerationStructuresIndirectKHR") : NULL);
-    if (!t->vkCmdBuildAccelerationStructuresIndirectKHR)
-        t->vkCmdBuildAccelerationStructuresIndirectKHR = (PFN_vkCmdBuildAccelerationStructuresIndirectKHR)gipa(instance, "vkCmdBuildAccelerationStructuresIndirectKHR");
-    t->vkBuildAccelerationStructuresKHR = (PFN_vkBuildAccelerationStructuresKHR)(device ? gdpa(device, "vkBuildAccelerationStructuresKHR") : NULL);
-    if (!t->vkBuildAccelerationStructuresKHR)
-        t->vkBuildAccelerationStructuresKHR = (PFN_vkBuildAccelerationStructuresKHR)gipa(instance, "vkBuildAccelerationStructuresKHR");
-    t->vkCopyAccelerationStructureKHR = (PFN_vkCopyAccelerationStructureKHR)(device ? gdpa(device, "vkCopyAccelerationStructureKHR") : NULL);
-    if (!t->vkCopyAccelerationStructureKHR)
-        t->vkCopyAccelerationStructureKHR = (PFN_vkCopyAccelerationStructureKHR)gipa(instance, "vkCopyAccelerationStructureKHR");
-    t->vkCopyAccelerationStructureToMemoryKHR = (PFN_vkCopyAccelerationStructureToMemoryKHR)(device ? gdpa(device, "vkCopyAccelerationStructureToMemoryKHR") : NULL);
-    if (!t->vkCopyAccelerationStructureToMemoryKHR)
-        t->vkCopyAccelerationStructureToMemoryKHR = (PFN_vkCopyAccelerationStructureToMemoryKHR)gipa(instance, "vkCopyAccelerationStructureToMemoryKHR");
-    t->vkCopyMemoryToAccelerationStructureKHR = (PFN_vkCopyMemoryToAccelerationStructureKHR)(device ? gdpa(device, "vkCopyMemoryToAccelerationStructureKHR") : NULL);
-    if (!t->vkCopyMemoryToAccelerationStructureKHR)
-        t->vkCopyMemoryToAccelerationStructureKHR = (PFN_vkCopyMemoryToAccelerationStructureKHR)gipa(instance, "vkCopyMemoryToAccelerationStructureKHR");
-    t->vkWriteAccelerationStructuresPropertiesKHR = (PFN_vkWriteAccelerationStructuresPropertiesKHR)(device ? gdpa(device, "vkWriteAccelerationStructuresPropertiesKHR") : NULL);
-    if (!t->vkWriteAccelerationStructuresPropertiesKHR)
-        t->vkWriteAccelerationStructuresPropertiesKHR = (PFN_vkWriteAccelerationStructuresPropertiesKHR)gipa(instance, "vkWriteAccelerationStructuresPropertiesKHR");
-    t->vkCmdCopyAccelerationStructureKHR = (PFN_vkCmdCopyAccelerationStructureKHR)(device ? gdpa(device, "vkCmdCopyAccelerationStructureKHR") : NULL);
-    if (!t->vkCmdCopyAccelerationStructureKHR)
-        t->vkCmdCopyAccelerationStructureKHR = (PFN_vkCmdCopyAccelerationStructureKHR)gipa(instance, "vkCmdCopyAccelerationStructureKHR");
-    t->vkCmdCopyAccelerationStructureToMemoryKHR = (PFN_vkCmdCopyAccelerationStructureToMemoryKHR)(device ? gdpa(device, "vkCmdCopyAccelerationStructureToMemoryKHR") : NULL);
-    if (!t->vkCmdCopyAccelerationStructureToMemoryKHR)
-        t->vkCmdCopyAccelerationStructureToMemoryKHR = (PFN_vkCmdCopyAccelerationStructureToMemoryKHR)gipa(instance, "vkCmdCopyAccelerationStructureToMemoryKHR");
-    t->vkCmdCopyMemoryToAccelerationStructureKHR = (PFN_vkCmdCopyMemoryToAccelerationStructureKHR)(device ? gdpa(device, "vkCmdCopyMemoryToAccelerationStructureKHR") : NULL);
-    if (!t->vkCmdCopyMemoryToAccelerationStructureKHR)
-        t->vkCmdCopyMemoryToAccelerationStructureKHR = (PFN_vkCmdCopyMemoryToAccelerationStructureKHR)gipa(instance, "vkCmdCopyMemoryToAccelerationStructureKHR");
-    t->vkGetAccelerationStructureDeviceAddressKHR = (PFN_vkGetAccelerationStructureDeviceAddressKHR)(device ? gdpa(device, "vkGetAccelerationStructureDeviceAddressKHR") : NULL);
-    if (!t->vkGetAccelerationStructureDeviceAddressKHR)
-        t->vkGetAccelerationStructureDeviceAddressKHR = (PFN_vkGetAccelerationStructureDeviceAddressKHR)gipa(instance, "vkGetAccelerationStructureDeviceAddressKHR");
-    t->vkCmdWriteAccelerationStructuresPropertiesKHR = (PFN_vkCmdWriteAccelerationStructuresPropertiesKHR)(device ? gdpa(device, "vkCmdWriteAccelerationStructuresPropertiesKHR") : NULL);
-    if (!t->vkCmdWriteAccelerationStructuresPropertiesKHR)
-        t->vkCmdWriteAccelerationStructuresPropertiesKHR = (PFN_vkCmdWriteAccelerationStructuresPropertiesKHR)gipa(instance, "vkCmdWriteAccelerationStructuresPropertiesKHR");
-    t->vkGetDeviceAccelerationStructureCompatibilityKHR = (PFN_vkGetDeviceAccelerationStructureCompatibilityKHR)(device ? gdpa(device, "vkGetDeviceAccelerationStructureCompatibilityKHR") : NULL);
-    if (!t->vkGetDeviceAccelerationStructureCompatibilityKHR)
-        t->vkGetDeviceAccelerationStructureCompatibilityKHR = (PFN_vkGetDeviceAccelerationStructureCompatibilityKHR)gipa(instance, "vkGetDeviceAccelerationStructureCompatibilityKHR");
-    t->vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)(device ? gdpa(device, "vkGetAccelerationStructureBuildSizesKHR") : NULL);
-    if (!t->vkGetAccelerationStructureBuildSizesKHR)
-        t->vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)gipa(instance, "vkGetAccelerationStructureBuildSizesKHR");
-    t->vkCmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)(device ? gdpa(device, "vkCmdTraceRaysKHR") : NULL);
-    if (!t->vkCmdTraceRaysKHR)
-        t->vkCmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)gipa(instance, "vkCmdTraceRaysKHR");
-    t->vkCreateRayTracingPipelinesKHR = (PFN_vkCreateRayTracingPipelinesKHR)(device ? gdpa(device, "vkCreateRayTracingPipelinesKHR") : NULL);
-    if (!t->vkCreateRayTracingPipelinesKHR)
-        t->vkCreateRayTracingPipelinesKHR = (PFN_vkCreateRayTracingPipelinesKHR)gipa(instance, "vkCreateRayTracingPipelinesKHR");
-    t->vkGetRayTracingShaderGroupHandlesKHR = (PFN_vkGetRayTracingShaderGroupHandlesKHR)(device ? gdpa(device, "vkGetRayTracingShaderGroupHandlesKHR") : NULL);
-    if (!t->vkGetRayTracingShaderGroupHandlesKHR)
-        t->vkGetRayTracingShaderGroupHandlesKHR = (PFN_vkGetRayTracingShaderGroupHandlesKHR)gipa(instance, "vkGetRayTracingShaderGroupHandlesKHR");
-    t->vkGetRayTracingCaptureReplayShaderGroupHandlesKHR = (PFN_vkGetRayTracingCaptureReplayShaderGroupHandlesKHR)(device ? gdpa(device, "vkGetRayTracingCaptureReplayShaderGroupHandlesKHR") : NULL);
-    if (!t->vkGetRayTracingCaptureReplayShaderGroupHandlesKHR)
-        t->vkGetRayTracingCaptureReplayShaderGroupHandlesKHR = (PFN_vkGetRayTracingCaptureReplayShaderGroupHandlesKHR)gipa(instance, "vkGetRayTracingCaptureReplayShaderGroupHandlesKHR");
-    t->vkCmdTraceRaysIndirectKHR = (PFN_vkCmdTraceRaysIndirectKHR)(device ? gdpa(device, "vkCmdTraceRaysIndirectKHR") : NULL);
-    if (!t->vkCmdTraceRaysIndirectKHR)
-        t->vkCmdTraceRaysIndirectKHR = (PFN_vkCmdTraceRaysIndirectKHR)gipa(instance, "vkCmdTraceRaysIndirectKHR");
-    t->vkGetRayTracingShaderGroupStackSizeKHR = (PFN_vkGetRayTracingShaderGroupStackSizeKHR)(device ? gdpa(device, "vkGetRayTracingShaderGroupStackSizeKHR") : NULL);
-    if (!t->vkGetRayTracingShaderGroupStackSizeKHR)
-        t->vkGetRayTracingShaderGroupStackSizeKHR = (PFN_vkGetRayTracingShaderGroupStackSizeKHR)gipa(instance, "vkGetRayTracingShaderGroupStackSizeKHR");
-    t->vkCmdSetRayTracingPipelineStackSizeKHR = (PFN_vkCmdSetRayTracingPipelineStackSizeKHR)(device ? gdpa(device, "vkCmdSetRayTracingPipelineStackSizeKHR") : NULL);
-    if (!t->vkCmdSetRayTracingPipelineStackSizeKHR)
-        t->vkCmdSetRayTracingPipelineStackSizeKHR = (PFN_vkCmdSetRayTracingPipelineStackSizeKHR)gipa(instance, "vkCmdSetRayTracingPipelineStackSizeKHR");
-    t->vkCreateSamplerYcbcrConversionKHR = (PFN_vkCreateSamplerYcbcrConversionKHR)(device ? gdpa(device, "vkCreateSamplerYcbcrConversionKHR") : NULL);
-    if (!t->vkCreateSamplerYcbcrConversionKHR)
-        t->vkCreateSamplerYcbcrConversionKHR = (PFN_vkCreateSamplerYcbcrConversionKHR)gipa(instance, "vkCreateSamplerYcbcrConversionKHR");
-    t->vkDestroySamplerYcbcrConversionKHR = (PFN_vkDestroySamplerYcbcrConversionKHR)(device ? gdpa(device, "vkDestroySamplerYcbcrConversionKHR") : NULL);
-    if (!t->vkDestroySamplerYcbcrConversionKHR)
-        t->vkDestroySamplerYcbcrConversionKHR = (PFN_vkDestroySamplerYcbcrConversionKHR)gipa(instance, "vkDestroySamplerYcbcrConversionKHR");
-    t->vkBindBufferMemory2KHR = (PFN_vkBindBufferMemory2KHR)(device ? gdpa(device, "vkBindBufferMemory2KHR") : NULL);
-    if (!t->vkBindBufferMemory2KHR)
-        t->vkBindBufferMemory2KHR = (PFN_vkBindBufferMemory2KHR)gipa(instance, "vkBindBufferMemory2KHR");
-    t->vkBindImageMemory2KHR = (PFN_vkBindImageMemory2KHR)(device ? gdpa(device, "vkBindImageMemory2KHR") : NULL);
-    if (!t->vkBindImageMemory2KHR)
-        t->vkBindImageMemory2KHR = (PFN_vkBindImageMemory2KHR)gipa(instance, "vkBindImageMemory2KHR");
-    t->vkGetImageDrmFormatModifierPropertiesEXT = (PFN_vkGetImageDrmFormatModifierPropertiesEXT)(device ? gdpa(device, "vkGetImageDrmFormatModifierPropertiesEXT") : NULL);
-    if (!t->vkGetImageDrmFormatModifierPropertiesEXT)
-        t->vkGetImageDrmFormatModifierPropertiesEXT = (PFN_vkGetImageDrmFormatModifierPropertiesEXT)gipa(instance, "vkGetImageDrmFormatModifierPropertiesEXT");
-    t->vkCreateValidationCacheEXT = (PFN_vkCreateValidationCacheEXT)(device ? gdpa(device, "vkCreateValidationCacheEXT") : NULL);
-    if (!t->vkCreateValidationCacheEXT)
-        t->vkCreateValidationCacheEXT = (PFN_vkCreateValidationCacheEXT)gipa(instance, "vkCreateValidationCacheEXT");
-    t->vkDestroyValidationCacheEXT = (PFN_vkDestroyValidationCacheEXT)(device ? gdpa(device, "vkDestroyValidationCacheEXT") : NULL);
-    if (!t->vkDestroyValidationCacheEXT)
-        t->vkDestroyValidationCacheEXT = (PFN_vkDestroyValidationCacheEXT)gipa(instance, "vkDestroyValidationCacheEXT");
-    t->vkMergeValidationCachesEXT = (PFN_vkMergeValidationCachesEXT)(device ? gdpa(device, "vkMergeValidationCachesEXT") : NULL);
-    if (!t->vkMergeValidationCachesEXT)
-        t->vkMergeValidationCachesEXT = (PFN_vkMergeValidationCachesEXT)gipa(instance, "vkMergeValidationCachesEXT");
-    t->vkGetValidationCacheDataEXT = (PFN_vkGetValidationCacheDataEXT)(device ? gdpa(device, "vkGetValidationCacheDataEXT") : NULL);
-    if (!t->vkGetValidationCacheDataEXT)
-        t->vkGetValidationCacheDataEXT = (PFN_vkGetValidationCacheDataEXT)gipa(instance, "vkGetValidationCacheDataEXT");
-    t->vkCmdBindShadingRateImageNV = (PFN_vkCmdBindShadingRateImageNV)(device ? gdpa(device, "vkCmdBindShadingRateImageNV") : NULL);
-    if (!t->vkCmdBindShadingRateImageNV)
-        t->vkCmdBindShadingRateImageNV = (PFN_vkCmdBindShadingRateImageNV)gipa(instance, "vkCmdBindShadingRateImageNV");
-    t->vkCmdSetViewportShadingRatePaletteNV = (PFN_vkCmdSetViewportShadingRatePaletteNV)(device ? gdpa(device, "vkCmdSetViewportShadingRatePaletteNV") : NULL);
-    if (!t->vkCmdSetViewportShadingRatePaletteNV)
-        t->vkCmdSetViewportShadingRatePaletteNV = (PFN_vkCmdSetViewportShadingRatePaletteNV)gipa(instance, "vkCmdSetViewportShadingRatePaletteNV");
-    t->vkCmdSetCoarseSampleOrderNV = (PFN_vkCmdSetCoarseSampleOrderNV)(device ? gdpa(device, "vkCmdSetCoarseSampleOrderNV") : NULL);
-    if (!t->vkCmdSetCoarseSampleOrderNV)
-        t->vkCmdSetCoarseSampleOrderNV = (PFN_vkCmdSetCoarseSampleOrderNV)gipa(instance, "vkCmdSetCoarseSampleOrderNV");
-    t->vkCreateAccelerationStructureNV = (PFN_vkCreateAccelerationStructureNV)(device ? gdpa(device, "vkCreateAccelerationStructureNV") : NULL);
-    if (!t->vkCreateAccelerationStructureNV)
-        t->vkCreateAccelerationStructureNV = (PFN_vkCreateAccelerationStructureNV)gipa(instance, "vkCreateAccelerationStructureNV");
-    t->vkDestroyAccelerationStructureNV = (PFN_vkDestroyAccelerationStructureNV)(device ? gdpa(device, "vkDestroyAccelerationStructureNV") : NULL);
-    if (!t->vkDestroyAccelerationStructureNV)
-        t->vkDestroyAccelerationStructureNV = (PFN_vkDestroyAccelerationStructureNV)gipa(instance, "vkDestroyAccelerationStructureNV");
-    t->vkGetAccelerationStructureMemoryRequirementsNV = (PFN_vkGetAccelerationStructureMemoryRequirementsNV)(device ? gdpa(device, "vkGetAccelerationStructureMemoryRequirementsNV") : NULL);
-    if (!t->vkGetAccelerationStructureMemoryRequirementsNV)
-        t->vkGetAccelerationStructureMemoryRequirementsNV = (PFN_vkGetAccelerationStructureMemoryRequirementsNV)gipa(instance, "vkGetAccelerationStructureMemoryRequirementsNV");
-    t->vkBindAccelerationStructureMemoryNV = (PFN_vkBindAccelerationStructureMemoryNV)(device ? gdpa(device, "vkBindAccelerationStructureMemoryNV") : NULL);
-    if (!t->vkBindAccelerationStructureMemoryNV)
-        t->vkBindAccelerationStructureMemoryNV = (PFN_vkBindAccelerationStructureMemoryNV)gipa(instance, "vkBindAccelerationStructureMemoryNV");
-    t->vkCmdBuildAccelerationStructureNV = (PFN_vkCmdBuildAccelerationStructureNV)(device ? gdpa(device, "vkCmdBuildAccelerationStructureNV") : NULL);
-    if (!t->vkCmdBuildAccelerationStructureNV)
-        t->vkCmdBuildAccelerationStructureNV = (PFN_vkCmdBuildAccelerationStructureNV)gipa(instance, "vkCmdBuildAccelerationStructureNV");
-    t->vkCmdCopyAccelerationStructureNV = (PFN_vkCmdCopyAccelerationStructureNV)(device ? gdpa(device, "vkCmdCopyAccelerationStructureNV") : NULL);
-    if (!t->vkCmdCopyAccelerationStructureNV)
-        t->vkCmdCopyAccelerationStructureNV = (PFN_vkCmdCopyAccelerationStructureNV)gipa(instance, "vkCmdCopyAccelerationStructureNV");
-    t->vkCmdTraceRaysNV = (PFN_vkCmdTraceRaysNV)(device ? gdpa(device, "vkCmdTraceRaysNV") : NULL);
-    if (!t->vkCmdTraceRaysNV)
-        t->vkCmdTraceRaysNV = (PFN_vkCmdTraceRaysNV)gipa(instance, "vkCmdTraceRaysNV");
-    t->vkCreateRayTracingPipelinesNV = (PFN_vkCreateRayTracingPipelinesNV)(device ? gdpa(device, "vkCreateRayTracingPipelinesNV") : NULL);
-    if (!t->vkCreateRayTracingPipelinesNV)
-        t->vkCreateRayTracingPipelinesNV = (PFN_vkCreateRayTracingPipelinesNV)gipa(instance, "vkCreateRayTracingPipelinesNV");
-    t->vkGetRayTracingShaderGroupHandlesNV = (PFN_vkGetRayTracingShaderGroupHandlesNV)(device ? gdpa(device, "vkGetRayTracingShaderGroupHandlesNV") : NULL);
-    if (!t->vkGetRayTracingShaderGroupHandlesNV)
-        t->vkGetRayTracingShaderGroupHandlesNV = (PFN_vkGetRayTracingShaderGroupHandlesNV)gipa(instance, "vkGetRayTracingShaderGroupHandlesNV");
-    t->vkGetAccelerationStructureHandleNV = (PFN_vkGetAccelerationStructureHandleNV)(device ? gdpa(device, "vkGetAccelerationStructureHandleNV") : NULL);
-    if (!t->vkGetAccelerationStructureHandleNV)
-        t->vkGetAccelerationStructureHandleNV = (PFN_vkGetAccelerationStructureHandleNV)gipa(instance, "vkGetAccelerationStructureHandleNV");
-    t->vkCmdWriteAccelerationStructuresPropertiesNV = (PFN_vkCmdWriteAccelerationStructuresPropertiesNV)(device ? gdpa(device, "vkCmdWriteAccelerationStructuresPropertiesNV") : NULL);
-    if (!t->vkCmdWriteAccelerationStructuresPropertiesNV)
-        t->vkCmdWriteAccelerationStructuresPropertiesNV = (PFN_vkCmdWriteAccelerationStructuresPropertiesNV)gipa(instance, "vkCmdWriteAccelerationStructuresPropertiesNV");
-    t->vkCompileDeferredNV = (PFN_vkCompileDeferredNV)(device ? gdpa(device, "vkCompileDeferredNV") : NULL);
-    if (!t->vkCompileDeferredNV)
-        t->vkCompileDeferredNV = (PFN_vkCompileDeferredNV)gipa(instance, "vkCompileDeferredNV");
-    t->vkGetDescriptorSetLayoutSupportKHR = (PFN_vkGetDescriptorSetLayoutSupportKHR)(device ? gdpa(device, "vkGetDescriptorSetLayoutSupportKHR") : NULL);
-    if (!t->vkGetDescriptorSetLayoutSupportKHR)
-        t->vkGetDescriptorSetLayoutSupportKHR = (PFN_vkGetDescriptorSetLayoutSupportKHR)gipa(instance, "vkGetDescriptorSetLayoutSupportKHR");
-    t->vkCmdDrawIndirectCountKHR = (PFN_vkCmdDrawIndirectCountKHR)(device ? gdpa(device, "vkCmdDrawIndirectCountKHR") : NULL);
-    if (!t->vkCmdDrawIndirectCountKHR)
-        t->vkCmdDrawIndirectCountKHR = (PFN_vkCmdDrawIndirectCountKHR)gipa(instance, "vkCmdDrawIndirectCountKHR");
-    t->vkCmdDrawIndexedIndirectCountKHR = (PFN_vkCmdDrawIndexedIndirectCountKHR)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCountKHR") : NULL);
-    if (!t->vkCmdDrawIndexedIndirectCountKHR)
-        t->vkCmdDrawIndexedIndirectCountKHR = (PFN_vkCmdDrawIndexedIndirectCountKHR)gipa(instance, "vkCmdDrawIndexedIndirectCountKHR");
-    t->vkCmdWriteBufferMarkerAMD = (PFN_vkCmdWriteBufferMarkerAMD)(device ? gdpa(device, "vkCmdWriteBufferMarkerAMD") : NULL);
-    if (!t->vkCmdWriteBufferMarkerAMD)
-        t->vkCmdWriteBufferMarkerAMD = (PFN_vkCmdWriteBufferMarkerAMD)gipa(instance, "vkCmdWriteBufferMarkerAMD");
-    t->vkCmdWriteBufferMarker2AMD = (PFN_vkCmdWriteBufferMarker2AMD)(device ? gdpa(device, "vkCmdWriteBufferMarker2AMD") : NULL);
-    if (!t->vkCmdWriteBufferMarker2AMD)
-        t->vkCmdWriteBufferMarker2AMD = (PFN_vkCmdWriteBufferMarker2AMD)gipa(instance, "vkCmdWriteBufferMarker2AMD");
+    t->vkGetImageMemoryRequirements2KHR = (PFN_vkGetImageMemoryRequirements2KHR)(device ? gdpa(device, "vkGetImageMemoryRequirements2KHR") : gipa(instance, "vkGetImageMemoryRequirements2KHR"));
+    t->vkGetBufferMemoryRequirements2KHR = (PFN_vkGetBufferMemoryRequirements2KHR)(device ? gdpa(device, "vkGetBufferMemoryRequirements2KHR") : gipa(instance, "vkGetBufferMemoryRequirements2KHR"));
+    t->vkGetImageSparseMemoryRequirements2KHR = (PFN_vkGetImageSparseMemoryRequirements2KHR)(device ? gdpa(device, "vkGetImageSparseMemoryRequirements2KHR") : gipa(instance, "vkGetImageSparseMemoryRequirements2KHR"));
+    t->vkCreateAccelerationStructureKHR = (PFN_vkCreateAccelerationStructureKHR)(device ? gdpa(device, "vkCreateAccelerationStructureKHR") : gipa(instance, "vkCreateAccelerationStructureKHR"));
+    t->vkDestroyAccelerationStructureKHR = (PFN_vkDestroyAccelerationStructureKHR)(device ? gdpa(device, "vkDestroyAccelerationStructureKHR") : gipa(instance, "vkDestroyAccelerationStructureKHR"));
+    t->vkCmdBuildAccelerationStructuresKHR = (PFN_vkCmdBuildAccelerationStructuresKHR)(device ? gdpa(device, "vkCmdBuildAccelerationStructuresKHR") : gipa(instance, "vkCmdBuildAccelerationStructuresKHR"));
+    t->vkCmdBuildAccelerationStructuresIndirectKHR = (PFN_vkCmdBuildAccelerationStructuresIndirectKHR)(device ? gdpa(device, "vkCmdBuildAccelerationStructuresIndirectKHR") : gipa(instance, "vkCmdBuildAccelerationStructuresIndirectKHR"));
+    t->vkBuildAccelerationStructuresKHR = (PFN_vkBuildAccelerationStructuresKHR)(device ? gdpa(device, "vkBuildAccelerationStructuresKHR") : gipa(instance, "vkBuildAccelerationStructuresKHR"));
+    t->vkCopyAccelerationStructureKHR = (PFN_vkCopyAccelerationStructureKHR)(device ? gdpa(device, "vkCopyAccelerationStructureKHR") : gipa(instance, "vkCopyAccelerationStructureKHR"));
+    t->vkCopyAccelerationStructureToMemoryKHR = (PFN_vkCopyAccelerationStructureToMemoryKHR)(device ? gdpa(device, "vkCopyAccelerationStructureToMemoryKHR") : gipa(instance, "vkCopyAccelerationStructureToMemoryKHR"));
+    t->vkCopyMemoryToAccelerationStructureKHR = (PFN_vkCopyMemoryToAccelerationStructureKHR)(device ? gdpa(device, "vkCopyMemoryToAccelerationStructureKHR") : gipa(instance, "vkCopyMemoryToAccelerationStructureKHR"));
+    t->vkWriteAccelerationStructuresPropertiesKHR = (PFN_vkWriteAccelerationStructuresPropertiesKHR)(device ? gdpa(device, "vkWriteAccelerationStructuresPropertiesKHR") : gipa(instance, "vkWriteAccelerationStructuresPropertiesKHR"));
+    t->vkCmdCopyAccelerationStructureKHR = (PFN_vkCmdCopyAccelerationStructureKHR)(device ? gdpa(device, "vkCmdCopyAccelerationStructureKHR") : gipa(instance, "vkCmdCopyAccelerationStructureKHR"));
+    t->vkCmdCopyAccelerationStructureToMemoryKHR = (PFN_vkCmdCopyAccelerationStructureToMemoryKHR)(device ? gdpa(device, "vkCmdCopyAccelerationStructureToMemoryKHR") : gipa(instance, "vkCmdCopyAccelerationStructureToMemoryKHR"));
+    t->vkCmdCopyMemoryToAccelerationStructureKHR = (PFN_vkCmdCopyMemoryToAccelerationStructureKHR)(device ? gdpa(device, "vkCmdCopyMemoryToAccelerationStructureKHR") : gipa(instance, "vkCmdCopyMemoryToAccelerationStructureKHR"));
+    t->vkGetAccelerationStructureDeviceAddressKHR = (PFN_vkGetAccelerationStructureDeviceAddressKHR)(device ? gdpa(device, "vkGetAccelerationStructureDeviceAddressKHR") : gipa(instance, "vkGetAccelerationStructureDeviceAddressKHR"));
+    t->vkCmdWriteAccelerationStructuresPropertiesKHR = (PFN_vkCmdWriteAccelerationStructuresPropertiesKHR)(device ? gdpa(device, "vkCmdWriteAccelerationStructuresPropertiesKHR") : gipa(instance, "vkCmdWriteAccelerationStructuresPropertiesKHR"));
+    t->vkGetDeviceAccelerationStructureCompatibilityKHR = (PFN_vkGetDeviceAccelerationStructureCompatibilityKHR)(device ? gdpa(device, "vkGetDeviceAccelerationStructureCompatibilityKHR") : gipa(instance, "vkGetDeviceAccelerationStructureCompatibilityKHR"));
+    t->vkGetAccelerationStructureBuildSizesKHR = (PFN_vkGetAccelerationStructureBuildSizesKHR)(device ? gdpa(device, "vkGetAccelerationStructureBuildSizesKHR") : gipa(instance, "vkGetAccelerationStructureBuildSizesKHR"));
+    t->vkCmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)(device ? gdpa(device, "vkCmdTraceRaysKHR") : gipa(instance, "vkCmdTraceRaysKHR"));
+    t->vkCreateRayTracingPipelinesKHR = (PFN_vkCreateRayTracingPipelinesKHR)(device ? gdpa(device, "vkCreateRayTracingPipelinesKHR") : gipa(instance, "vkCreateRayTracingPipelinesKHR"));
+    t->vkGetRayTracingShaderGroupHandlesKHR = (PFN_vkGetRayTracingShaderGroupHandlesKHR)(device ? gdpa(device, "vkGetRayTracingShaderGroupHandlesKHR") : gipa(instance, "vkGetRayTracingShaderGroupHandlesKHR"));
+    t->vkGetRayTracingCaptureReplayShaderGroupHandlesKHR = (PFN_vkGetRayTracingCaptureReplayShaderGroupHandlesKHR)(device ? gdpa(device, "vkGetRayTracingCaptureReplayShaderGroupHandlesKHR") : gipa(instance, "vkGetRayTracingCaptureReplayShaderGroupHandlesKHR"));
+    t->vkCmdTraceRaysIndirectKHR = (PFN_vkCmdTraceRaysIndirectKHR)(device ? gdpa(device, "vkCmdTraceRaysIndirectKHR") : gipa(instance, "vkCmdTraceRaysIndirectKHR"));
+    t->vkGetRayTracingShaderGroupStackSizeKHR = (PFN_vkGetRayTracingShaderGroupStackSizeKHR)(device ? gdpa(device, "vkGetRayTracingShaderGroupStackSizeKHR") : gipa(instance, "vkGetRayTracingShaderGroupStackSizeKHR"));
+    t->vkCmdSetRayTracingPipelineStackSizeKHR = (PFN_vkCmdSetRayTracingPipelineStackSizeKHR)(device ? gdpa(device, "vkCmdSetRayTracingPipelineStackSizeKHR") : gipa(instance, "vkCmdSetRayTracingPipelineStackSizeKHR"));
+    t->vkCreateSamplerYcbcrConversionKHR = (PFN_vkCreateSamplerYcbcrConversionKHR)(device ? gdpa(device, "vkCreateSamplerYcbcrConversionKHR") : gipa(instance, "vkCreateSamplerYcbcrConversionKHR"));
+    t->vkDestroySamplerYcbcrConversionKHR = (PFN_vkDestroySamplerYcbcrConversionKHR)(device ? gdpa(device, "vkDestroySamplerYcbcrConversionKHR") : gipa(instance, "vkDestroySamplerYcbcrConversionKHR"));
+    t->vkBindBufferMemory2KHR = (PFN_vkBindBufferMemory2KHR)(device ? gdpa(device, "vkBindBufferMemory2KHR") : gipa(instance, "vkBindBufferMemory2KHR"));
+    t->vkBindImageMemory2KHR = (PFN_vkBindImageMemory2KHR)(device ? gdpa(device, "vkBindImageMemory2KHR") : gipa(instance, "vkBindImageMemory2KHR"));
+    t->vkGetImageDrmFormatModifierPropertiesEXT = (PFN_vkGetImageDrmFormatModifierPropertiesEXT)(device ? gdpa(device, "vkGetImageDrmFormatModifierPropertiesEXT") : gipa(instance, "vkGetImageDrmFormatModifierPropertiesEXT"));
+    t->vkCreateValidationCacheEXT = (PFN_vkCreateValidationCacheEXT)(device ? gdpa(device, "vkCreateValidationCacheEXT") : gipa(instance, "vkCreateValidationCacheEXT"));
+    t->vkDestroyValidationCacheEXT = (PFN_vkDestroyValidationCacheEXT)(device ? gdpa(device, "vkDestroyValidationCacheEXT") : gipa(instance, "vkDestroyValidationCacheEXT"));
+    t->vkMergeValidationCachesEXT = (PFN_vkMergeValidationCachesEXT)(device ? gdpa(device, "vkMergeValidationCachesEXT") : gipa(instance, "vkMergeValidationCachesEXT"));
+    t->vkGetValidationCacheDataEXT = (PFN_vkGetValidationCacheDataEXT)(device ? gdpa(device, "vkGetValidationCacheDataEXT") : gipa(instance, "vkGetValidationCacheDataEXT"));
+    t->vkCmdBindShadingRateImageNV = (PFN_vkCmdBindShadingRateImageNV)(device ? gdpa(device, "vkCmdBindShadingRateImageNV") : gipa(instance, "vkCmdBindShadingRateImageNV"));
+    t->vkCmdSetViewportShadingRatePaletteNV = (PFN_vkCmdSetViewportShadingRatePaletteNV)(device ? gdpa(device, "vkCmdSetViewportShadingRatePaletteNV") : gipa(instance, "vkCmdSetViewportShadingRatePaletteNV"));
+    t->vkCmdSetCoarseSampleOrderNV = (PFN_vkCmdSetCoarseSampleOrderNV)(device ? gdpa(device, "vkCmdSetCoarseSampleOrderNV") : gipa(instance, "vkCmdSetCoarseSampleOrderNV"));
+    t->vkCreateAccelerationStructureNV = (PFN_vkCreateAccelerationStructureNV)(device ? gdpa(device, "vkCreateAccelerationStructureNV") : gipa(instance, "vkCreateAccelerationStructureNV"));
+    t->vkDestroyAccelerationStructureNV = (PFN_vkDestroyAccelerationStructureNV)(device ? gdpa(device, "vkDestroyAccelerationStructureNV") : gipa(instance, "vkDestroyAccelerationStructureNV"));
+    t->vkGetAccelerationStructureMemoryRequirementsNV = (PFN_vkGetAccelerationStructureMemoryRequirementsNV)(device ? gdpa(device, "vkGetAccelerationStructureMemoryRequirementsNV") : gipa(instance, "vkGetAccelerationStructureMemoryRequirementsNV"));
+    t->vkBindAccelerationStructureMemoryNV = (PFN_vkBindAccelerationStructureMemoryNV)(device ? gdpa(device, "vkBindAccelerationStructureMemoryNV") : gipa(instance, "vkBindAccelerationStructureMemoryNV"));
+    t->vkCmdBuildAccelerationStructureNV = (PFN_vkCmdBuildAccelerationStructureNV)(device ? gdpa(device, "vkCmdBuildAccelerationStructureNV") : gipa(instance, "vkCmdBuildAccelerationStructureNV"));
+    t->vkCmdCopyAccelerationStructureNV = (PFN_vkCmdCopyAccelerationStructureNV)(device ? gdpa(device, "vkCmdCopyAccelerationStructureNV") : gipa(instance, "vkCmdCopyAccelerationStructureNV"));
+    t->vkCmdTraceRaysNV = (PFN_vkCmdTraceRaysNV)(device ? gdpa(device, "vkCmdTraceRaysNV") : gipa(instance, "vkCmdTraceRaysNV"));
+    t->vkCreateRayTracingPipelinesNV = (PFN_vkCreateRayTracingPipelinesNV)(device ? gdpa(device, "vkCreateRayTracingPipelinesNV") : gipa(instance, "vkCreateRayTracingPipelinesNV"));
+    t->vkGetRayTracingShaderGroupHandlesNV = (PFN_vkGetRayTracingShaderGroupHandlesNV)(device ? gdpa(device, "vkGetRayTracingShaderGroupHandlesNV") : gipa(instance, "vkGetRayTracingShaderGroupHandlesNV"));
+    t->vkGetAccelerationStructureHandleNV = (PFN_vkGetAccelerationStructureHandleNV)(device ? gdpa(device, "vkGetAccelerationStructureHandleNV") : gipa(instance, "vkGetAccelerationStructureHandleNV"));
+    t->vkCmdWriteAccelerationStructuresPropertiesNV = (PFN_vkCmdWriteAccelerationStructuresPropertiesNV)(device ? gdpa(device, "vkCmdWriteAccelerationStructuresPropertiesNV") : gipa(instance, "vkCmdWriteAccelerationStructuresPropertiesNV"));
+    t->vkCompileDeferredNV = (PFN_vkCompileDeferredNV)(device ? gdpa(device, "vkCompileDeferredNV") : gipa(instance, "vkCompileDeferredNV"));
+    t->vkGetDescriptorSetLayoutSupportKHR = (PFN_vkGetDescriptorSetLayoutSupportKHR)(device ? gdpa(device, "vkGetDescriptorSetLayoutSupportKHR") : gipa(instance, "vkGetDescriptorSetLayoutSupportKHR"));
+    t->vkCmdDrawIndirectCountKHR = (PFN_vkCmdDrawIndirectCountKHR)(device ? gdpa(device, "vkCmdDrawIndirectCountKHR") : gipa(instance, "vkCmdDrawIndirectCountKHR"));
+    t->vkCmdDrawIndexedIndirectCountKHR = (PFN_vkCmdDrawIndexedIndirectCountKHR)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCountKHR") : gipa(instance, "vkCmdDrawIndexedIndirectCountKHR"));
+    t->vkCmdWriteBufferMarkerAMD = (PFN_vkCmdWriteBufferMarkerAMD)(device ? gdpa(device, "vkCmdWriteBufferMarkerAMD") : gipa(instance, "vkCmdWriteBufferMarkerAMD"));
+    t->vkCmdWriteBufferMarker2AMD = (PFN_vkCmdWriteBufferMarker2AMD)(device ? gdpa(device, "vkCmdWriteBufferMarker2AMD") : gipa(instance, "vkCmdWriteBufferMarker2AMD"));
     t->vkGetPhysicalDeviceCalibrateableTimeDomainsEXT = (PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT)gipa(instance, "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");
-    t->vkGetCalibratedTimestampsEXT = (PFN_vkGetCalibratedTimestampsEXT)(device ? gdpa(device, "vkGetCalibratedTimestampsEXT") : NULL);
-    if (!t->vkGetCalibratedTimestampsEXT)
-        t->vkGetCalibratedTimestampsEXT = (PFN_vkGetCalibratedTimestampsEXT)gipa(instance, "vkGetCalibratedTimestampsEXT");
-    t->vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)(device ? gdpa(device, "vkCmdDrawMeshTasksNV") : NULL);
-    if (!t->vkCmdDrawMeshTasksNV)
-        t->vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)gipa(instance, "vkCmdDrawMeshTasksNV");
-    t->vkCmdDrawMeshTasksIndirectNV = (PFN_vkCmdDrawMeshTasksIndirectNV)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectNV") : NULL);
-    if (!t->vkCmdDrawMeshTasksIndirectNV)
-        t->vkCmdDrawMeshTasksIndirectNV = (PFN_vkCmdDrawMeshTasksIndirectNV)gipa(instance, "vkCmdDrawMeshTasksIndirectNV");
-    t->vkCmdDrawMeshTasksIndirectCountNV = (PFN_vkCmdDrawMeshTasksIndirectCountNV)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectCountNV") : NULL);
-    if (!t->vkCmdDrawMeshTasksIndirectCountNV)
-        t->vkCmdDrawMeshTasksIndirectCountNV = (PFN_vkCmdDrawMeshTasksIndirectCountNV)gipa(instance, "vkCmdDrawMeshTasksIndirectCountNV");
-    t->vkCmdSetExclusiveScissorEnableNV = (PFN_vkCmdSetExclusiveScissorEnableNV)(device ? gdpa(device, "vkCmdSetExclusiveScissorEnableNV") : NULL);
-    if (!t->vkCmdSetExclusiveScissorEnableNV)
-        t->vkCmdSetExclusiveScissorEnableNV = (PFN_vkCmdSetExclusiveScissorEnableNV)gipa(instance, "vkCmdSetExclusiveScissorEnableNV");
-    t->vkCmdSetExclusiveScissorNV = (PFN_vkCmdSetExclusiveScissorNV)(device ? gdpa(device, "vkCmdSetExclusiveScissorNV") : NULL);
-    if (!t->vkCmdSetExclusiveScissorNV)
-        t->vkCmdSetExclusiveScissorNV = (PFN_vkCmdSetExclusiveScissorNV)gipa(instance, "vkCmdSetExclusiveScissorNV");
-    t->vkCmdSetCheckpointNV = (PFN_vkCmdSetCheckpointNV)(device ? gdpa(device, "vkCmdSetCheckpointNV") : NULL);
-    if (!t->vkCmdSetCheckpointNV)
-        t->vkCmdSetCheckpointNV = (PFN_vkCmdSetCheckpointNV)gipa(instance, "vkCmdSetCheckpointNV");
-    t->vkGetQueueCheckpointDataNV = (PFN_vkGetQueueCheckpointDataNV)(device ? gdpa(device, "vkGetQueueCheckpointDataNV") : NULL);
-    if (!t->vkGetQueueCheckpointDataNV)
-        t->vkGetQueueCheckpointDataNV = (PFN_vkGetQueueCheckpointDataNV)gipa(instance, "vkGetQueueCheckpointDataNV");
-    t->vkGetQueueCheckpointData2NV = (PFN_vkGetQueueCheckpointData2NV)(device ? gdpa(device, "vkGetQueueCheckpointData2NV") : NULL);
-    if (!t->vkGetQueueCheckpointData2NV)
-        t->vkGetQueueCheckpointData2NV = (PFN_vkGetQueueCheckpointData2NV)gipa(instance, "vkGetQueueCheckpointData2NV");
-    t->vkGetSemaphoreCounterValueKHR = (PFN_vkGetSemaphoreCounterValueKHR)(device ? gdpa(device, "vkGetSemaphoreCounterValueKHR") : NULL);
-    if (!t->vkGetSemaphoreCounterValueKHR)
-        t->vkGetSemaphoreCounterValueKHR = (PFN_vkGetSemaphoreCounterValueKHR)gipa(instance, "vkGetSemaphoreCounterValueKHR");
-    t->vkWaitSemaphoresKHR = (PFN_vkWaitSemaphoresKHR)(device ? gdpa(device, "vkWaitSemaphoresKHR") : NULL);
-    if (!t->vkWaitSemaphoresKHR)
-        t->vkWaitSemaphoresKHR = (PFN_vkWaitSemaphoresKHR)gipa(instance, "vkWaitSemaphoresKHR");
-    t->vkSignalSemaphoreKHR = (PFN_vkSignalSemaphoreKHR)(device ? gdpa(device, "vkSignalSemaphoreKHR") : NULL);
-    if (!t->vkSignalSemaphoreKHR)
-        t->vkSignalSemaphoreKHR = (PFN_vkSignalSemaphoreKHR)gipa(instance, "vkSignalSemaphoreKHR");
-    t->vkInitializePerformanceApiINTEL = (PFN_vkInitializePerformanceApiINTEL)(device ? gdpa(device, "vkInitializePerformanceApiINTEL") : NULL);
-    if (!t->vkInitializePerformanceApiINTEL)
-        t->vkInitializePerformanceApiINTEL = (PFN_vkInitializePerformanceApiINTEL)gipa(instance, "vkInitializePerformanceApiINTEL");
-    t->vkUninitializePerformanceApiINTEL = (PFN_vkUninitializePerformanceApiINTEL)(device ? gdpa(device, "vkUninitializePerformanceApiINTEL") : NULL);
-    if (!t->vkUninitializePerformanceApiINTEL)
-        t->vkUninitializePerformanceApiINTEL = (PFN_vkUninitializePerformanceApiINTEL)gipa(instance, "vkUninitializePerformanceApiINTEL");
-    t->vkCmdSetPerformanceMarkerINTEL = (PFN_vkCmdSetPerformanceMarkerINTEL)(device ? gdpa(device, "vkCmdSetPerformanceMarkerINTEL") : NULL);
-    if (!t->vkCmdSetPerformanceMarkerINTEL)
-        t->vkCmdSetPerformanceMarkerINTEL = (PFN_vkCmdSetPerformanceMarkerINTEL)gipa(instance, "vkCmdSetPerformanceMarkerINTEL");
-    t->vkCmdSetPerformanceStreamMarkerINTEL = (PFN_vkCmdSetPerformanceStreamMarkerINTEL)(device ? gdpa(device, "vkCmdSetPerformanceStreamMarkerINTEL") : NULL);
-    if (!t->vkCmdSetPerformanceStreamMarkerINTEL)
-        t->vkCmdSetPerformanceStreamMarkerINTEL = (PFN_vkCmdSetPerformanceStreamMarkerINTEL)gipa(instance, "vkCmdSetPerformanceStreamMarkerINTEL");
-    t->vkCmdSetPerformanceOverrideINTEL = (PFN_vkCmdSetPerformanceOverrideINTEL)(device ? gdpa(device, "vkCmdSetPerformanceOverrideINTEL") : NULL);
-    if (!t->vkCmdSetPerformanceOverrideINTEL)
-        t->vkCmdSetPerformanceOverrideINTEL = (PFN_vkCmdSetPerformanceOverrideINTEL)gipa(instance, "vkCmdSetPerformanceOverrideINTEL");
-    t->vkAcquirePerformanceConfigurationINTEL = (PFN_vkAcquirePerformanceConfigurationINTEL)(device ? gdpa(device, "vkAcquirePerformanceConfigurationINTEL") : NULL);
-    if (!t->vkAcquirePerformanceConfigurationINTEL)
-        t->vkAcquirePerformanceConfigurationINTEL = (PFN_vkAcquirePerformanceConfigurationINTEL)gipa(instance, "vkAcquirePerformanceConfigurationINTEL");
-    t->vkReleasePerformanceConfigurationINTEL = (PFN_vkReleasePerformanceConfigurationINTEL)(device ? gdpa(device, "vkReleasePerformanceConfigurationINTEL") : NULL);
-    if (!t->vkReleasePerformanceConfigurationINTEL)
-        t->vkReleasePerformanceConfigurationINTEL = (PFN_vkReleasePerformanceConfigurationINTEL)gipa(instance, "vkReleasePerformanceConfigurationINTEL");
-    t->vkQueueSetPerformanceConfigurationINTEL = (PFN_vkQueueSetPerformanceConfigurationINTEL)(device ? gdpa(device, "vkQueueSetPerformanceConfigurationINTEL") : NULL);
-    if (!t->vkQueueSetPerformanceConfigurationINTEL)
-        t->vkQueueSetPerformanceConfigurationINTEL = (PFN_vkQueueSetPerformanceConfigurationINTEL)gipa(instance, "vkQueueSetPerformanceConfigurationINTEL");
-    t->vkGetPerformanceParameterINTEL = (PFN_vkGetPerformanceParameterINTEL)(device ? gdpa(device, "vkGetPerformanceParameterINTEL") : NULL);
-    if (!t->vkGetPerformanceParameterINTEL)
-        t->vkGetPerformanceParameterINTEL = (PFN_vkGetPerformanceParameterINTEL)gipa(instance, "vkGetPerformanceParameterINTEL");
+    t->vkGetCalibratedTimestampsEXT = (PFN_vkGetCalibratedTimestampsEXT)(device ? gdpa(device, "vkGetCalibratedTimestampsEXT") : gipa(instance, "vkGetCalibratedTimestampsEXT"));
+    t->vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)(device ? gdpa(device, "vkCmdDrawMeshTasksNV") : gipa(instance, "vkCmdDrawMeshTasksNV"));
+    t->vkCmdDrawMeshTasksIndirectNV = (PFN_vkCmdDrawMeshTasksIndirectNV)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectNV") : gipa(instance, "vkCmdDrawMeshTasksIndirectNV"));
+    t->vkCmdDrawMeshTasksIndirectCountNV = (PFN_vkCmdDrawMeshTasksIndirectCountNV)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectCountNV") : gipa(instance, "vkCmdDrawMeshTasksIndirectCountNV"));
+    t->vkCmdSetExclusiveScissorEnableNV = (PFN_vkCmdSetExclusiveScissorEnableNV)(device ? gdpa(device, "vkCmdSetExclusiveScissorEnableNV") : gipa(instance, "vkCmdSetExclusiveScissorEnableNV"));
+    t->vkCmdSetExclusiveScissorNV = (PFN_vkCmdSetExclusiveScissorNV)(device ? gdpa(device, "vkCmdSetExclusiveScissorNV") : gipa(instance, "vkCmdSetExclusiveScissorNV"));
+    t->vkCmdSetCheckpointNV = (PFN_vkCmdSetCheckpointNV)(device ? gdpa(device, "vkCmdSetCheckpointNV") : gipa(instance, "vkCmdSetCheckpointNV"));
+    t->vkGetQueueCheckpointDataNV = (PFN_vkGetQueueCheckpointDataNV)(device ? gdpa(device, "vkGetQueueCheckpointDataNV") : gipa(instance, "vkGetQueueCheckpointDataNV"));
+    t->vkGetQueueCheckpointData2NV = (PFN_vkGetQueueCheckpointData2NV)(device ? gdpa(device, "vkGetQueueCheckpointData2NV") : gipa(instance, "vkGetQueueCheckpointData2NV"));
+    t->vkGetSemaphoreCounterValueKHR = (PFN_vkGetSemaphoreCounterValueKHR)(device ? gdpa(device, "vkGetSemaphoreCounterValueKHR") : gipa(instance, "vkGetSemaphoreCounterValueKHR"));
+    t->vkWaitSemaphoresKHR = (PFN_vkWaitSemaphoresKHR)(device ? gdpa(device, "vkWaitSemaphoresKHR") : gipa(instance, "vkWaitSemaphoresKHR"));
+    t->vkSignalSemaphoreKHR = (PFN_vkSignalSemaphoreKHR)(device ? gdpa(device, "vkSignalSemaphoreKHR") : gipa(instance, "vkSignalSemaphoreKHR"));
+    t->vkInitializePerformanceApiINTEL = (PFN_vkInitializePerformanceApiINTEL)(device ? gdpa(device, "vkInitializePerformanceApiINTEL") : gipa(instance, "vkInitializePerformanceApiINTEL"));
+    t->vkUninitializePerformanceApiINTEL = (PFN_vkUninitializePerformanceApiINTEL)(device ? gdpa(device, "vkUninitializePerformanceApiINTEL") : gipa(instance, "vkUninitializePerformanceApiINTEL"));
+    t->vkCmdSetPerformanceMarkerINTEL = (PFN_vkCmdSetPerformanceMarkerINTEL)(device ? gdpa(device, "vkCmdSetPerformanceMarkerINTEL") : gipa(instance, "vkCmdSetPerformanceMarkerINTEL"));
+    t->vkCmdSetPerformanceStreamMarkerINTEL = (PFN_vkCmdSetPerformanceStreamMarkerINTEL)(device ? gdpa(device, "vkCmdSetPerformanceStreamMarkerINTEL") : gipa(instance, "vkCmdSetPerformanceStreamMarkerINTEL"));
+    t->vkCmdSetPerformanceOverrideINTEL = (PFN_vkCmdSetPerformanceOverrideINTEL)(device ? gdpa(device, "vkCmdSetPerformanceOverrideINTEL") : gipa(instance, "vkCmdSetPerformanceOverrideINTEL"));
+    t->vkAcquirePerformanceConfigurationINTEL = (PFN_vkAcquirePerformanceConfigurationINTEL)(device ? gdpa(device, "vkAcquirePerformanceConfigurationINTEL") : gipa(instance, "vkAcquirePerformanceConfigurationINTEL"));
+    t->vkReleasePerformanceConfigurationINTEL = (PFN_vkReleasePerformanceConfigurationINTEL)(device ? gdpa(device, "vkReleasePerformanceConfigurationINTEL") : gipa(instance, "vkReleasePerformanceConfigurationINTEL"));
+    t->vkQueueSetPerformanceConfigurationINTEL = (PFN_vkQueueSetPerformanceConfigurationINTEL)(device ? gdpa(device, "vkQueueSetPerformanceConfigurationINTEL") : gipa(instance, "vkQueueSetPerformanceConfigurationINTEL"));
+    t->vkGetPerformanceParameterINTEL = (PFN_vkGetPerformanceParameterINTEL)(device ? gdpa(device, "vkGetPerformanceParameterINTEL") : gipa(instance, "vkGetPerformanceParameterINTEL"));
     t->vkGetPhysicalDeviceFragmentShadingRatesKHR = (PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR)gipa(instance, "vkGetPhysicalDeviceFragmentShadingRatesKHR");
-    t->vkCmdSetFragmentShadingRateKHR = (PFN_vkCmdSetFragmentShadingRateKHR)(device ? gdpa(device, "vkCmdSetFragmentShadingRateKHR") : NULL);
-    if (!t->vkCmdSetFragmentShadingRateKHR)
-        t->vkCmdSetFragmentShadingRateKHR = (PFN_vkCmdSetFragmentShadingRateKHR)gipa(instance, "vkCmdSetFragmentShadingRateKHR");
-    t->vkCmdSetRenderingAttachmentLocationsKHR = (PFN_vkCmdSetRenderingAttachmentLocationsKHR)(device ? gdpa(device, "vkCmdSetRenderingAttachmentLocationsKHR") : NULL);
-    if (!t->vkCmdSetRenderingAttachmentLocationsKHR)
-        t->vkCmdSetRenderingAttachmentLocationsKHR = (PFN_vkCmdSetRenderingAttachmentLocationsKHR)gipa(instance, "vkCmdSetRenderingAttachmentLocationsKHR");
-    t->vkCmdSetRenderingInputAttachmentIndicesKHR = (PFN_vkCmdSetRenderingInputAttachmentIndicesKHR)(device ? gdpa(device, "vkCmdSetRenderingInputAttachmentIndicesKHR") : NULL);
-    if (!t->vkCmdSetRenderingInputAttachmentIndicesKHR)
-        t->vkCmdSetRenderingInputAttachmentIndicesKHR = (PFN_vkCmdSetRenderingInputAttachmentIndicesKHR)gipa(instance, "vkCmdSetRenderingInputAttachmentIndicesKHR");
-    t->vkGetBufferDeviceAddressEXT = (PFN_vkGetBufferDeviceAddressEXT)(device ? gdpa(device, "vkGetBufferDeviceAddressEXT") : NULL);
-    if (!t->vkGetBufferDeviceAddressEXT)
-        t->vkGetBufferDeviceAddressEXT = (PFN_vkGetBufferDeviceAddressEXT)gipa(instance, "vkGetBufferDeviceAddressEXT");
+    t->vkCmdSetFragmentShadingRateKHR = (PFN_vkCmdSetFragmentShadingRateKHR)(device ? gdpa(device, "vkCmdSetFragmentShadingRateKHR") : gipa(instance, "vkCmdSetFragmentShadingRateKHR"));
+    t->vkCmdSetRenderingAttachmentLocationsKHR = (PFN_vkCmdSetRenderingAttachmentLocationsKHR)(device ? gdpa(device, "vkCmdSetRenderingAttachmentLocationsKHR") : gipa(instance, "vkCmdSetRenderingAttachmentLocationsKHR"));
+    t->vkCmdSetRenderingInputAttachmentIndicesKHR = (PFN_vkCmdSetRenderingInputAttachmentIndicesKHR)(device ? gdpa(device, "vkCmdSetRenderingInputAttachmentIndicesKHR") : gipa(instance, "vkCmdSetRenderingInputAttachmentIndicesKHR"));
+    t->vkGetBufferDeviceAddressEXT = (PFN_vkGetBufferDeviceAddressEXT)(device ? gdpa(device, "vkGetBufferDeviceAddressEXT") : gipa(instance, "vkGetBufferDeviceAddressEXT"));
     t->vkGetPhysicalDeviceToolPropertiesEXT = (PFN_vkGetPhysicalDeviceToolPropertiesEXT)gipa(instance, "vkGetPhysicalDeviceToolPropertiesEXT");
     t->vkGetPhysicalDeviceCooperativeMatrixPropertiesNV = (PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesNV)gipa(instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesNV");
     t->vkGetPhysicalDeviceSupportedFramebufferMixedSamplesCombinationsNV = (PFN_vkGetPhysicalDeviceSupportedFramebufferMixedSamplesCombinationsNV)gipa(instance, "vkGetPhysicalDeviceSupportedFramebufferMixedSamplesCombinationsNV");
-    t->vkGetBufferDeviceAddressKHR = (PFN_vkGetBufferDeviceAddressKHR)(device ? gdpa(device, "vkGetBufferDeviceAddressKHR") : NULL);
-    if (!t->vkGetBufferDeviceAddressKHR)
-        t->vkGetBufferDeviceAddressKHR = (PFN_vkGetBufferDeviceAddressKHR)gipa(instance, "vkGetBufferDeviceAddressKHR");
-    t->vkGetBufferOpaqueCaptureAddressKHR = (PFN_vkGetBufferOpaqueCaptureAddressKHR)(device ? gdpa(device, "vkGetBufferOpaqueCaptureAddressKHR") : NULL);
-    if (!t->vkGetBufferOpaqueCaptureAddressKHR)
-        t->vkGetBufferOpaqueCaptureAddressKHR = (PFN_vkGetBufferOpaqueCaptureAddressKHR)gipa(instance, "vkGetBufferOpaqueCaptureAddressKHR");
-    t->vkGetDeviceMemoryOpaqueCaptureAddressKHR = (PFN_vkGetDeviceMemoryOpaqueCaptureAddressKHR)(device ? gdpa(device, "vkGetDeviceMemoryOpaqueCaptureAddressKHR") : NULL);
-    if (!t->vkGetDeviceMemoryOpaqueCaptureAddressKHR)
-        t->vkGetDeviceMemoryOpaqueCaptureAddressKHR = (PFN_vkGetDeviceMemoryOpaqueCaptureAddressKHR)gipa(instance, "vkGetDeviceMemoryOpaqueCaptureAddressKHR");
-    t->vkCmdSetLineStippleEXT = (PFN_vkCmdSetLineStippleEXT)(device ? gdpa(device, "vkCmdSetLineStippleEXT") : NULL);
-    if (!t->vkCmdSetLineStippleEXT)
-        t->vkCmdSetLineStippleEXT = (PFN_vkCmdSetLineStippleEXT)gipa(instance, "vkCmdSetLineStippleEXT");
-    t->vkResetQueryPoolEXT = (PFN_vkResetQueryPoolEXT)(device ? gdpa(device, "vkResetQueryPoolEXT") : NULL);
-    if (!t->vkResetQueryPoolEXT)
-        t->vkResetQueryPoolEXT = (PFN_vkResetQueryPoolEXT)gipa(instance, "vkResetQueryPoolEXT");
-    t->vkCmdSetCullModeEXT = (PFN_vkCmdSetCullModeEXT)(device ? gdpa(device, "vkCmdSetCullModeEXT") : NULL);
-    if (!t->vkCmdSetCullModeEXT)
-        t->vkCmdSetCullModeEXT = (PFN_vkCmdSetCullModeEXT)gipa(instance, "vkCmdSetCullModeEXT");
-    t->vkCmdSetFrontFaceEXT = (PFN_vkCmdSetFrontFaceEXT)(device ? gdpa(device, "vkCmdSetFrontFaceEXT") : NULL);
-    if (!t->vkCmdSetFrontFaceEXT)
-        t->vkCmdSetFrontFaceEXT = (PFN_vkCmdSetFrontFaceEXT)gipa(instance, "vkCmdSetFrontFaceEXT");
-    t->vkCmdSetPrimitiveTopologyEXT = (PFN_vkCmdSetPrimitiveTopologyEXT)(device ? gdpa(device, "vkCmdSetPrimitiveTopologyEXT") : NULL);
-    if (!t->vkCmdSetPrimitiveTopologyEXT)
-        t->vkCmdSetPrimitiveTopologyEXT = (PFN_vkCmdSetPrimitiveTopologyEXT)gipa(instance, "vkCmdSetPrimitiveTopologyEXT");
-    t->vkCmdSetViewportWithCountEXT = (PFN_vkCmdSetViewportWithCountEXT)(device ? gdpa(device, "vkCmdSetViewportWithCountEXT") : NULL);
-    if (!t->vkCmdSetViewportWithCountEXT)
-        t->vkCmdSetViewportWithCountEXT = (PFN_vkCmdSetViewportWithCountEXT)gipa(instance, "vkCmdSetViewportWithCountEXT");
-    t->vkCmdSetScissorWithCountEXT = (PFN_vkCmdSetScissorWithCountEXT)(device ? gdpa(device, "vkCmdSetScissorWithCountEXT") : NULL);
-    if (!t->vkCmdSetScissorWithCountEXT)
-        t->vkCmdSetScissorWithCountEXT = (PFN_vkCmdSetScissorWithCountEXT)gipa(instance, "vkCmdSetScissorWithCountEXT");
-    t->vkCmdBindVertexBuffers2EXT = (PFN_vkCmdBindVertexBuffers2EXT)(device ? gdpa(device, "vkCmdBindVertexBuffers2EXT") : NULL);
-    if (!t->vkCmdBindVertexBuffers2EXT)
-        t->vkCmdBindVertexBuffers2EXT = (PFN_vkCmdBindVertexBuffers2EXT)gipa(instance, "vkCmdBindVertexBuffers2EXT");
-    t->vkCmdSetDepthTestEnableEXT = (PFN_vkCmdSetDepthTestEnableEXT)(device ? gdpa(device, "vkCmdSetDepthTestEnableEXT") : NULL);
-    if (!t->vkCmdSetDepthTestEnableEXT)
-        t->vkCmdSetDepthTestEnableEXT = (PFN_vkCmdSetDepthTestEnableEXT)gipa(instance, "vkCmdSetDepthTestEnableEXT");
-    t->vkCmdSetDepthWriteEnableEXT = (PFN_vkCmdSetDepthWriteEnableEXT)(device ? gdpa(device, "vkCmdSetDepthWriteEnableEXT") : NULL);
-    if (!t->vkCmdSetDepthWriteEnableEXT)
-        t->vkCmdSetDepthWriteEnableEXT = (PFN_vkCmdSetDepthWriteEnableEXT)gipa(instance, "vkCmdSetDepthWriteEnableEXT");
-    t->vkCmdSetDepthCompareOpEXT = (PFN_vkCmdSetDepthCompareOpEXT)(device ? gdpa(device, "vkCmdSetDepthCompareOpEXT") : NULL);
-    if (!t->vkCmdSetDepthCompareOpEXT)
-        t->vkCmdSetDepthCompareOpEXT = (PFN_vkCmdSetDepthCompareOpEXT)gipa(instance, "vkCmdSetDepthCompareOpEXT");
-    t->vkCmdSetDepthBoundsTestEnableEXT = (PFN_vkCmdSetDepthBoundsTestEnableEXT)(device ? gdpa(device, "vkCmdSetDepthBoundsTestEnableEXT") : NULL);
-    if (!t->vkCmdSetDepthBoundsTestEnableEXT)
-        t->vkCmdSetDepthBoundsTestEnableEXT = (PFN_vkCmdSetDepthBoundsTestEnableEXT)gipa(instance, "vkCmdSetDepthBoundsTestEnableEXT");
-    t->vkCmdSetStencilTestEnableEXT = (PFN_vkCmdSetStencilTestEnableEXT)(device ? gdpa(device, "vkCmdSetStencilTestEnableEXT") : NULL);
-    if (!t->vkCmdSetStencilTestEnableEXT)
-        t->vkCmdSetStencilTestEnableEXT = (PFN_vkCmdSetStencilTestEnableEXT)gipa(instance, "vkCmdSetStencilTestEnableEXT");
-    t->vkCmdSetStencilOpEXT = (PFN_vkCmdSetStencilOpEXT)(device ? gdpa(device, "vkCmdSetStencilOpEXT") : NULL);
-    if (!t->vkCmdSetStencilOpEXT)
-        t->vkCmdSetStencilOpEXT = (PFN_vkCmdSetStencilOpEXT)gipa(instance, "vkCmdSetStencilOpEXT");
-    t->vkCreateDeferredOperationKHR = (PFN_vkCreateDeferredOperationKHR)(device ? gdpa(device, "vkCreateDeferredOperationKHR") : NULL);
-    if (!t->vkCreateDeferredOperationKHR)
-        t->vkCreateDeferredOperationKHR = (PFN_vkCreateDeferredOperationKHR)gipa(instance, "vkCreateDeferredOperationKHR");
-    t->vkDestroyDeferredOperationKHR = (PFN_vkDestroyDeferredOperationKHR)(device ? gdpa(device, "vkDestroyDeferredOperationKHR") : NULL);
-    if (!t->vkDestroyDeferredOperationKHR)
-        t->vkDestroyDeferredOperationKHR = (PFN_vkDestroyDeferredOperationKHR)gipa(instance, "vkDestroyDeferredOperationKHR");
-    t->vkGetDeferredOperationMaxConcurrencyKHR = (PFN_vkGetDeferredOperationMaxConcurrencyKHR)(device ? gdpa(device, "vkGetDeferredOperationMaxConcurrencyKHR") : NULL);
-    if (!t->vkGetDeferredOperationMaxConcurrencyKHR)
-        t->vkGetDeferredOperationMaxConcurrencyKHR = (PFN_vkGetDeferredOperationMaxConcurrencyKHR)gipa(instance, "vkGetDeferredOperationMaxConcurrencyKHR");
-    t->vkGetDeferredOperationResultKHR = (PFN_vkGetDeferredOperationResultKHR)(device ? gdpa(device, "vkGetDeferredOperationResultKHR") : NULL);
-    if (!t->vkGetDeferredOperationResultKHR)
-        t->vkGetDeferredOperationResultKHR = (PFN_vkGetDeferredOperationResultKHR)gipa(instance, "vkGetDeferredOperationResultKHR");
-    t->vkDeferredOperationJoinKHR = (PFN_vkDeferredOperationJoinKHR)(device ? gdpa(device, "vkDeferredOperationJoinKHR") : NULL);
-    if (!t->vkDeferredOperationJoinKHR)
-        t->vkDeferredOperationJoinKHR = (PFN_vkDeferredOperationJoinKHR)gipa(instance, "vkDeferredOperationJoinKHR");
-    t->vkGetPipelineExecutablePropertiesKHR = (PFN_vkGetPipelineExecutablePropertiesKHR)(device ? gdpa(device, "vkGetPipelineExecutablePropertiesKHR") : NULL);
-    if (!t->vkGetPipelineExecutablePropertiesKHR)
-        t->vkGetPipelineExecutablePropertiesKHR = (PFN_vkGetPipelineExecutablePropertiesKHR)gipa(instance, "vkGetPipelineExecutablePropertiesKHR");
-    t->vkGetPipelineExecutableStatisticsKHR = (PFN_vkGetPipelineExecutableStatisticsKHR)(device ? gdpa(device, "vkGetPipelineExecutableStatisticsKHR") : NULL);
-    if (!t->vkGetPipelineExecutableStatisticsKHR)
-        t->vkGetPipelineExecutableStatisticsKHR = (PFN_vkGetPipelineExecutableStatisticsKHR)gipa(instance, "vkGetPipelineExecutableStatisticsKHR");
-    t->vkGetPipelineExecutableInternalRepresentationsKHR = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)(device ? gdpa(device, "vkGetPipelineExecutableInternalRepresentationsKHR") : NULL);
-    if (!t->vkGetPipelineExecutableInternalRepresentationsKHR)
-        t->vkGetPipelineExecutableInternalRepresentationsKHR = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)gipa(instance, "vkGetPipelineExecutableInternalRepresentationsKHR");
-    t->vkCopyMemoryToImageEXT = (PFN_vkCopyMemoryToImageEXT)(device ? gdpa(device, "vkCopyMemoryToImageEXT") : NULL);
-    if (!t->vkCopyMemoryToImageEXT)
-        t->vkCopyMemoryToImageEXT = (PFN_vkCopyMemoryToImageEXT)gipa(instance, "vkCopyMemoryToImageEXT");
-    t->vkCopyImageToMemoryEXT = (PFN_vkCopyImageToMemoryEXT)(device ? gdpa(device, "vkCopyImageToMemoryEXT") : NULL);
-    if (!t->vkCopyImageToMemoryEXT)
-        t->vkCopyImageToMemoryEXT = (PFN_vkCopyImageToMemoryEXT)gipa(instance, "vkCopyImageToMemoryEXT");
-    t->vkCopyImageToImageEXT = (PFN_vkCopyImageToImageEXT)(device ? gdpa(device, "vkCopyImageToImageEXT") : NULL);
-    if (!t->vkCopyImageToImageEXT)
-        t->vkCopyImageToImageEXT = (PFN_vkCopyImageToImageEXT)gipa(instance, "vkCopyImageToImageEXT");
-    t->vkTransitionImageLayoutEXT = (PFN_vkTransitionImageLayoutEXT)(device ? gdpa(device, "vkTransitionImageLayoutEXT") : NULL);
-    if (!t->vkTransitionImageLayoutEXT)
-        t->vkTransitionImageLayoutEXT = (PFN_vkTransitionImageLayoutEXT)gipa(instance, "vkTransitionImageLayoutEXT");
-    t->vkGetImageSubresourceLayout2EXT = (PFN_vkGetImageSubresourceLayout2EXT)(device ? gdpa(device, "vkGetImageSubresourceLayout2EXT") : NULL);
-    if (!t->vkGetImageSubresourceLayout2EXT)
-        t->vkGetImageSubresourceLayout2EXT = (PFN_vkGetImageSubresourceLayout2EXT)gipa(instance, "vkGetImageSubresourceLayout2EXT");
-    t->vkMapMemory2KHR = (PFN_vkMapMemory2KHR)(device ? gdpa(device, "vkMapMemory2KHR") : NULL);
-    if (!t->vkMapMemory2KHR)
-        t->vkMapMemory2KHR = (PFN_vkMapMemory2KHR)gipa(instance, "vkMapMemory2KHR");
-    t->vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)(device ? gdpa(device, "vkUnmapMemory2KHR") : NULL);
-    if (!t->vkUnmapMemory2KHR)
-        t->vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)gipa(instance, "vkUnmapMemory2KHR");
-    t->vkGetGeneratedCommandsMemoryRequirementsNV = (PFN_vkGetGeneratedCommandsMemoryRequirementsNV)(device ? gdpa(device, "vkGetGeneratedCommandsMemoryRequirementsNV") : NULL);
-    if (!t->vkGetGeneratedCommandsMemoryRequirementsNV)
-        t->vkGetGeneratedCommandsMemoryRequirementsNV = (PFN_vkGetGeneratedCommandsMemoryRequirementsNV)gipa(instance, "vkGetGeneratedCommandsMemoryRequirementsNV");
-    t->vkCmdPreprocessGeneratedCommandsNV = (PFN_vkCmdPreprocessGeneratedCommandsNV)(device ? gdpa(device, "vkCmdPreprocessGeneratedCommandsNV") : NULL);
-    if (!t->vkCmdPreprocessGeneratedCommandsNV)
-        t->vkCmdPreprocessGeneratedCommandsNV = (PFN_vkCmdPreprocessGeneratedCommandsNV)gipa(instance, "vkCmdPreprocessGeneratedCommandsNV");
-    t->vkCmdExecuteGeneratedCommandsNV = (PFN_vkCmdExecuteGeneratedCommandsNV)(device ? gdpa(device, "vkCmdExecuteGeneratedCommandsNV") : NULL);
-    if (!t->vkCmdExecuteGeneratedCommandsNV)
-        t->vkCmdExecuteGeneratedCommandsNV = (PFN_vkCmdExecuteGeneratedCommandsNV)gipa(instance, "vkCmdExecuteGeneratedCommandsNV");
-    t->vkCmdBindPipelineShaderGroupNV = (PFN_vkCmdBindPipelineShaderGroupNV)(device ? gdpa(device, "vkCmdBindPipelineShaderGroupNV") : NULL);
-    if (!t->vkCmdBindPipelineShaderGroupNV)
-        t->vkCmdBindPipelineShaderGroupNV = (PFN_vkCmdBindPipelineShaderGroupNV)gipa(instance, "vkCmdBindPipelineShaderGroupNV");
-    t->vkCreateIndirectCommandsLayoutNV = (PFN_vkCreateIndirectCommandsLayoutNV)(device ? gdpa(device, "vkCreateIndirectCommandsLayoutNV") : NULL);
-    if (!t->vkCreateIndirectCommandsLayoutNV)
-        t->vkCreateIndirectCommandsLayoutNV = (PFN_vkCreateIndirectCommandsLayoutNV)gipa(instance, "vkCreateIndirectCommandsLayoutNV");
-    t->vkDestroyIndirectCommandsLayoutNV = (PFN_vkDestroyIndirectCommandsLayoutNV)(device ? gdpa(device, "vkDestroyIndirectCommandsLayoutNV") : NULL);
-    if (!t->vkDestroyIndirectCommandsLayoutNV)
-        t->vkDestroyIndirectCommandsLayoutNV = (PFN_vkDestroyIndirectCommandsLayoutNV)gipa(instance, "vkDestroyIndirectCommandsLayoutNV");
-    t->vkCmdSetDepthBias2EXT = (PFN_vkCmdSetDepthBias2EXT)(device ? gdpa(device, "vkCmdSetDepthBias2EXT") : NULL);
-    if (!t->vkCmdSetDepthBias2EXT)
-        t->vkCmdSetDepthBias2EXT = (PFN_vkCmdSetDepthBias2EXT)gipa(instance, "vkCmdSetDepthBias2EXT");
-    t->vkCreatePrivateDataSlotEXT = (PFN_vkCreatePrivateDataSlotEXT)(device ? gdpa(device, "vkCreatePrivateDataSlotEXT") : NULL);
-    if (!t->vkCreatePrivateDataSlotEXT)
-        t->vkCreatePrivateDataSlotEXT = (PFN_vkCreatePrivateDataSlotEXT)gipa(instance, "vkCreatePrivateDataSlotEXT");
-    t->vkDestroyPrivateDataSlotEXT = (PFN_vkDestroyPrivateDataSlotEXT)(device ? gdpa(device, "vkDestroyPrivateDataSlotEXT") : NULL);
-    if (!t->vkDestroyPrivateDataSlotEXT)
-        t->vkDestroyPrivateDataSlotEXT = (PFN_vkDestroyPrivateDataSlotEXT)gipa(instance, "vkDestroyPrivateDataSlotEXT");
-    t->vkSetPrivateDataEXT = (PFN_vkSetPrivateDataEXT)(device ? gdpa(device, "vkSetPrivateDataEXT") : NULL);
-    if (!t->vkSetPrivateDataEXT)
-        t->vkSetPrivateDataEXT = (PFN_vkSetPrivateDataEXT)gipa(instance, "vkSetPrivateDataEXT");
-    t->vkGetPrivateDataEXT = (PFN_vkGetPrivateDataEXT)(device ? gdpa(device, "vkGetPrivateDataEXT") : NULL);
-    if (!t->vkGetPrivateDataEXT)
-        t->vkGetPrivateDataEXT = (PFN_vkGetPrivateDataEXT)gipa(instance, "vkGetPrivateDataEXT");
-    t->vkQueueSetPerfHintQCOM = (PFN_vkQueueSetPerfHintQCOM)(device ? gdpa(device, "vkQueueSetPerfHintQCOM") : NULL);
-    if (!t->vkQueueSetPerfHintQCOM)
-        t->vkQueueSetPerfHintQCOM = (PFN_vkQueueSetPerfHintQCOM)gipa(instance, "vkQueueSetPerfHintQCOM");
-    t->vkSetLatencySleepModeLegacyNV = (PFN_vkSetLatencySleepModeLegacyNV)(device ? gdpa(device, "vkSetLatencySleepModeLegacyNV") : NULL);
-    if (!t->vkSetLatencySleepModeLegacyNV)
-        t->vkSetLatencySleepModeLegacyNV = (PFN_vkSetLatencySleepModeLegacyNV)gipa(instance, "vkSetLatencySleepModeLegacyNV");
-    t->vkLatencySleepLegacyNV = (PFN_vkLatencySleepLegacyNV)(device ? gdpa(device, "vkLatencySleepLegacyNV") : NULL);
-    if (!t->vkLatencySleepLegacyNV)
-        t->vkLatencySleepLegacyNV = (PFN_vkLatencySleepLegacyNV)gipa(instance, "vkLatencySleepLegacyNV");
-    t->vkSetLatencyMarkerLegacyNV = (PFN_vkSetLatencyMarkerLegacyNV)(device ? gdpa(device, "vkSetLatencyMarkerLegacyNV") : NULL);
-    if (!t->vkSetLatencyMarkerLegacyNV)
-        t->vkSetLatencyMarkerLegacyNV = (PFN_vkSetLatencyMarkerLegacyNV)gipa(instance, "vkSetLatencyMarkerLegacyNV");
-    t->vkGetLatencyTimingsLegacyNV = (PFN_vkGetLatencyTimingsLegacyNV)(device ? gdpa(device, "vkGetLatencyTimingsLegacyNV") : NULL);
-    if (!t->vkGetLatencyTimingsLegacyNV)
-        t->vkGetLatencyTimingsLegacyNV = (PFN_vkGetLatencyTimingsLegacyNV)gipa(instance, "vkGetLatencyTimingsLegacyNV");
-    t->vkQueueNotifyOutOfBandLegacyNV = (PFN_vkQueueNotifyOutOfBandLegacyNV)(device ? gdpa(device, "vkQueueNotifyOutOfBandLegacyNV") : NULL);
-    if (!t->vkQueueNotifyOutOfBandLegacyNV)
-        t->vkQueueNotifyOutOfBandLegacyNV = (PFN_vkQueueNotifyOutOfBandLegacyNV)gipa(instance, "vkQueueNotifyOutOfBandLegacyNV");
-    t->vkGetSleepStatusLegacyNV = (PFN_vkGetSleepStatusLegacyNV)(device ? gdpa(device, "vkGetSleepStatusLegacyNV") : NULL);
-    if (!t->vkGetSleepStatusLegacyNV)
-        t->vkGetSleepStatusLegacyNV = (PFN_vkGetSleepStatusLegacyNV)gipa(instance, "vkGetSleepStatusLegacyNV");
-    t->vkShutdownLatencyDeviceLegacyNV = (PFN_vkShutdownLatencyDeviceLegacyNV)(device ? gdpa(device, "vkShutdownLatencyDeviceLegacyNV") : NULL);
-    if (!t->vkShutdownLatencyDeviceLegacyNV)
-        t->vkShutdownLatencyDeviceLegacyNV = (PFN_vkShutdownLatencyDeviceLegacyNV)gipa(instance, "vkShutdownLatencyDeviceLegacyNV");
-    t->vkCmdSetEvent2KHR = (PFN_vkCmdSetEvent2KHR)(device ? gdpa(device, "vkCmdSetEvent2KHR") : NULL);
-    if (!t->vkCmdSetEvent2KHR)
-        t->vkCmdSetEvent2KHR = (PFN_vkCmdSetEvent2KHR)gipa(instance, "vkCmdSetEvent2KHR");
-    t->vkCmdResetEvent2KHR = (PFN_vkCmdResetEvent2KHR)(device ? gdpa(device, "vkCmdResetEvent2KHR") : NULL);
-    if (!t->vkCmdResetEvent2KHR)
-        t->vkCmdResetEvent2KHR = (PFN_vkCmdResetEvent2KHR)gipa(instance, "vkCmdResetEvent2KHR");
-    t->vkCmdWaitEvents2KHR = (PFN_vkCmdWaitEvents2KHR)(device ? gdpa(device, "vkCmdWaitEvents2KHR") : NULL);
-    if (!t->vkCmdWaitEvents2KHR)
-        t->vkCmdWaitEvents2KHR = (PFN_vkCmdWaitEvents2KHR)gipa(instance, "vkCmdWaitEvents2KHR");
-    t->vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)(device ? gdpa(device, "vkCmdPipelineBarrier2KHR") : NULL);
-    if (!t->vkCmdPipelineBarrier2KHR)
-        t->vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)gipa(instance, "vkCmdPipelineBarrier2KHR");
-    t->vkCmdWriteTimestamp2KHR = (PFN_vkCmdWriteTimestamp2KHR)(device ? gdpa(device, "vkCmdWriteTimestamp2KHR") : NULL);
-    if (!t->vkCmdWriteTimestamp2KHR)
-        t->vkCmdWriteTimestamp2KHR = (PFN_vkCmdWriteTimestamp2KHR)gipa(instance, "vkCmdWriteTimestamp2KHR");
-    t->vkQueueSubmit2KHR = (PFN_vkQueueSubmit2KHR)(device ? gdpa(device, "vkQueueSubmit2KHR") : NULL);
-    if (!t->vkQueueSubmit2KHR)
-        t->vkQueueSubmit2KHR = (PFN_vkQueueSubmit2KHR)gipa(instance, "vkQueueSubmit2KHR");
-    t->vkGetDescriptorSetLayoutSizeEXT = (PFN_vkGetDescriptorSetLayoutSizeEXT)(device ? gdpa(device, "vkGetDescriptorSetLayoutSizeEXT") : NULL);
-    if (!t->vkGetDescriptorSetLayoutSizeEXT)
-        t->vkGetDescriptorSetLayoutSizeEXT = (PFN_vkGetDescriptorSetLayoutSizeEXT)gipa(instance, "vkGetDescriptorSetLayoutSizeEXT");
-    t->vkGetDescriptorSetLayoutBindingOffsetEXT = (PFN_vkGetDescriptorSetLayoutBindingOffsetEXT)(device ? gdpa(device, "vkGetDescriptorSetLayoutBindingOffsetEXT") : NULL);
-    if (!t->vkGetDescriptorSetLayoutBindingOffsetEXT)
-        t->vkGetDescriptorSetLayoutBindingOffsetEXT = (PFN_vkGetDescriptorSetLayoutBindingOffsetEXT)gipa(instance, "vkGetDescriptorSetLayoutBindingOffsetEXT");
-    t->vkGetDescriptorEXT = (PFN_vkGetDescriptorEXT)(device ? gdpa(device, "vkGetDescriptorEXT") : NULL);
-    if (!t->vkGetDescriptorEXT)
-        t->vkGetDescriptorEXT = (PFN_vkGetDescriptorEXT)gipa(instance, "vkGetDescriptorEXT");
-    t->vkCmdBindDescriptorBuffersEXT = (PFN_vkCmdBindDescriptorBuffersEXT)(device ? gdpa(device, "vkCmdBindDescriptorBuffersEXT") : NULL);
-    if (!t->vkCmdBindDescriptorBuffersEXT)
-        t->vkCmdBindDescriptorBuffersEXT = (PFN_vkCmdBindDescriptorBuffersEXT)gipa(instance, "vkCmdBindDescriptorBuffersEXT");
-    t->vkCmdSetDescriptorBufferOffsetsEXT = (PFN_vkCmdSetDescriptorBufferOffsetsEXT)(device ? gdpa(device, "vkCmdSetDescriptorBufferOffsetsEXT") : NULL);
-    if (!t->vkCmdSetDescriptorBufferOffsetsEXT)
-        t->vkCmdSetDescriptorBufferOffsetsEXT = (PFN_vkCmdSetDescriptorBufferOffsetsEXT)gipa(instance, "vkCmdSetDescriptorBufferOffsetsEXT");
-    t->vkCmdBindDescriptorBufferEmbeddedSamplersEXT = (PFN_vkCmdBindDescriptorBufferEmbeddedSamplersEXT)(device ? gdpa(device, "vkCmdBindDescriptorBufferEmbeddedSamplersEXT") : NULL);
-    if (!t->vkCmdBindDescriptorBufferEmbeddedSamplersEXT)
-        t->vkCmdBindDescriptorBufferEmbeddedSamplersEXT = (PFN_vkCmdBindDescriptorBufferEmbeddedSamplersEXT)gipa(instance, "vkCmdBindDescriptorBufferEmbeddedSamplersEXT");
-    t->vkGetBufferOpaqueCaptureDescriptorDataEXT = (PFN_vkGetBufferOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetBufferOpaqueCaptureDescriptorDataEXT") : NULL);
-    if (!t->vkGetBufferOpaqueCaptureDescriptorDataEXT)
-        t->vkGetBufferOpaqueCaptureDescriptorDataEXT = (PFN_vkGetBufferOpaqueCaptureDescriptorDataEXT)gipa(instance, "vkGetBufferOpaqueCaptureDescriptorDataEXT");
-    t->vkGetImageOpaqueCaptureDescriptorDataEXT = (PFN_vkGetImageOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetImageOpaqueCaptureDescriptorDataEXT") : NULL);
-    if (!t->vkGetImageOpaqueCaptureDescriptorDataEXT)
-        t->vkGetImageOpaqueCaptureDescriptorDataEXT = (PFN_vkGetImageOpaqueCaptureDescriptorDataEXT)gipa(instance, "vkGetImageOpaqueCaptureDescriptorDataEXT");
-    t->vkGetImageViewOpaqueCaptureDescriptorDataEXT = (PFN_vkGetImageViewOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetImageViewOpaqueCaptureDescriptorDataEXT") : NULL);
-    if (!t->vkGetImageViewOpaqueCaptureDescriptorDataEXT)
-        t->vkGetImageViewOpaqueCaptureDescriptorDataEXT = (PFN_vkGetImageViewOpaqueCaptureDescriptorDataEXT)gipa(instance, "vkGetImageViewOpaqueCaptureDescriptorDataEXT");
-    t->vkGetSamplerOpaqueCaptureDescriptorDataEXT = (PFN_vkGetSamplerOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetSamplerOpaqueCaptureDescriptorDataEXT") : NULL);
-    if (!t->vkGetSamplerOpaqueCaptureDescriptorDataEXT)
-        t->vkGetSamplerOpaqueCaptureDescriptorDataEXT = (PFN_vkGetSamplerOpaqueCaptureDescriptorDataEXT)gipa(instance, "vkGetSamplerOpaqueCaptureDescriptorDataEXT");
-    t->vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT = (PFN_vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT") : NULL);
-    if (!t->vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT)
-        t->vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT = (PFN_vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT)gipa(instance, "vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT");
-    t->vkCmdBindIndexBuffer3KHR = (PFN_vkCmdBindIndexBuffer3KHR)(device ? gdpa(device, "vkCmdBindIndexBuffer3KHR") : NULL);
-    if (!t->vkCmdBindIndexBuffer3KHR)
-        t->vkCmdBindIndexBuffer3KHR = (PFN_vkCmdBindIndexBuffer3KHR)gipa(instance, "vkCmdBindIndexBuffer3KHR");
-    t->vkCmdBindVertexBuffers3KHR = (PFN_vkCmdBindVertexBuffers3KHR)(device ? gdpa(device, "vkCmdBindVertexBuffers3KHR") : NULL);
-    if (!t->vkCmdBindVertexBuffers3KHR)
-        t->vkCmdBindVertexBuffers3KHR = (PFN_vkCmdBindVertexBuffers3KHR)gipa(instance, "vkCmdBindVertexBuffers3KHR");
-    t->vkCmdDrawIndirect2KHR = (PFN_vkCmdDrawIndirect2KHR)(device ? gdpa(device, "vkCmdDrawIndirect2KHR") : NULL);
-    if (!t->vkCmdDrawIndirect2KHR)
-        t->vkCmdDrawIndirect2KHR = (PFN_vkCmdDrawIndirect2KHR)gipa(instance, "vkCmdDrawIndirect2KHR");
-    t->vkCmdDrawIndexedIndirect2KHR = (PFN_vkCmdDrawIndexedIndirect2KHR)(device ? gdpa(device, "vkCmdDrawIndexedIndirect2KHR") : NULL);
-    if (!t->vkCmdDrawIndexedIndirect2KHR)
-        t->vkCmdDrawIndexedIndirect2KHR = (PFN_vkCmdDrawIndexedIndirect2KHR)gipa(instance, "vkCmdDrawIndexedIndirect2KHR");
-    t->vkCmdDispatchIndirect2KHR = (PFN_vkCmdDispatchIndirect2KHR)(device ? gdpa(device, "vkCmdDispatchIndirect2KHR") : NULL);
-    if (!t->vkCmdDispatchIndirect2KHR)
-        t->vkCmdDispatchIndirect2KHR = (PFN_vkCmdDispatchIndirect2KHR)gipa(instance, "vkCmdDispatchIndirect2KHR");
-    t->vkCmdCopyMemoryKHR = (PFN_vkCmdCopyMemoryKHR)(device ? gdpa(device, "vkCmdCopyMemoryKHR") : NULL);
-    if (!t->vkCmdCopyMemoryKHR)
-        t->vkCmdCopyMemoryKHR = (PFN_vkCmdCopyMemoryKHR)gipa(instance, "vkCmdCopyMemoryKHR");
-    t->vkCmdCopyMemoryToImageKHR = (PFN_vkCmdCopyMemoryToImageKHR)(device ? gdpa(device, "vkCmdCopyMemoryToImageKHR") : NULL);
-    if (!t->vkCmdCopyMemoryToImageKHR)
-        t->vkCmdCopyMemoryToImageKHR = (PFN_vkCmdCopyMemoryToImageKHR)gipa(instance, "vkCmdCopyMemoryToImageKHR");
-    t->vkCmdCopyImageToMemoryKHR = (PFN_vkCmdCopyImageToMemoryKHR)(device ? gdpa(device, "vkCmdCopyImageToMemoryKHR") : NULL);
-    if (!t->vkCmdCopyImageToMemoryKHR)
-        t->vkCmdCopyImageToMemoryKHR = (PFN_vkCmdCopyImageToMemoryKHR)gipa(instance, "vkCmdCopyImageToMemoryKHR");
-    t->vkCmdUpdateMemoryKHR = (PFN_vkCmdUpdateMemoryKHR)(device ? gdpa(device, "vkCmdUpdateMemoryKHR") : NULL);
-    if (!t->vkCmdUpdateMemoryKHR)
-        t->vkCmdUpdateMemoryKHR = (PFN_vkCmdUpdateMemoryKHR)gipa(instance, "vkCmdUpdateMemoryKHR");
-    t->vkCmdFillMemoryKHR = (PFN_vkCmdFillMemoryKHR)(device ? gdpa(device, "vkCmdFillMemoryKHR") : NULL);
-    if (!t->vkCmdFillMemoryKHR)
-        t->vkCmdFillMemoryKHR = (PFN_vkCmdFillMemoryKHR)gipa(instance, "vkCmdFillMemoryKHR");
-    t->vkCmdCopyQueryPoolResultsToMemoryKHR = (PFN_vkCmdCopyQueryPoolResultsToMemoryKHR)(device ? gdpa(device, "vkCmdCopyQueryPoolResultsToMemoryKHR") : NULL);
-    if (!t->vkCmdCopyQueryPoolResultsToMemoryKHR)
-        t->vkCmdCopyQueryPoolResultsToMemoryKHR = (PFN_vkCmdCopyQueryPoolResultsToMemoryKHR)gipa(instance, "vkCmdCopyQueryPoolResultsToMemoryKHR");
-    t->vkCmdDrawIndirectCount2KHR = (PFN_vkCmdDrawIndirectCount2KHR)(device ? gdpa(device, "vkCmdDrawIndirectCount2KHR") : NULL);
-    if (!t->vkCmdDrawIndirectCount2KHR)
-        t->vkCmdDrawIndirectCount2KHR = (PFN_vkCmdDrawIndirectCount2KHR)gipa(instance, "vkCmdDrawIndirectCount2KHR");
-    t->vkCmdDrawIndexedIndirectCount2KHR = (PFN_vkCmdDrawIndexedIndirectCount2KHR)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCount2KHR") : NULL);
-    if (!t->vkCmdDrawIndexedIndirectCount2KHR)
-        t->vkCmdDrawIndexedIndirectCount2KHR = (PFN_vkCmdDrawIndexedIndirectCount2KHR)gipa(instance, "vkCmdDrawIndexedIndirectCount2KHR");
-    t->vkCmdBeginConditionalRendering2EXT = (PFN_vkCmdBeginConditionalRendering2EXT)(device ? gdpa(device, "vkCmdBeginConditionalRendering2EXT") : NULL);
-    if (!t->vkCmdBeginConditionalRendering2EXT)
-        t->vkCmdBeginConditionalRendering2EXT = (PFN_vkCmdBeginConditionalRendering2EXT)gipa(instance, "vkCmdBeginConditionalRendering2EXT");
-    t->vkCmdBindTransformFeedbackBuffers2EXT = (PFN_vkCmdBindTransformFeedbackBuffers2EXT)(device ? gdpa(device, "vkCmdBindTransformFeedbackBuffers2EXT") : NULL);
-    if (!t->vkCmdBindTransformFeedbackBuffers2EXT)
-        t->vkCmdBindTransformFeedbackBuffers2EXT = (PFN_vkCmdBindTransformFeedbackBuffers2EXT)gipa(instance, "vkCmdBindTransformFeedbackBuffers2EXT");
-    t->vkCmdBeginTransformFeedback2EXT = (PFN_vkCmdBeginTransformFeedback2EXT)(device ? gdpa(device, "vkCmdBeginTransformFeedback2EXT") : NULL);
-    if (!t->vkCmdBeginTransformFeedback2EXT)
-        t->vkCmdBeginTransformFeedback2EXT = (PFN_vkCmdBeginTransformFeedback2EXT)gipa(instance, "vkCmdBeginTransformFeedback2EXT");
-    t->vkCmdEndTransformFeedback2EXT = (PFN_vkCmdEndTransformFeedback2EXT)(device ? gdpa(device, "vkCmdEndTransformFeedback2EXT") : NULL);
-    if (!t->vkCmdEndTransformFeedback2EXT)
-        t->vkCmdEndTransformFeedback2EXT = (PFN_vkCmdEndTransformFeedback2EXT)gipa(instance, "vkCmdEndTransformFeedback2EXT");
-    t->vkCmdDrawIndirectByteCount2EXT = (PFN_vkCmdDrawIndirectByteCount2EXT)(device ? gdpa(device, "vkCmdDrawIndirectByteCount2EXT") : NULL);
-    if (!t->vkCmdDrawIndirectByteCount2EXT)
-        t->vkCmdDrawIndirectByteCount2EXT = (PFN_vkCmdDrawIndirectByteCount2EXT)gipa(instance, "vkCmdDrawIndirectByteCount2EXT");
-    t->vkCmdDrawMeshTasksIndirect2EXT = (PFN_vkCmdDrawMeshTasksIndirect2EXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirect2EXT") : NULL);
-    if (!t->vkCmdDrawMeshTasksIndirect2EXT)
-        t->vkCmdDrawMeshTasksIndirect2EXT = (PFN_vkCmdDrawMeshTasksIndirect2EXT)gipa(instance, "vkCmdDrawMeshTasksIndirect2EXT");
-    t->vkCmdDrawMeshTasksIndirectCount2EXT = (PFN_vkCmdDrawMeshTasksIndirectCount2EXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectCount2EXT") : NULL);
-    if (!t->vkCmdDrawMeshTasksIndirectCount2EXT)
-        t->vkCmdDrawMeshTasksIndirectCount2EXT = (PFN_vkCmdDrawMeshTasksIndirectCount2EXT)gipa(instance, "vkCmdDrawMeshTasksIndirectCount2EXT");
-    t->vkCmdWriteMarkerToMemoryAMD = (PFN_vkCmdWriteMarkerToMemoryAMD)(device ? gdpa(device, "vkCmdWriteMarkerToMemoryAMD") : NULL);
-    if (!t->vkCmdWriteMarkerToMemoryAMD)
-        t->vkCmdWriteMarkerToMemoryAMD = (PFN_vkCmdWriteMarkerToMemoryAMD)gipa(instance, "vkCmdWriteMarkerToMemoryAMD");
-    t->vkCreateAccelerationStructure2KHR = (PFN_vkCreateAccelerationStructure2KHR)(device ? gdpa(device, "vkCreateAccelerationStructure2KHR") : NULL);
-    if (!t->vkCreateAccelerationStructure2KHR)
-        t->vkCreateAccelerationStructure2KHR = (PFN_vkCreateAccelerationStructure2KHR)gipa(instance, "vkCreateAccelerationStructure2KHR");
-    t->vkCmdSetFragmentShadingRateEnumNV = (PFN_vkCmdSetFragmentShadingRateEnumNV)(device ? gdpa(device, "vkCmdSetFragmentShadingRateEnumNV") : NULL);
-    if (!t->vkCmdSetFragmentShadingRateEnumNV)
-        t->vkCmdSetFragmentShadingRateEnumNV = (PFN_vkCmdSetFragmentShadingRateEnumNV)gipa(instance, "vkCmdSetFragmentShadingRateEnumNV");
-    t->vkCmdDrawMeshTasksEXT = (PFN_vkCmdDrawMeshTasksEXT)(device ? gdpa(device, "vkCmdDrawMeshTasksEXT") : NULL);
-    if (!t->vkCmdDrawMeshTasksEXT)
-        t->vkCmdDrawMeshTasksEXT = (PFN_vkCmdDrawMeshTasksEXT)gipa(instance, "vkCmdDrawMeshTasksEXT");
-    t->vkCmdDrawMeshTasksIndirectEXT = (PFN_vkCmdDrawMeshTasksIndirectEXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectEXT") : NULL);
-    if (!t->vkCmdDrawMeshTasksIndirectEXT)
-        t->vkCmdDrawMeshTasksIndirectEXT = (PFN_vkCmdDrawMeshTasksIndirectEXT)gipa(instance, "vkCmdDrawMeshTasksIndirectEXT");
-    t->vkCmdDrawMeshTasksIndirectCountEXT = (PFN_vkCmdDrawMeshTasksIndirectCountEXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectCountEXT") : NULL);
-    if (!t->vkCmdDrawMeshTasksIndirectCountEXT)
-        t->vkCmdDrawMeshTasksIndirectCountEXT = (PFN_vkCmdDrawMeshTasksIndirectCountEXT)gipa(instance, "vkCmdDrawMeshTasksIndirectCountEXT");
-    t->vkCmdCopyBuffer2KHR = (PFN_vkCmdCopyBuffer2KHR)(device ? gdpa(device, "vkCmdCopyBuffer2KHR") : NULL);
-    if (!t->vkCmdCopyBuffer2KHR)
-        t->vkCmdCopyBuffer2KHR = (PFN_vkCmdCopyBuffer2KHR)gipa(instance, "vkCmdCopyBuffer2KHR");
-    t->vkCmdCopyImage2KHR = (PFN_vkCmdCopyImage2KHR)(device ? gdpa(device, "vkCmdCopyImage2KHR") : NULL);
-    if (!t->vkCmdCopyImage2KHR)
-        t->vkCmdCopyImage2KHR = (PFN_vkCmdCopyImage2KHR)gipa(instance, "vkCmdCopyImage2KHR");
-    t->vkCmdCopyBufferToImage2KHR = (PFN_vkCmdCopyBufferToImage2KHR)(device ? gdpa(device, "vkCmdCopyBufferToImage2KHR") : NULL);
-    if (!t->vkCmdCopyBufferToImage2KHR)
-        t->vkCmdCopyBufferToImage2KHR = (PFN_vkCmdCopyBufferToImage2KHR)gipa(instance, "vkCmdCopyBufferToImage2KHR");
-    t->vkCmdCopyImageToBuffer2KHR = (PFN_vkCmdCopyImageToBuffer2KHR)(device ? gdpa(device, "vkCmdCopyImageToBuffer2KHR") : NULL);
-    if (!t->vkCmdCopyImageToBuffer2KHR)
-        t->vkCmdCopyImageToBuffer2KHR = (PFN_vkCmdCopyImageToBuffer2KHR)gipa(instance, "vkCmdCopyImageToBuffer2KHR");
-    t->vkCmdBlitImage2KHR = (PFN_vkCmdBlitImage2KHR)(device ? gdpa(device, "vkCmdBlitImage2KHR") : NULL);
-    if (!t->vkCmdBlitImage2KHR)
-        t->vkCmdBlitImage2KHR = (PFN_vkCmdBlitImage2KHR)gipa(instance, "vkCmdBlitImage2KHR");
-    t->vkCmdResolveImage2KHR = (PFN_vkCmdResolveImage2KHR)(device ? gdpa(device, "vkCmdResolveImage2KHR") : NULL);
-    if (!t->vkCmdResolveImage2KHR)
-        t->vkCmdResolveImage2KHR = (PFN_vkCmdResolveImage2KHR)gipa(instance, "vkCmdResolveImage2KHR");
-    t->vkGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)(device ? gdpa(device, "vkGetDeviceFaultInfoEXT") : NULL);
-    if (!t->vkGetDeviceFaultInfoEXT)
-        t->vkGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)gipa(instance, "vkGetDeviceFaultInfoEXT");
-    t->vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)(device ? gdpa(device, "vkCmdSetVertexInputEXT") : NULL);
-    if (!t->vkCmdSetVertexInputEXT)
-        t->vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)gipa(instance, "vkCmdSetVertexInputEXT");
-    t->vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI = (PFN_vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI)(device ? gdpa(device, "vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI") : NULL);
-    if (!t->vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI)
-        t->vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI = (PFN_vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI)gipa(instance, "vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI");
-    t->vkCmdSubpassShadingHUAWEI = (PFN_vkCmdSubpassShadingHUAWEI)(device ? gdpa(device, "vkCmdSubpassShadingHUAWEI") : NULL);
-    if (!t->vkCmdSubpassShadingHUAWEI)
-        t->vkCmdSubpassShadingHUAWEI = (PFN_vkCmdSubpassShadingHUAWEI)gipa(instance, "vkCmdSubpassShadingHUAWEI");
-    t->vkCmdBindInvocationMaskHUAWEI = (PFN_vkCmdBindInvocationMaskHUAWEI)(device ? gdpa(device, "vkCmdBindInvocationMaskHUAWEI") : NULL);
-    if (!t->vkCmdBindInvocationMaskHUAWEI)
-        t->vkCmdBindInvocationMaskHUAWEI = (PFN_vkCmdBindInvocationMaskHUAWEI)gipa(instance, "vkCmdBindInvocationMaskHUAWEI");
-    t->vkGetMemoryRemoteAddressNV = (PFN_vkGetMemoryRemoteAddressNV)(device ? gdpa(device, "vkGetMemoryRemoteAddressNV") : NULL);
-    if (!t->vkGetMemoryRemoteAddressNV)
-        t->vkGetMemoryRemoteAddressNV = (PFN_vkGetMemoryRemoteAddressNV)gipa(instance, "vkGetMemoryRemoteAddressNV");
-    t->vkGetPipelinePropertiesEXT = (PFN_vkGetPipelinePropertiesEXT)(device ? gdpa(device, "vkGetPipelinePropertiesEXT") : NULL);
-    if (!t->vkGetPipelinePropertiesEXT)
-        t->vkGetPipelinePropertiesEXT = (PFN_vkGetPipelinePropertiesEXT)gipa(instance, "vkGetPipelinePropertiesEXT");
-    t->vkCmdSetPatchControlPointsEXT = (PFN_vkCmdSetPatchControlPointsEXT)(device ? gdpa(device, "vkCmdSetPatchControlPointsEXT") : NULL);
-    if (!t->vkCmdSetPatchControlPointsEXT)
-        t->vkCmdSetPatchControlPointsEXT = (PFN_vkCmdSetPatchControlPointsEXT)gipa(instance, "vkCmdSetPatchControlPointsEXT");
-    t->vkCmdSetRasterizerDiscardEnableEXT = (PFN_vkCmdSetRasterizerDiscardEnableEXT)(device ? gdpa(device, "vkCmdSetRasterizerDiscardEnableEXT") : NULL);
-    if (!t->vkCmdSetRasterizerDiscardEnableEXT)
-        t->vkCmdSetRasterizerDiscardEnableEXT = (PFN_vkCmdSetRasterizerDiscardEnableEXT)gipa(instance, "vkCmdSetRasterizerDiscardEnableEXT");
-    t->vkCmdSetDepthBiasEnableEXT = (PFN_vkCmdSetDepthBiasEnableEXT)(device ? gdpa(device, "vkCmdSetDepthBiasEnableEXT") : NULL);
-    if (!t->vkCmdSetDepthBiasEnableEXT)
-        t->vkCmdSetDepthBiasEnableEXT = (PFN_vkCmdSetDepthBiasEnableEXT)gipa(instance, "vkCmdSetDepthBiasEnableEXT");
-    t->vkCmdSetLogicOpEXT = (PFN_vkCmdSetLogicOpEXT)(device ? gdpa(device, "vkCmdSetLogicOpEXT") : NULL);
-    if (!t->vkCmdSetLogicOpEXT)
-        t->vkCmdSetLogicOpEXT = (PFN_vkCmdSetLogicOpEXT)gipa(instance, "vkCmdSetLogicOpEXT");
-    t->vkCmdSetPrimitiveRestartEnableEXT = (PFN_vkCmdSetPrimitiveRestartEnableEXT)(device ? gdpa(device, "vkCmdSetPrimitiveRestartEnableEXT") : NULL);
-    if (!t->vkCmdSetPrimitiveRestartEnableEXT)
-        t->vkCmdSetPrimitiveRestartEnableEXT = (PFN_vkCmdSetPrimitiveRestartEnableEXT)gipa(instance, "vkCmdSetPrimitiveRestartEnableEXT");
-    t->vkCmdSetColorWriteEnableEXT = (PFN_vkCmdSetColorWriteEnableEXT)(device ? gdpa(device, "vkCmdSetColorWriteEnableEXT") : NULL);
-    if (!t->vkCmdSetColorWriteEnableEXT)
-        t->vkCmdSetColorWriteEnableEXT = (PFN_vkCmdSetColorWriteEnableEXT)gipa(instance, "vkCmdSetColorWriteEnableEXT");
-    t->vkCmdTraceRaysIndirect2KHR = (PFN_vkCmdTraceRaysIndirect2KHR)(device ? gdpa(device, "vkCmdTraceRaysIndirect2KHR") : NULL);
-    if (!t->vkCmdTraceRaysIndirect2KHR)
-        t->vkCmdTraceRaysIndirect2KHR = (PFN_vkCmdTraceRaysIndirect2KHR)gipa(instance, "vkCmdTraceRaysIndirect2KHR");
-    t->vkCmdDrawMultiEXT = (PFN_vkCmdDrawMultiEXT)(device ? gdpa(device, "vkCmdDrawMultiEXT") : NULL);
-    if (!t->vkCmdDrawMultiEXT)
-        t->vkCmdDrawMultiEXT = (PFN_vkCmdDrawMultiEXT)gipa(instance, "vkCmdDrawMultiEXT");
-    t->vkCmdDrawMultiIndexedEXT = (PFN_vkCmdDrawMultiIndexedEXT)(device ? gdpa(device, "vkCmdDrawMultiIndexedEXT") : NULL);
-    if (!t->vkCmdDrawMultiIndexedEXT)
-        t->vkCmdDrawMultiIndexedEXT = (PFN_vkCmdDrawMultiIndexedEXT)gipa(instance, "vkCmdDrawMultiIndexedEXT");
-    t->vkCreateMicromapEXT = (PFN_vkCreateMicromapEXT)(device ? gdpa(device, "vkCreateMicromapEXT") : NULL);
-    if (!t->vkCreateMicromapEXT)
-        t->vkCreateMicromapEXT = (PFN_vkCreateMicromapEXT)gipa(instance, "vkCreateMicromapEXT");
-    t->vkDestroyMicromapEXT = (PFN_vkDestroyMicromapEXT)(device ? gdpa(device, "vkDestroyMicromapEXT") : NULL);
-    if (!t->vkDestroyMicromapEXT)
-        t->vkDestroyMicromapEXT = (PFN_vkDestroyMicromapEXT)gipa(instance, "vkDestroyMicromapEXT");
-    t->vkCmdBuildMicromapsEXT = (PFN_vkCmdBuildMicromapsEXT)(device ? gdpa(device, "vkCmdBuildMicromapsEXT") : NULL);
-    if (!t->vkCmdBuildMicromapsEXT)
-        t->vkCmdBuildMicromapsEXT = (PFN_vkCmdBuildMicromapsEXT)gipa(instance, "vkCmdBuildMicromapsEXT");
-    t->vkBuildMicromapsEXT = (PFN_vkBuildMicromapsEXT)(device ? gdpa(device, "vkBuildMicromapsEXT") : NULL);
-    if (!t->vkBuildMicromapsEXT)
-        t->vkBuildMicromapsEXT = (PFN_vkBuildMicromapsEXT)gipa(instance, "vkBuildMicromapsEXT");
-    t->vkCopyMicromapEXT = (PFN_vkCopyMicromapEXT)(device ? gdpa(device, "vkCopyMicromapEXT") : NULL);
-    if (!t->vkCopyMicromapEXT)
-        t->vkCopyMicromapEXT = (PFN_vkCopyMicromapEXT)gipa(instance, "vkCopyMicromapEXT");
-    t->vkCopyMicromapToMemoryEXT = (PFN_vkCopyMicromapToMemoryEXT)(device ? gdpa(device, "vkCopyMicromapToMemoryEXT") : NULL);
-    if (!t->vkCopyMicromapToMemoryEXT)
-        t->vkCopyMicromapToMemoryEXT = (PFN_vkCopyMicromapToMemoryEXT)gipa(instance, "vkCopyMicromapToMemoryEXT");
-    t->vkCopyMemoryToMicromapEXT = (PFN_vkCopyMemoryToMicromapEXT)(device ? gdpa(device, "vkCopyMemoryToMicromapEXT") : NULL);
-    if (!t->vkCopyMemoryToMicromapEXT)
-        t->vkCopyMemoryToMicromapEXT = (PFN_vkCopyMemoryToMicromapEXT)gipa(instance, "vkCopyMemoryToMicromapEXT");
-    t->vkWriteMicromapsPropertiesEXT = (PFN_vkWriteMicromapsPropertiesEXT)(device ? gdpa(device, "vkWriteMicromapsPropertiesEXT") : NULL);
-    if (!t->vkWriteMicromapsPropertiesEXT)
-        t->vkWriteMicromapsPropertiesEXT = (PFN_vkWriteMicromapsPropertiesEXT)gipa(instance, "vkWriteMicromapsPropertiesEXT");
-    t->vkCmdCopyMicromapEXT = (PFN_vkCmdCopyMicromapEXT)(device ? gdpa(device, "vkCmdCopyMicromapEXT") : NULL);
-    if (!t->vkCmdCopyMicromapEXT)
-        t->vkCmdCopyMicromapEXT = (PFN_vkCmdCopyMicromapEXT)gipa(instance, "vkCmdCopyMicromapEXT");
-    t->vkCmdCopyMicromapToMemoryEXT = (PFN_vkCmdCopyMicromapToMemoryEXT)(device ? gdpa(device, "vkCmdCopyMicromapToMemoryEXT") : NULL);
-    if (!t->vkCmdCopyMicromapToMemoryEXT)
-        t->vkCmdCopyMicromapToMemoryEXT = (PFN_vkCmdCopyMicromapToMemoryEXT)gipa(instance, "vkCmdCopyMicromapToMemoryEXT");
-    t->vkCmdCopyMemoryToMicromapEXT = (PFN_vkCmdCopyMemoryToMicromapEXT)(device ? gdpa(device, "vkCmdCopyMemoryToMicromapEXT") : NULL);
-    if (!t->vkCmdCopyMemoryToMicromapEXT)
-        t->vkCmdCopyMemoryToMicromapEXT = (PFN_vkCmdCopyMemoryToMicromapEXT)gipa(instance, "vkCmdCopyMemoryToMicromapEXT");
-    t->vkCmdWriteMicromapsPropertiesEXT = (PFN_vkCmdWriteMicromapsPropertiesEXT)(device ? gdpa(device, "vkCmdWriteMicromapsPropertiesEXT") : NULL);
-    if (!t->vkCmdWriteMicromapsPropertiesEXT)
-        t->vkCmdWriteMicromapsPropertiesEXT = (PFN_vkCmdWriteMicromapsPropertiesEXT)gipa(instance, "vkCmdWriteMicromapsPropertiesEXT");
-    t->vkGetDeviceMicromapCompatibilityEXT = (PFN_vkGetDeviceMicromapCompatibilityEXT)(device ? gdpa(device, "vkGetDeviceMicromapCompatibilityEXT") : NULL);
-    if (!t->vkGetDeviceMicromapCompatibilityEXT)
-        t->vkGetDeviceMicromapCompatibilityEXT = (PFN_vkGetDeviceMicromapCompatibilityEXT)gipa(instance, "vkGetDeviceMicromapCompatibilityEXT");
-    t->vkGetMicromapBuildSizesEXT = (PFN_vkGetMicromapBuildSizesEXT)(device ? gdpa(device, "vkGetMicromapBuildSizesEXT") : NULL);
-    if (!t->vkGetMicromapBuildSizesEXT)
-        t->vkGetMicromapBuildSizesEXT = (PFN_vkGetMicromapBuildSizesEXT)gipa(instance, "vkGetMicromapBuildSizesEXT");
-    t->vkCmdDrawClusterHUAWEI = (PFN_vkCmdDrawClusterHUAWEI)(device ? gdpa(device, "vkCmdDrawClusterHUAWEI") : NULL);
-    if (!t->vkCmdDrawClusterHUAWEI)
-        t->vkCmdDrawClusterHUAWEI = (PFN_vkCmdDrawClusterHUAWEI)gipa(instance, "vkCmdDrawClusterHUAWEI");
-    t->vkCmdDrawClusterIndirectHUAWEI = (PFN_vkCmdDrawClusterIndirectHUAWEI)(device ? gdpa(device, "vkCmdDrawClusterIndirectHUAWEI") : NULL);
-    if (!t->vkCmdDrawClusterIndirectHUAWEI)
-        t->vkCmdDrawClusterIndirectHUAWEI = (PFN_vkCmdDrawClusterIndirectHUAWEI)gipa(instance, "vkCmdDrawClusterIndirectHUAWEI");
-    t->vkSetDeviceMemoryPriorityEXT = (PFN_vkSetDeviceMemoryPriorityEXT)(device ? gdpa(device, "vkSetDeviceMemoryPriorityEXT") : NULL);
-    if (!t->vkSetDeviceMemoryPriorityEXT)
-        t->vkSetDeviceMemoryPriorityEXT = (PFN_vkSetDeviceMemoryPriorityEXT)gipa(instance, "vkSetDeviceMemoryPriorityEXT");
-    t->vkGetDeviceBufferMemoryRequirementsKHR = (PFN_vkGetDeviceBufferMemoryRequirementsKHR)(device ? gdpa(device, "vkGetDeviceBufferMemoryRequirementsKHR") : NULL);
-    if (!t->vkGetDeviceBufferMemoryRequirementsKHR)
-        t->vkGetDeviceBufferMemoryRequirementsKHR = (PFN_vkGetDeviceBufferMemoryRequirementsKHR)gipa(instance, "vkGetDeviceBufferMemoryRequirementsKHR");
-    t->vkGetDeviceImageMemoryRequirementsKHR = (PFN_vkGetDeviceImageMemoryRequirementsKHR)(device ? gdpa(device, "vkGetDeviceImageMemoryRequirementsKHR") : NULL);
-    if (!t->vkGetDeviceImageMemoryRequirementsKHR)
-        t->vkGetDeviceImageMemoryRequirementsKHR = (PFN_vkGetDeviceImageMemoryRequirementsKHR)gipa(instance, "vkGetDeviceImageMemoryRequirementsKHR");
-    t->vkGetDeviceImageSparseMemoryRequirementsKHR = (PFN_vkGetDeviceImageSparseMemoryRequirementsKHR)(device ? gdpa(device, "vkGetDeviceImageSparseMemoryRequirementsKHR") : NULL);
-    if (!t->vkGetDeviceImageSparseMemoryRequirementsKHR)
-        t->vkGetDeviceImageSparseMemoryRequirementsKHR = (PFN_vkGetDeviceImageSparseMemoryRequirementsKHR)gipa(instance, "vkGetDeviceImageSparseMemoryRequirementsKHR");
-    t->vkCmdSetDispatchParametersARM = (PFN_vkCmdSetDispatchParametersARM)(device ? gdpa(device, "vkCmdSetDispatchParametersARM") : NULL);
-    if (!t->vkCmdSetDispatchParametersARM)
-        t->vkCmdSetDispatchParametersARM = (PFN_vkCmdSetDispatchParametersARM)gipa(instance, "vkCmdSetDispatchParametersARM");
-    t->vkGetDescriptorSetLayoutHostMappingInfoVALVE = (PFN_vkGetDescriptorSetLayoutHostMappingInfoVALVE)(device ? gdpa(device, "vkGetDescriptorSetLayoutHostMappingInfoVALVE") : NULL);
-    if (!t->vkGetDescriptorSetLayoutHostMappingInfoVALVE)
-        t->vkGetDescriptorSetLayoutHostMappingInfoVALVE = (PFN_vkGetDescriptorSetLayoutHostMappingInfoVALVE)gipa(instance, "vkGetDescriptorSetLayoutHostMappingInfoVALVE");
-    t->vkGetDescriptorSetHostMappingVALVE = (PFN_vkGetDescriptorSetHostMappingVALVE)(device ? gdpa(device, "vkGetDescriptorSetHostMappingVALVE") : NULL);
-    if (!t->vkGetDescriptorSetHostMappingVALVE)
-        t->vkGetDescriptorSetHostMappingVALVE = (PFN_vkGetDescriptorSetHostMappingVALVE)gipa(instance, "vkGetDescriptorSetHostMappingVALVE");
-    t->vkCmdCopyMemoryIndirectNV = (PFN_vkCmdCopyMemoryIndirectNV)(device ? gdpa(device, "vkCmdCopyMemoryIndirectNV") : NULL);
-    if (!t->vkCmdCopyMemoryIndirectNV)
-        t->vkCmdCopyMemoryIndirectNV = (PFN_vkCmdCopyMemoryIndirectNV)gipa(instance, "vkCmdCopyMemoryIndirectNV");
-    t->vkCmdCopyMemoryToImageIndirectNV = (PFN_vkCmdCopyMemoryToImageIndirectNV)(device ? gdpa(device, "vkCmdCopyMemoryToImageIndirectNV") : NULL);
-    if (!t->vkCmdCopyMemoryToImageIndirectNV)
-        t->vkCmdCopyMemoryToImageIndirectNV = (PFN_vkCmdCopyMemoryToImageIndirectNV)gipa(instance, "vkCmdCopyMemoryToImageIndirectNV");
-    t->vkCmdDecompressMemoryNV = (PFN_vkCmdDecompressMemoryNV)(device ? gdpa(device, "vkCmdDecompressMemoryNV") : NULL);
-    if (!t->vkCmdDecompressMemoryNV)
-        t->vkCmdDecompressMemoryNV = (PFN_vkCmdDecompressMemoryNV)gipa(instance, "vkCmdDecompressMemoryNV");
-    t->vkCmdDecompressMemoryIndirectCountNV = (PFN_vkCmdDecompressMemoryIndirectCountNV)(device ? gdpa(device, "vkCmdDecompressMemoryIndirectCountNV") : NULL);
-    if (!t->vkCmdDecompressMemoryIndirectCountNV)
-        t->vkCmdDecompressMemoryIndirectCountNV = (PFN_vkCmdDecompressMemoryIndirectCountNV)gipa(instance, "vkCmdDecompressMemoryIndirectCountNV");
-    t->vkGetPipelineIndirectMemoryRequirementsNV = (PFN_vkGetPipelineIndirectMemoryRequirementsNV)(device ? gdpa(device, "vkGetPipelineIndirectMemoryRequirementsNV") : NULL);
-    if (!t->vkGetPipelineIndirectMemoryRequirementsNV)
-        t->vkGetPipelineIndirectMemoryRequirementsNV = (PFN_vkGetPipelineIndirectMemoryRequirementsNV)gipa(instance, "vkGetPipelineIndirectMemoryRequirementsNV");
-    t->vkCmdUpdatePipelineIndirectBufferNV = (PFN_vkCmdUpdatePipelineIndirectBufferNV)(device ? gdpa(device, "vkCmdUpdatePipelineIndirectBufferNV") : NULL);
-    if (!t->vkCmdUpdatePipelineIndirectBufferNV)
-        t->vkCmdUpdatePipelineIndirectBufferNV = (PFN_vkCmdUpdatePipelineIndirectBufferNV)gipa(instance, "vkCmdUpdatePipelineIndirectBufferNV");
-    t->vkGetPipelineIndirectDeviceAddressNV = (PFN_vkGetPipelineIndirectDeviceAddressNV)(device ? gdpa(device, "vkGetPipelineIndirectDeviceAddressNV") : NULL);
-    if (!t->vkGetPipelineIndirectDeviceAddressNV)
-        t->vkGetPipelineIndirectDeviceAddressNV = (PFN_vkGetPipelineIndirectDeviceAddressNV)gipa(instance, "vkGetPipelineIndirectDeviceAddressNV");
-    t->vkCmdSetDepthClampEnableEXT = (PFN_vkCmdSetDepthClampEnableEXT)(device ? gdpa(device, "vkCmdSetDepthClampEnableEXT") : NULL);
-    if (!t->vkCmdSetDepthClampEnableEXT)
-        t->vkCmdSetDepthClampEnableEXT = (PFN_vkCmdSetDepthClampEnableEXT)gipa(instance, "vkCmdSetDepthClampEnableEXT");
-    t->vkCmdSetPolygonModeEXT = (PFN_vkCmdSetPolygonModeEXT)(device ? gdpa(device, "vkCmdSetPolygonModeEXT") : NULL);
-    if (!t->vkCmdSetPolygonModeEXT)
-        t->vkCmdSetPolygonModeEXT = (PFN_vkCmdSetPolygonModeEXT)gipa(instance, "vkCmdSetPolygonModeEXT");
-    t->vkCmdSetRasterizationSamplesEXT = (PFN_vkCmdSetRasterizationSamplesEXT)(device ? gdpa(device, "vkCmdSetRasterizationSamplesEXT") : NULL);
-    if (!t->vkCmdSetRasterizationSamplesEXT)
-        t->vkCmdSetRasterizationSamplesEXT = (PFN_vkCmdSetRasterizationSamplesEXT)gipa(instance, "vkCmdSetRasterizationSamplesEXT");
-    t->vkCmdSetSampleMaskEXT = (PFN_vkCmdSetSampleMaskEXT)(device ? gdpa(device, "vkCmdSetSampleMaskEXT") : NULL);
-    if (!t->vkCmdSetSampleMaskEXT)
-        t->vkCmdSetSampleMaskEXT = (PFN_vkCmdSetSampleMaskEXT)gipa(instance, "vkCmdSetSampleMaskEXT");
-    t->vkCmdSetAlphaToCoverageEnableEXT = (PFN_vkCmdSetAlphaToCoverageEnableEXT)(device ? gdpa(device, "vkCmdSetAlphaToCoverageEnableEXT") : NULL);
-    if (!t->vkCmdSetAlphaToCoverageEnableEXT)
-        t->vkCmdSetAlphaToCoverageEnableEXT = (PFN_vkCmdSetAlphaToCoverageEnableEXT)gipa(instance, "vkCmdSetAlphaToCoverageEnableEXT");
-    t->vkCmdSetAlphaToOneEnableEXT = (PFN_vkCmdSetAlphaToOneEnableEXT)(device ? gdpa(device, "vkCmdSetAlphaToOneEnableEXT") : NULL);
-    if (!t->vkCmdSetAlphaToOneEnableEXT)
-        t->vkCmdSetAlphaToOneEnableEXT = (PFN_vkCmdSetAlphaToOneEnableEXT)gipa(instance, "vkCmdSetAlphaToOneEnableEXT");
-    t->vkCmdSetLogicOpEnableEXT = (PFN_vkCmdSetLogicOpEnableEXT)(device ? gdpa(device, "vkCmdSetLogicOpEnableEXT") : NULL);
-    if (!t->vkCmdSetLogicOpEnableEXT)
-        t->vkCmdSetLogicOpEnableEXT = (PFN_vkCmdSetLogicOpEnableEXT)gipa(instance, "vkCmdSetLogicOpEnableEXT");
-    t->vkCmdSetColorBlendEnableEXT = (PFN_vkCmdSetColorBlendEnableEXT)(device ? gdpa(device, "vkCmdSetColorBlendEnableEXT") : NULL);
-    if (!t->vkCmdSetColorBlendEnableEXT)
-        t->vkCmdSetColorBlendEnableEXT = (PFN_vkCmdSetColorBlendEnableEXT)gipa(instance, "vkCmdSetColorBlendEnableEXT");
-    t->vkCmdSetColorBlendEquationEXT = (PFN_vkCmdSetColorBlendEquationEXT)(device ? gdpa(device, "vkCmdSetColorBlendEquationEXT") : NULL);
-    if (!t->vkCmdSetColorBlendEquationEXT)
-        t->vkCmdSetColorBlendEquationEXT = (PFN_vkCmdSetColorBlendEquationEXT)gipa(instance, "vkCmdSetColorBlendEquationEXT");
-    t->vkCmdSetColorWriteMaskEXT = (PFN_vkCmdSetColorWriteMaskEXT)(device ? gdpa(device, "vkCmdSetColorWriteMaskEXT") : NULL);
-    if (!t->vkCmdSetColorWriteMaskEXT)
-        t->vkCmdSetColorWriteMaskEXT = (PFN_vkCmdSetColorWriteMaskEXT)gipa(instance, "vkCmdSetColorWriteMaskEXT");
-    t->vkCmdSetTessellationDomainOriginEXT = (PFN_vkCmdSetTessellationDomainOriginEXT)(device ? gdpa(device, "vkCmdSetTessellationDomainOriginEXT") : NULL);
-    if (!t->vkCmdSetTessellationDomainOriginEXT)
-        t->vkCmdSetTessellationDomainOriginEXT = (PFN_vkCmdSetTessellationDomainOriginEXT)gipa(instance, "vkCmdSetTessellationDomainOriginEXT");
-    t->vkCmdSetRasterizationStreamEXT = (PFN_vkCmdSetRasterizationStreamEXT)(device ? gdpa(device, "vkCmdSetRasterizationStreamEXT") : NULL);
-    if (!t->vkCmdSetRasterizationStreamEXT)
-        t->vkCmdSetRasterizationStreamEXT = (PFN_vkCmdSetRasterizationStreamEXT)gipa(instance, "vkCmdSetRasterizationStreamEXT");
-    t->vkCmdSetConservativeRasterizationModeEXT = (PFN_vkCmdSetConservativeRasterizationModeEXT)(device ? gdpa(device, "vkCmdSetConservativeRasterizationModeEXT") : NULL);
-    if (!t->vkCmdSetConservativeRasterizationModeEXT)
-        t->vkCmdSetConservativeRasterizationModeEXT = (PFN_vkCmdSetConservativeRasterizationModeEXT)gipa(instance, "vkCmdSetConservativeRasterizationModeEXT");
-    t->vkCmdSetExtraPrimitiveOverestimationSizeEXT = (PFN_vkCmdSetExtraPrimitiveOverestimationSizeEXT)(device ? gdpa(device, "vkCmdSetExtraPrimitiveOverestimationSizeEXT") : NULL);
-    if (!t->vkCmdSetExtraPrimitiveOverestimationSizeEXT)
-        t->vkCmdSetExtraPrimitiveOverestimationSizeEXT = (PFN_vkCmdSetExtraPrimitiveOverestimationSizeEXT)gipa(instance, "vkCmdSetExtraPrimitiveOverestimationSizeEXT");
-    t->vkCmdSetDepthClipEnableEXT = (PFN_vkCmdSetDepthClipEnableEXT)(device ? gdpa(device, "vkCmdSetDepthClipEnableEXT") : NULL);
-    if (!t->vkCmdSetDepthClipEnableEXT)
-        t->vkCmdSetDepthClipEnableEXT = (PFN_vkCmdSetDepthClipEnableEXT)gipa(instance, "vkCmdSetDepthClipEnableEXT");
-    t->vkCmdSetSampleLocationsEnableEXT = (PFN_vkCmdSetSampleLocationsEnableEXT)(device ? gdpa(device, "vkCmdSetSampleLocationsEnableEXT") : NULL);
-    if (!t->vkCmdSetSampleLocationsEnableEXT)
-        t->vkCmdSetSampleLocationsEnableEXT = (PFN_vkCmdSetSampleLocationsEnableEXT)gipa(instance, "vkCmdSetSampleLocationsEnableEXT");
-    t->vkCmdSetColorBlendAdvancedEXT = (PFN_vkCmdSetColorBlendAdvancedEXT)(device ? gdpa(device, "vkCmdSetColorBlendAdvancedEXT") : NULL);
-    if (!t->vkCmdSetColorBlendAdvancedEXT)
-        t->vkCmdSetColorBlendAdvancedEXT = (PFN_vkCmdSetColorBlendAdvancedEXT)gipa(instance, "vkCmdSetColorBlendAdvancedEXT");
-    t->vkCmdSetProvokingVertexModeEXT = (PFN_vkCmdSetProvokingVertexModeEXT)(device ? gdpa(device, "vkCmdSetProvokingVertexModeEXT") : NULL);
-    if (!t->vkCmdSetProvokingVertexModeEXT)
-        t->vkCmdSetProvokingVertexModeEXT = (PFN_vkCmdSetProvokingVertexModeEXT)gipa(instance, "vkCmdSetProvokingVertexModeEXT");
-    t->vkCmdSetLineRasterizationModeEXT = (PFN_vkCmdSetLineRasterizationModeEXT)(device ? gdpa(device, "vkCmdSetLineRasterizationModeEXT") : NULL);
-    if (!t->vkCmdSetLineRasterizationModeEXT)
-        t->vkCmdSetLineRasterizationModeEXT = (PFN_vkCmdSetLineRasterizationModeEXT)gipa(instance, "vkCmdSetLineRasterizationModeEXT");
-    t->vkCmdSetLineStippleEnableEXT = (PFN_vkCmdSetLineStippleEnableEXT)(device ? gdpa(device, "vkCmdSetLineStippleEnableEXT") : NULL);
-    if (!t->vkCmdSetLineStippleEnableEXT)
-        t->vkCmdSetLineStippleEnableEXT = (PFN_vkCmdSetLineStippleEnableEXT)gipa(instance, "vkCmdSetLineStippleEnableEXT");
-    t->vkCmdSetDepthClipNegativeOneToOneEXT = (PFN_vkCmdSetDepthClipNegativeOneToOneEXT)(device ? gdpa(device, "vkCmdSetDepthClipNegativeOneToOneEXT") : NULL);
-    if (!t->vkCmdSetDepthClipNegativeOneToOneEXT)
-        t->vkCmdSetDepthClipNegativeOneToOneEXT = (PFN_vkCmdSetDepthClipNegativeOneToOneEXT)gipa(instance, "vkCmdSetDepthClipNegativeOneToOneEXT");
-    t->vkCmdSetViewportWScalingEnableNV = (PFN_vkCmdSetViewportWScalingEnableNV)(device ? gdpa(device, "vkCmdSetViewportWScalingEnableNV") : NULL);
-    if (!t->vkCmdSetViewportWScalingEnableNV)
-        t->vkCmdSetViewportWScalingEnableNV = (PFN_vkCmdSetViewportWScalingEnableNV)gipa(instance, "vkCmdSetViewportWScalingEnableNV");
-    t->vkCmdSetViewportSwizzleNV = (PFN_vkCmdSetViewportSwizzleNV)(device ? gdpa(device, "vkCmdSetViewportSwizzleNV") : NULL);
-    if (!t->vkCmdSetViewportSwizzleNV)
-        t->vkCmdSetViewportSwizzleNV = (PFN_vkCmdSetViewportSwizzleNV)gipa(instance, "vkCmdSetViewportSwizzleNV");
-    t->vkCmdSetCoverageToColorEnableNV = (PFN_vkCmdSetCoverageToColorEnableNV)(device ? gdpa(device, "vkCmdSetCoverageToColorEnableNV") : NULL);
-    if (!t->vkCmdSetCoverageToColorEnableNV)
-        t->vkCmdSetCoverageToColorEnableNV = (PFN_vkCmdSetCoverageToColorEnableNV)gipa(instance, "vkCmdSetCoverageToColorEnableNV");
-    t->vkCmdSetCoverageToColorLocationNV = (PFN_vkCmdSetCoverageToColorLocationNV)(device ? gdpa(device, "vkCmdSetCoverageToColorLocationNV") : NULL);
-    if (!t->vkCmdSetCoverageToColorLocationNV)
-        t->vkCmdSetCoverageToColorLocationNV = (PFN_vkCmdSetCoverageToColorLocationNV)gipa(instance, "vkCmdSetCoverageToColorLocationNV");
-    t->vkCmdSetCoverageModulationModeNV = (PFN_vkCmdSetCoverageModulationModeNV)(device ? gdpa(device, "vkCmdSetCoverageModulationModeNV") : NULL);
-    if (!t->vkCmdSetCoverageModulationModeNV)
-        t->vkCmdSetCoverageModulationModeNV = (PFN_vkCmdSetCoverageModulationModeNV)gipa(instance, "vkCmdSetCoverageModulationModeNV");
-    t->vkCmdSetCoverageModulationTableEnableNV = (PFN_vkCmdSetCoverageModulationTableEnableNV)(device ? gdpa(device, "vkCmdSetCoverageModulationTableEnableNV") : NULL);
-    if (!t->vkCmdSetCoverageModulationTableEnableNV)
-        t->vkCmdSetCoverageModulationTableEnableNV = (PFN_vkCmdSetCoverageModulationTableEnableNV)gipa(instance, "vkCmdSetCoverageModulationTableEnableNV");
-    t->vkCmdSetCoverageModulationTableNV = (PFN_vkCmdSetCoverageModulationTableNV)(device ? gdpa(device, "vkCmdSetCoverageModulationTableNV") : NULL);
-    if (!t->vkCmdSetCoverageModulationTableNV)
-        t->vkCmdSetCoverageModulationTableNV = (PFN_vkCmdSetCoverageModulationTableNV)gipa(instance, "vkCmdSetCoverageModulationTableNV");
-    t->vkCmdSetShadingRateImageEnableNV = (PFN_vkCmdSetShadingRateImageEnableNV)(device ? gdpa(device, "vkCmdSetShadingRateImageEnableNV") : NULL);
-    if (!t->vkCmdSetShadingRateImageEnableNV)
-        t->vkCmdSetShadingRateImageEnableNV = (PFN_vkCmdSetShadingRateImageEnableNV)gipa(instance, "vkCmdSetShadingRateImageEnableNV");
-    t->vkCmdSetRepresentativeFragmentTestEnableNV = (PFN_vkCmdSetRepresentativeFragmentTestEnableNV)(device ? gdpa(device, "vkCmdSetRepresentativeFragmentTestEnableNV") : NULL);
-    if (!t->vkCmdSetRepresentativeFragmentTestEnableNV)
-        t->vkCmdSetRepresentativeFragmentTestEnableNV = (PFN_vkCmdSetRepresentativeFragmentTestEnableNV)gipa(instance, "vkCmdSetRepresentativeFragmentTestEnableNV");
-    t->vkCmdSetCoverageReductionModeNV = (PFN_vkCmdSetCoverageReductionModeNV)(device ? gdpa(device, "vkCmdSetCoverageReductionModeNV") : NULL);
-    if (!t->vkCmdSetCoverageReductionModeNV)
-        t->vkCmdSetCoverageReductionModeNV = (PFN_vkCmdSetCoverageReductionModeNV)gipa(instance, "vkCmdSetCoverageReductionModeNV");
-    t->vkGetShaderModuleIdentifierEXT = (PFN_vkGetShaderModuleIdentifierEXT)(device ? gdpa(device, "vkGetShaderModuleIdentifierEXT") : NULL);
-    if (!t->vkGetShaderModuleIdentifierEXT)
-        t->vkGetShaderModuleIdentifierEXT = (PFN_vkGetShaderModuleIdentifierEXT)gipa(instance, "vkGetShaderModuleIdentifierEXT");
-    t->vkGetShaderModuleCreateInfoIdentifierEXT = (PFN_vkGetShaderModuleCreateInfoIdentifierEXT)(device ? gdpa(device, "vkGetShaderModuleCreateInfoIdentifierEXT") : NULL);
-    if (!t->vkGetShaderModuleCreateInfoIdentifierEXT)
-        t->vkGetShaderModuleCreateInfoIdentifierEXT = (PFN_vkGetShaderModuleCreateInfoIdentifierEXT)gipa(instance, "vkGetShaderModuleCreateInfoIdentifierEXT");
+    t->vkGetBufferDeviceAddressKHR = (PFN_vkGetBufferDeviceAddressKHR)(device ? gdpa(device, "vkGetBufferDeviceAddressKHR") : gipa(instance, "vkGetBufferDeviceAddressKHR"));
+    t->vkGetBufferOpaqueCaptureAddressKHR = (PFN_vkGetBufferOpaqueCaptureAddressKHR)(device ? gdpa(device, "vkGetBufferOpaqueCaptureAddressKHR") : gipa(instance, "vkGetBufferOpaqueCaptureAddressKHR"));
+    t->vkGetDeviceMemoryOpaqueCaptureAddressKHR = (PFN_vkGetDeviceMemoryOpaqueCaptureAddressKHR)(device ? gdpa(device, "vkGetDeviceMemoryOpaqueCaptureAddressKHR") : gipa(instance, "vkGetDeviceMemoryOpaqueCaptureAddressKHR"));
+    t->vkCmdSetLineStippleEXT = (PFN_vkCmdSetLineStippleEXT)(device ? gdpa(device, "vkCmdSetLineStippleEXT") : gipa(instance, "vkCmdSetLineStippleEXT"));
+    t->vkResetQueryPoolEXT = (PFN_vkResetQueryPoolEXT)(device ? gdpa(device, "vkResetQueryPoolEXT") : gipa(instance, "vkResetQueryPoolEXT"));
+    t->vkCmdSetCullModeEXT = (PFN_vkCmdSetCullModeEXT)(device ? gdpa(device, "vkCmdSetCullModeEXT") : gipa(instance, "vkCmdSetCullModeEXT"));
+    t->vkCmdSetFrontFaceEXT = (PFN_vkCmdSetFrontFaceEXT)(device ? gdpa(device, "vkCmdSetFrontFaceEXT") : gipa(instance, "vkCmdSetFrontFaceEXT"));
+    t->vkCmdSetPrimitiveTopologyEXT = (PFN_vkCmdSetPrimitiveTopologyEXT)(device ? gdpa(device, "vkCmdSetPrimitiveTopologyEXT") : gipa(instance, "vkCmdSetPrimitiveTopologyEXT"));
+    t->vkCmdSetViewportWithCountEXT = (PFN_vkCmdSetViewportWithCountEXT)(device ? gdpa(device, "vkCmdSetViewportWithCountEXT") : gipa(instance, "vkCmdSetViewportWithCountEXT"));
+    t->vkCmdSetScissorWithCountEXT = (PFN_vkCmdSetScissorWithCountEXT)(device ? gdpa(device, "vkCmdSetScissorWithCountEXT") : gipa(instance, "vkCmdSetScissorWithCountEXT"));
+    t->vkCmdBindVertexBuffers2EXT = (PFN_vkCmdBindVertexBuffers2EXT)(device ? gdpa(device, "vkCmdBindVertexBuffers2EXT") : gipa(instance, "vkCmdBindVertexBuffers2EXT"));
+    t->vkCmdSetDepthTestEnableEXT = (PFN_vkCmdSetDepthTestEnableEXT)(device ? gdpa(device, "vkCmdSetDepthTestEnableEXT") : gipa(instance, "vkCmdSetDepthTestEnableEXT"));
+    t->vkCmdSetDepthWriteEnableEXT = (PFN_vkCmdSetDepthWriteEnableEXT)(device ? gdpa(device, "vkCmdSetDepthWriteEnableEXT") : gipa(instance, "vkCmdSetDepthWriteEnableEXT"));
+    t->vkCmdSetDepthCompareOpEXT = (PFN_vkCmdSetDepthCompareOpEXT)(device ? gdpa(device, "vkCmdSetDepthCompareOpEXT") : gipa(instance, "vkCmdSetDepthCompareOpEXT"));
+    t->vkCmdSetDepthBoundsTestEnableEXT = (PFN_vkCmdSetDepthBoundsTestEnableEXT)(device ? gdpa(device, "vkCmdSetDepthBoundsTestEnableEXT") : gipa(instance, "vkCmdSetDepthBoundsTestEnableEXT"));
+    t->vkCmdSetStencilTestEnableEXT = (PFN_vkCmdSetStencilTestEnableEXT)(device ? gdpa(device, "vkCmdSetStencilTestEnableEXT") : gipa(instance, "vkCmdSetStencilTestEnableEXT"));
+    t->vkCmdSetStencilOpEXT = (PFN_vkCmdSetStencilOpEXT)(device ? gdpa(device, "vkCmdSetStencilOpEXT") : gipa(instance, "vkCmdSetStencilOpEXT"));
+    t->vkCreateDeferredOperationKHR = (PFN_vkCreateDeferredOperationKHR)(device ? gdpa(device, "vkCreateDeferredOperationKHR") : gipa(instance, "vkCreateDeferredOperationKHR"));
+    t->vkDestroyDeferredOperationKHR = (PFN_vkDestroyDeferredOperationKHR)(device ? gdpa(device, "vkDestroyDeferredOperationKHR") : gipa(instance, "vkDestroyDeferredOperationKHR"));
+    t->vkGetDeferredOperationMaxConcurrencyKHR = (PFN_vkGetDeferredOperationMaxConcurrencyKHR)(device ? gdpa(device, "vkGetDeferredOperationMaxConcurrencyKHR") : gipa(instance, "vkGetDeferredOperationMaxConcurrencyKHR"));
+    t->vkGetDeferredOperationResultKHR = (PFN_vkGetDeferredOperationResultKHR)(device ? gdpa(device, "vkGetDeferredOperationResultKHR") : gipa(instance, "vkGetDeferredOperationResultKHR"));
+    t->vkDeferredOperationJoinKHR = (PFN_vkDeferredOperationJoinKHR)(device ? gdpa(device, "vkDeferredOperationJoinKHR") : gipa(instance, "vkDeferredOperationJoinKHR"));
+    t->vkGetPipelineExecutablePropertiesKHR = (PFN_vkGetPipelineExecutablePropertiesKHR)(device ? gdpa(device, "vkGetPipelineExecutablePropertiesKHR") : gipa(instance, "vkGetPipelineExecutablePropertiesKHR"));
+    t->vkGetPipelineExecutableStatisticsKHR = (PFN_vkGetPipelineExecutableStatisticsKHR)(device ? gdpa(device, "vkGetPipelineExecutableStatisticsKHR") : gipa(instance, "vkGetPipelineExecutableStatisticsKHR"));
+    t->vkGetPipelineExecutableInternalRepresentationsKHR = (PFN_vkGetPipelineExecutableInternalRepresentationsKHR)(device ? gdpa(device, "vkGetPipelineExecutableInternalRepresentationsKHR") : gipa(instance, "vkGetPipelineExecutableInternalRepresentationsKHR"));
+    t->vkCopyMemoryToImageEXT = (PFN_vkCopyMemoryToImageEXT)(device ? gdpa(device, "vkCopyMemoryToImageEXT") : gipa(instance, "vkCopyMemoryToImageEXT"));
+    t->vkCopyImageToMemoryEXT = (PFN_vkCopyImageToMemoryEXT)(device ? gdpa(device, "vkCopyImageToMemoryEXT") : gipa(instance, "vkCopyImageToMemoryEXT"));
+    t->vkCopyImageToImageEXT = (PFN_vkCopyImageToImageEXT)(device ? gdpa(device, "vkCopyImageToImageEXT") : gipa(instance, "vkCopyImageToImageEXT"));
+    t->vkTransitionImageLayoutEXT = (PFN_vkTransitionImageLayoutEXT)(device ? gdpa(device, "vkTransitionImageLayoutEXT") : gipa(instance, "vkTransitionImageLayoutEXT"));
+    t->vkGetImageSubresourceLayout2EXT = (PFN_vkGetImageSubresourceLayout2EXT)(device ? gdpa(device, "vkGetImageSubresourceLayout2EXT") : gipa(instance, "vkGetImageSubresourceLayout2EXT"));
+    t->vkMapMemory2KHR = (PFN_vkMapMemory2KHR)(device ? gdpa(device, "vkMapMemory2KHR") : gipa(instance, "vkMapMemory2KHR"));
+    t->vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)(device ? gdpa(device, "vkUnmapMemory2KHR") : gipa(instance, "vkUnmapMemory2KHR"));
+    t->vkGetGeneratedCommandsMemoryRequirementsNV = (PFN_vkGetGeneratedCommandsMemoryRequirementsNV)(device ? gdpa(device, "vkGetGeneratedCommandsMemoryRequirementsNV") : gipa(instance, "vkGetGeneratedCommandsMemoryRequirementsNV"));
+    t->vkCmdPreprocessGeneratedCommandsNV = (PFN_vkCmdPreprocessGeneratedCommandsNV)(device ? gdpa(device, "vkCmdPreprocessGeneratedCommandsNV") : gipa(instance, "vkCmdPreprocessGeneratedCommandsNV"));
+    t->vkCmdExecuteGeneratedCommandsNV = (PFN_vkCmdExecuteGeneratedCommandsNV)(device ? gdpa(device, "vkCmdExecuteGeneratedCommandsNV") : gipa(instance, "vkCmdExecuteGeneratedCommandsNV"));
+    t->vkCmdBindPipelineShaderGroupNV = (PFN_vkCmdBindPipelineShaderGroupNV)(device ? gdpa(device, "vkCmdBindPipelineShaderGroupNV") : gipa(instance, "vkCmdBindPipelineShaderGroupNV"));
+    t->vkCreateIndirectCommandsLayoutNV = (PFN_vkCreateIndirectCommandsLayoutNV)(device ? gdpa(device, "vkCreateIndirectCommandsLayoutNV") : gipa(instance, "vkCreateIndirectCommandsLayoutNV"));
+    t->vkDestroyIndirectCommandsLayoutNV = (PFN_vkDestroyIndirectCommandsLayoutNV)(device ? gdpa(device, "vkDestroyIndirectCommandsLayoutNV") : gipa(instance, "vkDestroyIndirectCommandsLayoutNV"));
+    t->vkCmdSetDepthBias2EXT = (PFN_vkCmdSetDepthBias2EXT)(device ? gdpa(device, "vkCmdSetDepthBias2EXT") : gipa(instance, "vkCmdSetDepthBias2EXT"));
+    t->vkCreatePrivateDataSlotEXT = (PFN_vkCreatePrivateDataSlotEXT)(device ? gdpa(device, "vkCreatePrivateDataSlotEXT") : gipa(instance, "vkCreatePrivateDataSlotEXT"));
+    t->vkDestroyPrivateDataSlotEXT = (PFN_vkDestroyPrivateDataSlotEXT)(device ? gdpa(device, "vkDestroyPrivateDataSlotEXT") : gipa(instance, "vkDestroyPrivateDataSlotEXT"));
+    t->vkSetPrivateDataEXT = (PFN_vkSetPrivateDataEXT)(device ? gdpa(device, "vkSetPrivateDataEXT") : gipa(instance, "vkSetPrivateDataEXT"));
+    t->vkGetPrivateDataEXT = (PFN_vkGetPrivateDataEXT)(device ? gdpa(device, "vkGetPrivateDataEXT") : gipa(instance, "vkGetPrivateDataEXT"));
+    t->vkQueueSetPerfHintQCOM = (PFN_vkQueueSetPerfHintQCOM)(device ? gdpa(device, "vkQueueSetPerfHintQCOM") : gipa(instance, "vkQueueSetPerfHintQCOM"));
+    t->vkSetLatencySleepModeLegacyNV = (PFN_vkSetLatencySleepModeLegacyNV)(device ? gdpa(device, "vkSetLatencySleepModeLegacyNV") : gipa(instance, "vkSetLatencySleepModeLegacyNV"));
+    t->vkLatencySleepLegacyNV = (PFN_vkLatencySleepLegacyNV)(device ? gdpa(device, "vkLatencySleepLegacyNV") : gipa(instance, "vkLatencySleepLegacyNV"));
+    t->vkSetLatencyMarkerLegacyNV = (PFN_vkSetLatencyMarkerLegacyNV)(device ? gdpa(device, "vkSetLatencyMarkerLegacyNV") : gipa(instance, "vkSetLatencyMarkerLegacyNV"));
+    t->vkGetLatencyTimingsLegacyNV = (PFN_vkGetLatencyTimingsLegacyNV)(device ? gdpa(device, "vkGetLatencyTimingsLegacyNV") : gipa(instance, "vkGetLatencyTimingsLegacyNV"));
+    t->vkQueueNotifyOutOfBandLegacyNV = (PFN_vkQueueNotifyOutOfBandLegacyNV)(device ? gdpa(device, "vkQueueNotifyOutOfBandLegacyNV") : gipa(instance, "vkQueueNotifyOutOfBandLegacyNV"));
+    t->vkGetSleepStatusLegacyNV = (PFN_vkGetSleepStatusLegacyNV)(device ? gdpa(device, "vkGetSleepStatusLegacyNV") : gipa(instance, "vkGetSleepStatusLegacyNV"));
+    t->vkShutdownLatencyDeviceLegacyNV = (PFN_vkShutdownLatencyDeviceLegacyNV)(device ? gdpa(device, "vkShutdownLatencyDeviceLegacyNV") : gipa(instance, "vkShutdownLatencyDeviceLegacyNV"));
+    t->vkCmdSetEvent2KHR = (PFN_vkCmdSetEvent2KHR)(device ? gdpa(device, "vkCmdSetEvent2KHR") : gipa(instance, "vkCmdSetEvent2KHR"));
+    t->vkCmdResetEvent2KHR = (PFN_vkCmdResetEvent2KHR)(device ? gdpa(device, "vkCmdResetEvent2KHR") : gipa(instance, "vkCmdResetEvent2KHR"));
+    t->vkCmdWaitEvents2KHR = (PFN_vkCmdWaitEvents2KHR)(device ? gdpa(device, "vkCmdWaitEvents2KHR") : gipa(instance, "vkCmdWaitEvents2KHR"));
+    t->vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)(device ? gdpa(device, "vkCmdPipelineBarrier2KHR") : gipa(instance, "vkCmdPipelineBarrier2KHR"));
+    t->vkCmdWriteTimestamp2KHR = (PFN_vkCmdWriteTimestamp2KHR)(device ? gdpa(device, "vkCmdWriteTimestamp2KHR") : gipa(instance, "vkCmdWriteTimestamp2KHR"));
+    t->vkQueueSubmit2KHR = (PFN_vkQueueSubmit2KHR)(device ? gdpa(device, "vkQueueSubmit2KHR") : gipa(instance, "vkQueueSubmit2KHR"));
+    t->vkGetDescriptorSetLayoutSizeEXT = (PFN_vkGetDescriptorSetLayoutSizeEXT)(device ? gdpa(device, "vkGetDescriptorSetLayoutSizeEXT") : gipa(instance, "vkGetDescriptorSetLayoutSizeEXT"));
+    t->vkGetDescriptorSetLayoutBindingOffsetEXT = (PFN_vkGetDescriptorSetLayoutBindingOffsetEXT)(device ? gdpa(device, "vkGetDescriptorSetLayoutBindingOffsetEXT") : gipa(instance, "vkGetDescriptorSetLayoutBindingOffsetEXT"));
+    t->vkGetDescriptorEXT = (PFN_vkGetDescriptorEXT)(device ? gdpa(device, "vkGetDescriptorEXT") : gipa(instance, "vkGetDescriptorEXT"));
+    t->vkCmdBindDescriptorBuffersEXT = (PFN_vkCmdBindDescriptorBuffersEXT)(device ? gdpa(device, "vkCmdBindDescriptorBuffersEXT") : gipa(instance, "vkCmdBindDescriptorBuffersEXT"));
+    t->vkCmdSetDescriptorBufferOffsetsEXT = (PFN_vkCmdSetDescriptorBufferOffsetsEXT)(device ? gdpa(device, "vkCmdSetDescriptorBufferOffsetsEXT") : gipa(instance, "vkCmdSetDescriptorBufferOffsetsEXT"));
+    t->vkCmdBindDescriptorBufferEmbeddedSamplersEXT = (PFN_vkCmdBindDescriptorBufferEmbeddedSamplersEXT)(device ? gdpa(device, "vkCmdBindDescriptorBufferEmbeddedSamplersEXT") : gipa(instance, "vkCmdBindDescriptorBufferEmbeddedSamplersEXT"));
+    t->vkGetBufferOpaqueCaptureDescriptorDataEXT = (PFN_vkGetBufferOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetBufferOpaqueCaptureDescriptorDataEXT") : gipa(instance, "vkGetBufferOpaqueCaptureDescriptorDataEXT"));
+    t->vkGetImageOpaqueCaptureDescriptorDataEXT = (PFN_vkGetImageOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetImageOpaqueCaptureDescriptorDataEXT") : gipa(instance, "vkGetImageOpaqueCaptureDescriptorDataEXT"));
+    t->vkGetImageViewOpaqueCaptureDescriptorDataEXT = (PFN_vkGetImageViewOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetImageViewOpaqueCaptureDescriptorDataEXT") : gipa(instance, "vkGetImageViewOpaqueCaptureDescriptorDataEXT"));
+    t->vkGetSamplerOpaqueCaptureDescriptorDataEXT = (PFN_vkGetSamplerOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetSamplerOpaqueCaptureDescriptorDataEXT") : gipa(instance, "vkGetSamplerOpaqueCaptureDescriptorDataEXT"));
+    t->vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT = (PFN_vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT)(device ? gdpa(device, "vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT") : gipa(instance, "vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT"));
+    t->vkCmdBindIndexBuffer3KHR = (PFN_vkCmdBindIndexBuffer3KHR)(device ? gdpa(device, "vkCmdBindIndexBuffer3KHR") : gipa(instance, "vkCmdBindIndexBuffer3KHR"));
+    t->vkCmdBindVertexBuffers3KHR = (PFN_vkCmdBindVertexBuffers3KHR)(device ? gdpa(device, "vkCmdBindVertexBuffers3KHR") : gipa(instance, "vkCmdBindVertexBuffers3KHR"));
+    t->vkCmdDrawIndirect2KHR = (PFN_vkCmdDrawIndirect2KHR)(device ? gdpa(device, "vkCmdDrawIndirect2KHR") : gipa(instance, "vkCmdDrawIndirect2KHR"));
+    t->vkCmdDrawIndexedIndirect2KHR = (PFN_vkCmdDrawIndexedIndirect2KHR)(device ? gdpa(device, "vkCmdDrawIndexedIndirect2KHR") : gipa(instance, "vkCmdDrawIndexedIndirect2KHR"));
+    t->vkCmdDispatchIndirect2KHR = (PFN_vkCmdDispatchIndirect2KHR)(device ? gdpa(device, "vkCmdDispatchIndirect2KHR") : gipa(instance, "vkCmdDispatchIndirect2KHR"));
+    t->vkCmdCopyMemoryKHR = (PFN_vkCmdCopyMemoryKHR)(device ? gdpa(device, "vkCmdCopyMemoryKHR") : gipa(instance, "vkCmdCopyMemoryKHR"));
+    t->vkCmdCopyMemoryToImageKHR = (PFN_vkCmdCopyMemoryToImageKHR)(device ? gdpa(device, "vkCmdCopyMemoryToImageKHR") : gipa(instance, "vkCmdCopyMemoryToImageKHR"));
+    t->vkCmdCopyImageToMemoryKHR = (PFN_vkCmdCopyImageToMemoryKHR)(device ? gdpa(device, "vkCmdCopyImageToMemoryKHR") : gipa(instance, "vkCmdCopyImageToMemoryKHR"));
+    t->vkCmdUpdateMemoryKHR = (PFN_vkCmdUpdateMemoryKHR)(device ? gdpa(device, "vkCmdUpdateMemoryKHR") : gipa(instance, "vkCmdUpdateMemoryKHR"));
+    t->vkCmdFillMemoryKHR = (PFN_vkCmdFillMemoryKHR)(device ? gdpa(device, "vkCmdFillMemoryKHR") : gipa(instance, "vkCmdFillMemoryKHR"));
+    t->vkCmdCopyQueryPoolResultsToMemoryKHR = (PFN_vkCmdCopyQueryPoolResultsToMemoryKHR)(device ? gdpa(device, "vkCmdCopyQueryPoolResultsToMemoryKHR") : gipa(instance, "vkCmdCopyQueryPoolResultsToMemoryKHR"));
+    t->vkCmdDrawIndirectCount2KHR = (PFN_vkCmdDrawIndirectCount2KHR)(device ? gdpa(device, "vkCmdDrawIndirectCount2KHR") : gipa(instance, "vkCmdDrawIndirectCount2KHR"));
+    t->vkCmdDrawIndexedIndirectCount2KHR = (PFN_vkCmdDrawIndexedIndirectCount2KHR)(device ? gdpa(device, "vkCmdDrawIndexedIndirectCount2KHR") : gipa(instance, "vkCmdDrawIndexedIndirectCount2KHR"));
+    t->vkCmdBeginConditionalRendering2EXT = (PFN_vkCmdBeginConditionalRendering2EXT)(device ? gdpa(device, "vkCmdBeginConditionalRendering2EXT") : gipa(instance, "vkCmdBeginConditionalRendering2EXT"));
+    t->vkCmdBindTransformFeedbackBuffers2EXT = (PFN_vkCmdBindTransformFeedbackBuffers2EXT)(device ? gdpa(device, "vkCmdBindTransformFeedbackBuffers2EXT") : gipa(instance, "vkCmdBindTransformFeedbackBuffers2EXT"));
+    t->vkCmdBeginTransformFeedback2EXT = (PFN_vkCmdBeginTransformFeedback2EXT)(device ? gdpa(device, "vkCmdBeginTransformFeedback2EXT") : gipa(instance, "vkCmdBeginTransformFeedback2EXT"));
+    t->vkCmdEndTransformFeedback2EXT = (PFN_vkCmdEndTransformFeedback2EXT)(device ? gdpa(device, "vkCmdEndTransformFeedback2EXT") : gipa(instance, "vkCmdEndTransformFeedback2EXT"));
+    t->vkCmdDrawIndirectByteCount2EXT = (PFN_vkCmdDrawIndirectByteCount2EXT)(device ? gdpa(device, "vkCmdDrawIndirectByteCount2EXT") : gipa(instance, "vkCmdDrawIndirectByteCount2EXT"));
+    t->vkCmdDrawMeshTasksIndirect2EXT = (PFN_vkCmdDrawMeshTasksIndirect2EXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirect2EXT") : gipa(instance, "vkCmdDrawMeshTasksIndirect2EXT"));
+    t->vkCmdDrawMeshTasksIndirectCount2EXT = (PFN_vkCmdDrawMeshTasksIndirectCount2EXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectCount2EXT") : gipa(instance, "vkCmdDrawMeshTasksIndirectCount2EXT"));
+    t->vkCmdWriteMarkerToMemoryAMD = (PFN_vkCmdWriteMarkerToMemoryAMD)(device ? gdpa(device, "vkCmdWriteMarkerToMemoryAMD") : gipa(instance, "vkCmdWriteMarkerToMemoryAMD"));
+    t->vkCreateAccelerationStructure2KHR = (PFN_vkCreateAccelerationStructure2KHR)(device ? gdpa(device, "vkCreateAccelerationStructure2KHR") : gipa(instance, "vkCreateAccelerationStructure2KHR"));
+    t->vkCmdSetFragmentShadingRateEnumNV = (PFN_vkCmdSetFragmentShadingRateEnumNV)(device ? gdpa(device, "vkCmdSetFragmentShadingRateEnumNV") : gipa(instance, "vkCmdSetFragmentShadingRateEnumNV"));
+    t->vkCmdDrawMeshTasksEXT = (PFN_vkCmdDrawMeshTasksEXT)(device ? gdpa(device, "vkCmdDrawMeshTasksEXT") : gipa(instance, "vkCmdDrawMeshTasksEXT"));
+    t->vkCmdDrawMeshTasksIndirectEXT = (PFN_vkCmdDrawMeshTasksIndirectEXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectEXT") : gipa(instance, "vkCmdDrawMeshTasksIndirectEXT"));
+    t->vkCmdDrawMeshTasksIndirectCountEXT = (PFN_vkCmdDrawMeshTasksIndirectCountEXT)(device ? gdpa(device, "vkCmdDrawMeshTasksIndirectCountEXT") : gipa(instance, "vkCmdDrawMeshTasksIndirectCountEXT"));
+    t->vkCmdCopyBuffer2KHR = (PFN_vkCmdCopyBuffer2KHR)(device ? gdpa(device, "vkCmdCopyBuffer2KHR") : gipa(instance, "vkCmdCopyBuffer2KHR"));
+    t->vkCmdCopyImage2KHR = (PFN_vkCmdCopyImage2KHR)(device ? gdpa(device, "vkCmdCopyImage2KHR") : gipa(instance, "vkCmdCopyImage2KHR"));
+    t->vkCmdCopyBufferToImage2KHR = (PFN_vkCmdCopyBufferToImage2KHR)(device ? gdpa(device, "vkCmdCopyBufferToImage2KHR") : gipa(instance, "vkCmdCopyBufferToImage2KHR"));
+    t->vkCmdCopyImageToBuffer2KHR = (PFN_vkCmdCopyImageToBuffer2KHR)(device ? gdpa(device, "vkCmdCopyImageToBuffer2KHR") : gipa(instance, "vkCmdCopyImageToBuffer2KHR"));
+    t->vkCmdBlitImage2KHR = (PFN_vkCmdBlitImage2KHR)(device ? gdpa(device, "vkCmdBlitImage2KHR") : gipa(instance, "vkCmdBlitImage2KHR"));
+    t->vkCmdResolveImage2KHR = (PFN_vkCmdResolveImage2KHR)(device ? gdpa(device, "vkCmdResolveImage2KHR") : gipa(instance, "vkCmdResolveImage2KHR"));
+    t->vkGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)(device ? gdpa(device, "vkGetDeviceFaultInfoEXT") : gipa(instance, "vkGetDeviceFaultInfoEXT"));
+    t->vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)(device ? gdpa(device, "vkCmdSetVertexInputEXT") : gipa(instance, "vkCmdSetVertexInputEXT"));
+    t->vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI = (PFN_vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI)(device ? gdpa(device, "vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI") : gipa(instance, "vkGetDeviceSubpassShadingMaxWorkgroupSizeHUAWEI"));
+    t->vkCmdSubpassShadingHUAWEI = (PFN_vkCmdSubpassShadingHUAWEI)(device ? gdpa(device, "vkCmdSubpassShadingHUAWEI") : gipa(instance, "vkCmdSubpassShadingHUAWEI"));
+    t->vkCmdBindInvocationMaskHUAWEI = (PFN_vkCmdBindInvocationMaskHUAWEI)(device ? gdpa(device, "vkCmdBindInvocationMaskHUAWEI") : gipa(instance, "vkCmdBindInvocationMaskHUAWEI"));
+    t->vkGetMemoryRemoteAddressNV = (PFN_vkGetMemoryRemoteAddressNV)(device ? gdpa(device, "vkGetMemoryRemoteAddressNV") : gipa(instance, "vkGetMemoryRemoteAddressNV"));
+    t->vkGetPipelinePropertiesEXT = (PFN_vkGetPipelinePropertiesEXT)(device ? gdpa(device, "vkGetPipelinePropertiesEXT") : gipa(instance, "vkGetPipelinePropertiesEXT"));
+    t->vkCmdSetPatchControlPointsEXT = (PFN_vkCmdSetPatchControlPointsEXT)(device ? gdpa(device, "vkCmdSetPatchControlPointsEXT") : gipa(instance, "vkCmdSetPatchControlPointsEXT"));
+    t->vkCmdSetRasterizerDiscardEnableEXT = (PFN_vkCmdSetRasterizerDiscardEnableEXT)(device ? gdpa(device, "vkCmdSetRasterizerDiscardEnableEXT") : gipa(instance, "vkCmdSetRasterizerDiscardEnableEXT"));
+    t->vkCmdSetDepthBiasEnableEXT = (PFN_vkCmdSetDepthBiasEnableEXT)(device ? gdpa(device, "vkCmdSetDepthBiasEnableEXT") : gipa(instance, "vkCmdSetDepthBiasEnableEXT"));
+    t->vkCmdSetLogicOpEXT = (PFN_vkCmdSetLogicOpEXT)(device ? gdpa(device, "vkCmdSetLogicOpEXT") : gipa(instance, "vkCmdSetLogicOpEXT"));
+    t->vkCmdSetPrimitiveRestartEnableEXT = (PFN_vkCmdSetPrimitiveRestartEnableEXT)(device ? gdpa(device, "vkCmdSetPrimitiveRestartEnableEXT") : gipa(instance, "vkCmdSetPrimitiveRestartEnableEXT"));
+    t->vkCmdSetColorWriteEnableEXT = (PFN_vkCmdSetColorWriteEnableEXT)(device ? gdpa(device, "vkCmdSetColorWriteEnableEXT") : gipa(instance, "vkCmdSetColorWriteEnableEXT"));
+    t->vkCmdTraceRaysIndirect2KHR = (PFN_vkCmdTraceRaysIndirect2KHR)(device ? gdpa(device, "vkCmdTraceRaysIndirect2KHR") : gipa(instance, "vkCmdTraceRaysIndirect2KHR"));
+    t->vkCmdDrawMultiEXT = (PFN_vkCmdDrawMultiEXT)(device ? gdpa(device, "vkCmdDrawMultiEXT") : gipa(instance, "vkCmdDrawMultiEXT"));
+    t->vkCmdDrawMultiIndexedEXT = (PFN_vkCmdDrawMultiIndexedEXT)(device ? gdpa(device, "vkCmdDrawMultiIndexedEXT") : gipa(instance, "vkCmdDrawMultiIndexedEXT"));
+    t->vkCreateMicromapEXT = (PFN_vkCreateMicromapEXT)(device ? gdpa(device, "vkCreateMicromapEXT") : gipa(instance, "vkCreateMicromapEXT"));
+    t->vkDestroyMicromapEXT = (PFN_vkDestroyMicromapEXT)(device ? gdpa(device, "vkDestroyMicromapEXT") : gipa(instance, "vkDestroyMicromapEXT"));
+    t->vkCmdBuildMicromapsEXT = (PFN_vkCmdBuildMicromapsEXT)(device ? gdpa(device, "vkCmdBuildMicromapsEXT") : gipa(instance, "vkCmdBuildMicromapsEXT"));
+    t->vkBuildMicromapsEXT = (PFN_vkBuildMicromapsEXT)(device ? gdpa(device, "vkBuildMicromapsEXT") : gipa(instance, "vkBuildMicromapsEXT"));
+    t->vkCopyMicromapEXT = (PFN_vkCopyMicromapEXT)(device ? gdpa(device, "vkCopyMicromapEXT") : gipa(instance, "vkCopyMicromapEXT"));
+    t->vkCopyMicromapToMemoryEXT = (PFN_vkCopyMicromapToMemoryEXT)(device ? gdpa(device, "vkCopyMicromapToMemoryEXT") : gipa(instance, "vkCopyMicromapToMemoryEXT"));
+    t->vkCopyMemoryToMicromapEXT = (PFN_vkCopyMemoryToMicromapEXT)(device ? gdpa(device, "vkCopyMemoryToMicromapEXT") : gipa(instance, "vkCopyMemoryToMicromapEXT"));
+    t->vkWriteMicromapsPropertiesEXT = (PFN_vkWriteMicromapsPropertiesEXT)(device ? gdpa(device, "vkWriteMicromapsPropertiesEXT") : gipa(instance, "vkWriteMicromapsPropertiesEXT"));
+    t->vkCmdCopyMicromapEXT = (PFN_vkCmdCopyMicromapEXT)(device ? gdpa(device, "vkCmdCopyMicromapEXT") : gipa(instance, "vkCmdCopyMicromapEXT"));
+    t->vkCmdCopyMicromapToMemoryEXT = (PFN_vkCmdCopyMicromapToMemoryEXT)(device ? gdpa(device, "vkCmdCopyMicromapToMemoryEXT") : gipa(instance, "vkCmdCopyMicromapToMemoryEXT"));
+    t->vkCmdCopyMemoryToMicromapEXT = (PFN_vkCmdCopyMemoryToMicromapEXT)(device ? gdpa(device, "vkCmdCopyMemoryToMicromapEXT") : gipa(instance, "vkCmdCopyMemoryToMicromapEXT"));
+    t->vkCmdWriteMicromapsPropertiesEXT = (PFN_vkCmdWriteMicromapsPropertiesEXT)(device ? gdpa(device, "vkCmdWriteMicromapsPropertiesEXT") : gipa(instance, "vkCmdWriteMicromapsPropertiesEXT"));
+    t->vkGetDeviceMicromapCompatibilityEXT = (PFN_vkGetDeviceMicromapCompatibilityEXT)(device ? gdpa(device, "vkGetDeviceMicromapCompatibilityEXT") : gipa(instance, "vkGetDeviceMicromapCompatibilityEXT"));
+    t->vkGetMicromapBuildSizesEXT = (PFN_vkGetMicromapBuildSizesEXT)(device ? gdpa(device, "vkGetMicromapBuildSizesEXT") : gipa(instance, "vkGetMicromapBuildSizesEXT"));
+    t->vkCmdDrawClusterHUAWEI = (PFN_vkCmdDrawClusterHUAWEI)(device ? gdpa(device, "vkCmdDrawClusterHUAWEI") : gipa(instance, "vkCmdDrawClusterHUAWEI"));
+    t->vkCmdDrawClusterIndirectHUAWEI = (PFN_vkCmdDrawClusterIndirectHUAWEI)(device ? gdpa(device, "vkCmdDrawClusterIndirectHUAWEI") : gipa(instance, "vkCmdDrawClusterIndirectHUAWEI"));
+    t->vkSetDeviceMemoryPriorityEXT = (PFN_vkSetDeviceMemoryPriorityEXT)(device ? gdpa(device, "vkSetDeviceMemoryPriorityEXT") : gipa(instance, "vkSetDeviceMemoryPriorityEXT"));
+    t->vkGetDeviceBufferMemoryRequirementsKHR = (PFN_vkGetDeviceBufferMemoryRequirementsKHR)(device ? gdpa(device, "vkGetDeviceBufferMemoryRequirementsKHR") : gipa(instance, "vkGetDeviceBufferMemoryRequirementsKHR"));
+    t->vkGetDeviceImageMemoryRequirementsKHR = (PFN_vkGetDeviceImageMemoryRequirementsKHR)(device ? gdpa(device, "vkGetDeviceImageMemoryRequirementsKHR") : gipa(instance, "vkGetDeviceImageMemoryRequirementsKHR"));
+    t->vkGetDeviceImageSparseMemoryRequirementsKHR = (PFN_vkGetDeviceImageSparseMemoryRequirementsKHR)(device ? gdpa(device, "vkGetDeviceImageSparseMemoryRequirementsKHR") : gipa(instance, "vkGetDeviceImageSparseMemoryRequirementsKHR"));
+    t->vkCmdSetDispatchParametersARM = (PFN_vkCmdSetDispatchParametersARM)(device ? gdpa(device, "vkCmdSetDispatchParametersARM") : gipa(instance, "vkCmdSetDispatchParametersARM"));
+    t->vkGetDescriptorSetLayoutHostMappingInfoVALVE = (PFN_vkGetDescriptorSetLayoutHostMappingInfoVALVE)(device ? gdpa(device, "vkGetDescriptorSetLayoutHostMappingInfoVALVE") : gipa(instance, "vkGetDescriptorSetLayoutHostMappingInfoVALVE"));
+    t->vkGetDescriptorSetHostMappingVALVE = (PFN_vkGetDescriptorSetHostMappingVALVE)(device ? gdpa(device, "vkGetDescriptorSetHostMappingVALVE") : gipa(instance, "vkGetDescriptorSetHostMappingVALVE"));
+    t->vkCmdCopyMemoryIndirectNV = (PFN_vkCmdCopyMemoryIndirectNV)(device ? gdpa(device, "vkCmdCopyMemoryIndirectNV") : gipa(instance, "vkCmdCopyMemoryIndirectNV"));
+    t->vkCmdCopyMemoryToImageIndirectNV = (PFN_vkCmdCopyMemoryToImageIndirectNV)(device ? gdpa(device, "vkCmdCopyMemoryToImageIndirectNV") : gipa(instance, "vkCmdCopyMemoryToImageIndirectNV"));
+    t->vkCmdDecompressMemoryNV = (PFN_vkCmdDecompressMemoryNV)(device ? gdpa(device, "vkCmdDecompressMemoryNV") : gipa(instance, "vkCmdDecompressMemoryNV"));
+    t->vkCmdDecompressMemoryIndirectCountNV = (PFN_vkCmdDecompressMemoryIndirectCountNV)(device ? gdpa(device, "vkCmdDecompressMemoryIndirectCountNV") : gipa(instance, "vkCmdDecompressMemoryIndirectCountNV"));
+    t->vkGetPipelineIndirectMemoryRequirementsNV = (PFN_vkGetPipelineIndirectMemoryRequirementsNV)(device ? gdpa(device, "vkGetPipelineIndirectMemoryRequirementsNV") : gipa(instance, "vkGetPipelineIndirectMemoryRequirementsNV"));
+    t->vkCmdUpdatePipelineIndirectBufferNV = (PFN_vkCmdUpdatePipelineIndirectBufferNV)(device ? gdpa(device, "vkCmdUpdatePipelineIndirectBufferNV") : gipa(instance, "vkCmdUpdatePipelineIndirectBufferNV"));
+    t->vkGetPipelineIndirectDeviceAddressNV = (PFN_vkGetPipelineIndirectDeviceAddressNV)(device ? gdpa(device, "vkGetPipelineIndirectDeviceAddressNV") : gipa(instance, "vkGetPipelineIndirectDeviceAddressNV"));
+    t->vkCmdSetDepthClampEnableEXT = (PFN_vkCmdSetDepthClampEnableEXT)(device ? gdpa(device, "vkCmdSetDepthClampEnableEXT") : gipa(instance, "vkCmdSetDepthClampEnableEXT"));
+    t->vkCmdSetPolygonModeEXT = (PFN_vkCmdSetPolygonModeEXT)(device ? gdpa(device, "vkCmdSetPolygonModeEXT") : gipa(instance, "vkCmdSetPolygonModeEXT"));
+    t->vkCmdSetRasterizationSamplesEXT = (PFN_vkCmdSetRasterizationSamplesEXT)(device ? gdpa(device, "vkCmdSetRasterizationSamplesEXT") : gipa(instance, "vkCmdSetRasterizationSamplesEXT"));
+    t->vkCmdSetSampleMaskEXT = (PFN_vkCmdSetSampleMaskEXT)(device ? gdpa(device, "vkCmdSetSampleMaskEXT") : gipa(instance, "vkCmdSetSampleMaskEXT"));
+    t->vkCmdSetAlphaToCoverageEnableEXT = (PFN_vkCmdSetAlphaToCoverageEnableEXT)(device ? gdpa(device, "vkCmdSetAlphaToCoverageEnableEXT") : gipa(instance, "vkCmdSetAlphaToCoverageEnableEXT"));
+    t->vkCmdSetAlphaToOneEnableEXT = (PFN_vkCmdSetAlphaToOneEnableEXT)(device ? gdpa(device, "vkCmdSetAlphaToOneEnableEXT") : gipa(instance, "vkCmdSetAlphaToOneEnableEXT"));
+    t->vkCmdSetLogicOpEnableEXT = (PFN_vkCmdSetLogicOpEnableEXT)(device ? gdpa(device, "vkCmdSetLogicOpEnableEXT") : gipa(instance, "vkCmdSetLogicOpEnableEXT"));
+    t->vkCmdSetColorBlendEnableEXT = (PFN_vkCmdSetColorBlendEnableEXT)(device ? gdpa(device, "vkCmdSetColorBlendEnableEXT") : gipa(instance, "vkCmdSetColorBlendEnableEXT"));
+    t->vkCmdSetColorBlendEquationEXT = (PFN_vkCmdSetColorBlendEquationEXT)(device ? gdpa(device, "vkCmdSetColorBlendEquationEXT") : gipa(instance, "vkCmdSetColorBlendEquationEXT"));
+    t->vkCmdSetColorWriteMaskEXT = (PFN_vkCmdSetColorWriteMaskEXT)(device ? gdpa(device, "vkCmdSetColorWriteMaskEXT") : gipa(instance, "vkCmdSetColorWriteMaskEXT"));
+    t->vkCmdSetTessellationDomainOriginEXT = (PFN_vkCmdSetTessellationDomainOriginEXT)(device ? gdpa(device, "vkCmdSetTessellationDomainOriginEXT") : gipa(instance, "vkCmdSetTessellationDomainOriginEXT"));
+    t->vkCmdSetRasterizationStreamEXT = (PFN_vkCmdSetRasterizationStreamEXT)(device ? gdpa(device, "vkCmdSetRasterizationStreamEXT") : gipa(instance, "vkCmdSetRasterizationStreamEXT"));
+    t->vkCmdSetConservativeRasterizationModeEXT = (PFN_vkCmdSetConservativeRasterizationModeEXT)(device ? gdpa(device, "vkCmdSetConservativeRasterizationModeEXT") : gipa(instance, "vkCmdSetConservativeRasterizationModeEXT"));
+    t->vkCmdSetExtraPrimitiveOverestimationSizeEXT = (PFN_vkCmdSetExtraPrimitiveOverestimationSizeEXT)(device ? gdpa(device, "vkCmdSetExtraPrimitiveOverestimationSizeEXT") : gipa(instance, "vkCmdSetExtraPrimitiveOverestimationSizeEXT"));
+    t->vkCmdSetDepthClipEnableEXT = (PFN_vkCmdSetDepthClipEnableEXT)(device ? gdpa(device, "vkCmdSetDepthClipEnableEXT") : gipa(instance, "vkCmdSetDepthClipEnableEXT"));
+    t->vkCmdSetSampleLocationsEnableEXT = (PFN_vkCmdSetSampleLocationsEnableEXT)(device ? gdpa(device, "vkCmdSetSampleLocationsEnableEXT") : gipa(instance, "vkCmdSetSampleLocationsEnableEXT"));
+    t->vkCmdSetColorBlendAdvancedEXT = (PFN_vkCmdSetColorBlendAdvancedEXT)(device ? gdpa(device, "vkCmdSetColorBlendAdvancedEXT") : gipa(instance, "vkCmdSetColorBlendAdvancedEXT"));
+    t->vkCmdSetProvokingVertexModeEXT = (PFN_vkCmdSetProvokingVertexModeEXT)(device ? gdpa(device, "vkCmdSetProvokingVertexModeEXT") : gipa(instance, "vkCmdSetProvokingVertexModeEXT"));
+    t->vkCmdSetLineRasterizationModeEXT = (PFN_vkCmdSetLineRasterizationModeEXT)(device ? gdpa(device, "vkCmdSetLineRasterizationModeEXT") : gipa(instance, "vkCmdSetLineRasterizationModeEXT"));
+    t->vkCmdSetLineStippleEnableEXT = (PFN_vkCmdSetLineStippleEnableEXT)(device ? gdpa(device, "vkCmdSetLineStippleEnableEXT") : gipa(instance, "vkCmdSetLineStippleEnableEXT"));
+    t->vkCmdSetDepthClipNegativeOneToOneEXT = (PFN_vkCmdSetDepthClipNegativeOneToOneEXT)(device ? gdpa(device, "vkCmdSetDepthClipNegativeOneToOneEXT") : gipa(instance, "vkCmdSetDepthClipNegativeOneToOneEXT"));
+    t->vkCmdSetViewportWScalingEnableNV = (PFN_vkCmdSetViewportWScalingEnableNV)(device ? gdpa(device, "vkCmdSetViewportWScalingEnableNV") : gipa(instance, "vkCmdSetViewportWScalingEnableNV"));
+    t->vkCmdSetViewportSwizzleNV = (PFN_vkCmdSetViewportSwizzleNV)(device ? gdpa(device, "vkCmdSetViewportSwizzleNV") : gipa(instance, "vkCmdSetViewportSwizzleNV"));
+    t->vkCmdSetCoverageToColorEnableNV = (PFN_vkCmdSetCoverageToColorEnableNV)(device ? gdpa(device, "vkCmdSetCoverageToColorEnableNV") : gipa(instance, "vkCmdSetCoverageToColorEnableNV"));
+    t->vkCmdSetCoverageToColorLocationNV = (PFN_vkCmdSetCoverageToColorLocationNV)(device ? gdpa(device, "vkCmdSetCoverageToColorLocationNV") : gipa(instance, "vkCmdSetCoverageToColorLocationNV"));
+    t->vkCmdSetCoverageModulationModeNV = (PFN_vkCmdSetCoverageModulationModeNV)(device ? gdpa(device, "vkCmdSetCoverageModulationModeNV") : gipa(instance, "vkCmdSetCoverageModulationModeNV"));
+    t->vkCmdSetCoverageModulationTableEnableNV = (PFN_vkCmdSetCoverageModulationTableEnableNV)(device ? gdpa(device, "vkCmdSetCoverageModulationTableEnableNV") : gipa(instance, "vkCmdSetCoverageModulationTableEnableNV"));
+    t->vkCmdSetCoverageModulationTableNV = (PFN_vkCmdSetCoverageModulationTableNV)(device ? gdpa(device, "vkCmdSetCoverageModulationTableNV") : gipa(instance, "vkCmdSetCoverageModulationTableNV"));
+    t->vkCmdSetShadingRateImageEnableNV = (PFN_vkCmdSetShadingRateImageEnableNV)(device ? gdpa(device, "vkCmdSetShadingRateImageEnableNV") : gipa(instance, "vkCmdSetShadingRateImageEnableNV"));
+    t->vkCmdSetRepresentativeFragmentTestEnableNV = (PFN_vkCmdSetRepresentativeFragmentTestEnableNV)(device ? gdpa(device, "vkCmdSetRepresentativeFragmentTestEnableNV") : gipa(instance, "vkCmdSetRepresentativeFragmentTestEnableNV"));
+    t->vkCmdSetCoverageReductionModeNV = (PFN_vkCmdSetCoverageReductionModeNV)(device ? gdpa(device, "vkCmdSetCoverageReductionModeNV") : gipa(instance, "vkCmdSetCoverageReductionModeNV"));
+    t->vkGetShaderModuleIdentifierEXT = (PFN_vkGetShaderModuleIdentifierEXT)(device ? gdpa(device, "vkGetShaderModuleIdentifierEXT") : gipa(instance, "vkGetShaderModuleIdentifierEXT"));
+    t->vkGetShaderModuleCreateInfoIdentifierEXT = (PFN_vkGetShaderModuleCreateInfoIdentifierEXT)(device ? gdpa(device, "vkGetShaderModuleCreateInfoIdentifierEXT") : gipa(instance, "vkGetShaderModuleCreateInfoIdentifierEXT"));
     t->vkGetPhysicalDeviceOpticalFlowImageFormatsNV = (PFN_vkGetPhysicalDeviceOpticalFlowImageFormatsNV)gipa(instance, "vkGetPhysicalDeviceOpticalFlowImageFormatsNV");
-    t->vkCreateOpticalFlowSessionNV = (PFN_vkCreateOpticalFlowSessionNV)(device ? gdpa(device, "vkCreateOpticalFlowSessionNV") : NULL);
-    if (!t->vkCreateOpticalFlowSessionNV)
-        t->vkCreateOpticalFlowSessionNV = (PFN_vkCreateOpticalFlowSessionNV)gipa(instance, "vkCreateOpticalFlowSessionNV");
-    t->vkDestroyOpticalFlowSessionNV = (PFN_vkDestroyOpticalFlowSessionNV)(device ? gdpa(device, "vkDestroyOpticalFlowSessionNV") : NULL);
-    if (!t->vkDestroyOpticalFlowSessionNV)
-        t->vkDestroyOpticalFlowSessionNV = (PFN_vkDestroyOpticalFlowSessionNV)gipa(instance, "vkDestroyOpticalFlowSessionNV");
-    t->vkBindOpticalFlowSessionImageNV = (PFN_vkBindOpticalFlowSessionImageNV)(device ? gdpa(device, "vkBindOpticalFlowSessionImageNV") : NULL);
-    if (!t->vkBindOpticalFlowSessionImageNV)
-        t->vkBindOpticalFlowSessionImageNV = (PFN_vkBindOpticalFlowSessionImageNV)gipa(instance, "vkBindOpticalFlowSessionImageNV");
-    t->vkCmdOpticalFlowExecuteNV = (PFN_vkCmdOpticalFlowExecuteNV)(device ? gdpa(device, "vkCmdOpticalFlowExecuteNV") : NULL);
-    if (!t->vkCmdOpticalFlowExecuteNV)
-        t->vkCmdOpticalFlowExecuteNV = (PFN_vkCmdOpticalFlowExecuteNV)gipa(instance, "vkCmdOpticalFlowExecuteNV");
-    t->vkCmdBindIndexBuffer2KHR = (PFN_vkCmdBindIndexBuffer2KHR)(device ? gdpa(device, "vkCmdBindIndexBuffer2KHR") : NULL);
-    if (!t->vkCmdBindIndexBuffer2KHR)
-        t->vkCmdBindIndexBuffer2KHR = (PFN_vkCmdBindIndexBuffer2KHR)gipa(instance, "vkCmdBindIndexBuffer2KHR");
-    t->vkGetRenderingAreaGranularityKHR = (PFN_vkGetRenderingAreaGranularityKHR)(device ? gdpa(device, "vkGetRenderingAreaGranularityKHR") : NULL);
-    if (!t->vkGetRenderingAreaGranularityKHR)
-        t->vkGetRenderingAreaGranularityKHR = (PFN_vkGetRenderingAreaGranularityKHR)gipa(instance, "vkGetRenderingAreaGranularityKHR");
-    t->vkGetDeviceImageSubresourceLayoutKHR = (PFN_vkGetDeviceImageSubresourceLayoutKHR)(device ? gdpa(device, "vkGetDeviceImageSubresourceLayoutKHR") : NULL);
-    if (!t->vkGetDeviceImageSubresourceLayoutKHR)
-        t->vkGetDeviceImageSubresourceLayoutKHR = (PFN_vkGetDeviceImageSubresourceLayoutKHR)gipa(instance, "vkGetDeviceImageSubresourceLayoutKHR");
-    t->vkGetImageSubresourceLayout2KHR = (PFN_vkGetImageSubresourceLayout2KHR)(device ? gdpa(device, "vkGetImageSubresourceLayout2KHR") : NULL);
-    if (!t->vkGetImageSubresourceLayout2KHR)
-        t->vkGetImageSubresourceLayout2KHR = (PFN_vkGetImageSubresourceLayout2KHR)gipa(instance, "vkGetImageSubresourceLayout2KHR");
-    t->vkCreateShadersEXT = (PFN_vkCreateShadersEXT)(device ? gdpa(device, "vkCreateShadersEXT") : NULL);
-    if (!t->vkCreateShadersEXT)
-        t->vkCreateShadersEXT = (PFN_vkCreateShadersEXT)gipa(instance, "vkCreateShadersEXT");
-    t->vkDestroyShaderEXT = (PFN_vkDestroyShaderEXT)(device ? gdpa(device, "vkDestroyShaderEXT") : NULL);
-    if (!t->vkDestroyShaderEXT)
-        t->vkDestroyShaderEXT = (PFN_vkDestroyShaderEXT)gipa(instance, "vkDestroyShaderEXT");
-    t->vkGetShaderBinaryDataEXT = (PFN_vkGetShaderBinaryDataEXT)(device ? gdpa(device, "vkGetShaderBinaryDataEXT") : NULL);
-    if (!t->vkGetShaderBinaryDataEXT)
-        t->vkGetShaderBinaryDataEXT = (PFN_vkGetShaderBinaryDataEXT)gipa(instance, "vkGetShaderBinaryDataEXT");
-    t->vkCmdBindShadersEXT = (PFN_vkCmdBindShadersEXT)(device ? gdpa(device, "vkCmdBindShadersEXT") : NULL);
-    if (!t->vkCmdBindShadersEXT)
-        t->vkCmdBindShadersEXT = (PFN_vkCmdBindShadersEXT)gipa(instance, "vkCmdBindShadersEXT");
-    t->vkCmdSetDepthClampRangeEXT = (PFN_vkCmdSetDepthClampRangeEXT)(device ? gdpa(device, "vkCmdSetDepthClampRangeEXT") : NULL);
-    if (!t->vkCmdSetDepthClampRangeEXT)
-        t->vkCmdSetDepthClampRangeEXT = (PFN_vkCmdSetDepthClampRangeEXT)gipa(instance, "vkCmdSetDepthClampRangeEXT");
+    t->vkCreateOpticalFlowSessionNV = (PFN_vkCreateOpticalFlowSessionNV)(device ? gdpa(device, "vkCreateOpticalFlowSessionNV") : gipa(instance, "vkCreateOpticalFlowSessionNV"));
+    t->vkDestroyOpticalFlowSessionNV = (PFN_vkDestroyOpticalFlowSessionNV)(device ? gdpa(device, "vkDestroyOpticalFlowSessionNV") : gipa(instance, "vkDestroyOpticalFlowSessionNV"));
+    t->vkBindOpticalFlowSessionImageNV = (PFN_vkBindOpticalFlowSessionImageNV)(device ? gdpa(device, "vkBindOpticalFlowSessionImageNV") : gipa(instance, "vkBindOpticalFlowSessionImageNV"));
+    t->vkCmdOpticalFlowExecuteNV = (PFN_vkCmdOpticalFlowExecuteNV)(device ? gdpa(device, "vkCmdOpticalFlowExecuteNV") : gipa(instance, "vkCmdOpticalFlowExecuteNV"));
+    t->vkCmdBindIndexBuffer2KHR = (PFN_vkCmdBindIndexBuffer2KHR)(device ? gdpa(device, "vkCmdBindIndexBuffer2KHR") : gipa(instance, "vkCmdBindIndexBuffer2KHR"));
+    t->vkGetRenderingAreaGranularityKHR = (PFN_vkGetRenderingAreaGranularityKHR)(device ? gdpa(device, "vkGetRenderingAreaGranularityKHR") : gipa(instance, "vkGetRenderingAreaGranularityKHR"));
+    t->vkGetDeviceImageSubresourceLayoutKHR = (PFN_vkGetDeviceImageSubresourceLayoutKHR)(device ? gdpa(device, "vkGetDeviceImageSubresourceLayoutKHR") : gipa(instance, "vkGetDeviceImageSubresourceLayoutKHR"));
+    t->vkGetImageSubresourceLayout2KHR = (PFN_vkGetImageSubresourceLayout2KHR)(device ? gdpa(device, "vkGetImageSubresourceLayout2KHR") : gipa(instance, "vkGetImageSubresourceLayout2KHR"));
+    t->vkCreateShadersEXT = (PFN_vkCreateShadersEXT)(device ? gdpa(device, "vkCreateShadersEXT") : gipa(instance, "vkCreateShadersEXT"));
+    t->vkDestroyShaderEXT = (PFN_vkDestroyShaderEXT)(device ? gdpa(device, "vkDestroyShaderEXT") : gipa(instance, "vkDestroyShaderEXT"));
+    t->vkGetShaderBinaryDataEXT = (PFN_vkGetShaderBinaryDataEXT)(device ? gdpa(device, "vkGetShaderBinaryDataEXT") : gipa(instance, "vkGetShaderBinaryDataEXT"));
+    t->vkCmdBindShadersEXT = (PFN_vkCmdBindShadersEXT)(device ? gdpa(device, "vkCmdBindShadersEXT") : gipa(instance, "vkCmdBindShadersEXT"));
+    t->vkCmdSetDepthClampRangeEXT = (PFN_vkCmdSetDepthClampRangeEXT)(device ? gdpa(device, "vkCmdSetDepthClampRangeEXT") : gipa(instance, "vkCmdSetDepthClampRangeEXT"));
     t->vkGetPhysicalDeviceCooperativeVectorPropertiesNV = (PFN_vkGetPhysicalDeviceCooperativeVectorPropertiesNV)gipa(instance, "vkGetPhysicalDeviceCooperativeVectorPropertiesNV");
-    t->vkConvertCooperativeVectorMatrixNV = (PFN_vkConvertCooperativeVectorMatrixNV)(device ? gdpa(device, "vkConvertCooperativeVectorMatrixNV") : NULL);
-    if (!t->vkConvertCooperativeVectorMatrixNV)
-        t->vkConvertCooperativeVectorMatrixNV = (PFN_vkConvertCooperativeVectorMatrixNV)gipa(instance, "vkConvertCooperativeVectorMatrixNV");
-    t->vkCmdConvertCooperativeVectorMatrixNV = (PFN_vkCmdConvertCooperativeVectorMatrixNV)(device ? gdpa(device, "vkCmdConvertCooperativeVectorMatrixNV") : NULL);
-    if (!t->vkCmdConvertCooperativeVectorMatrixNV)
-        t->vkCmdConvertCooperativeVectorMatrixNV = (PFN_vkCmdConvertCooperativeVectorMatrixNV)gipa(instance, "vkCmdConvertCooperativeVectorMatrixNV");
+    t->vkConvertCooperativeVectorMatrixNV = (PFN_vkConvertCooperativeVectorMatrixNV)(device ? gdpa(device, "vkConvertCooperativeVectorMatrixNV") : gipa(instance, "vkConvertCooperativeVectorMatrixNV"));
+    t->vkCmdConvertCooperativeVectorMatrixNV = (PFN_vkCmdConvertCooperativeVectorMatrixNV)(device ? gdpa(device, "vkCmdConvertCooperativeVectorMatrixNV") : gipa(instance, "vkCmdConvertCooperativeVectorMatrixNV"));
     t->vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR = (PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR)gipa(instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR");
-    t->vkCmdSetAttachmentFeedbackLoopEnableEXT = (PFN_vkCmdSetAttachmentFeedbackLoopEnableEXT)(device ? gdpa(device, "vkCmdSetAttachmentFeedbackLoopEnableEXT") : NULL);
-    if (!t->vkCmdSetAttachmentFeedbackLoopEnableEXT)
-        t->vkCmdSetAttachmentFeedbackLoopEnableEXT = (PFN_vkCmdSetAttachmentFeedbackLoopEnableEXT)gipa(instance, "vkCmdSetAttachmentFeedbackLoopEnableEXT");
-    t->vkCmdSetLineStippleKHR = (PFN_vkCmdSetLineStippleKHR)(device ? gdpa(device, "vkCmdSetLineStippleKHR") : NULL);
-    if (!t->vkCmdSetLineStippleKHR)
-        t->vkCmdSetLineStippleKHR = (PFN_vkCmdSetLineStippleKHR)gipa(instance, "vkCmdSetLineStippleKHR");
+    t->vkCmdSetAttachmentFeedbackLoopEnableEXT = (PFN_vkCmdSetAttachmentFeedbackLoopEnableEXT)(device ? gdpa(device, "vkCmdSetAttachmentFeedbackLoopEnableEXT") : gipa(instance, "vkCmdSetAttachmentFeedbackLoopEnableEXT"));
+    t->vkCmdSetLineStippleKHR = (PFN_vkCmdSetLineStippleKHR)(device ? gdpa(device, "vkCmdSetLineStippleKHR") : gipa(instance, "vkCmdSetLineStippleKHR"));
     t->vkGetPhysicalDeviceCalibrateableTimeDomainsKHR = (PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR)gipa(instance, "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR");
-    t->vkGetCalibratedTimestampsKHR = (PFN_vkGetCalibratedTimestampsKHR)(device ? gdpa(device, "vkGetCalibratedTimestampsKHR") : NULL);
-    if (!t->vkGetCalibratedTimestampsKHR)
-        t->vkGetCalibratedTimestampsKHR = (PFN_vkGetCalibratedTimestampsKHR)gipa(instance, "vkGetCalibratedTimestampsKHR");
-    t->vkCmdBindDescriptorSets2KHR = (PFN_vkCmdBindDescriptorSets2KHR)(device ? gdpa(device, "vkCmdBindDescriptorSets2KHR") : NULL);
-    if (!t->vkCmdBindDescriptorSets2KHR)
-        t->vkCmdBindDescriptorSets2KHR = (PFN_vkCmdBindDescriptorSets2KHR)gipa(instance, "vkCmdBindDescriptorSets2KHR");
-    t->vkCmdPushConstants2KHR = (PFN_vkCmdPushConstants2KHR)(device ? gdpa(device, "vkCmdPushConstants2KHR") : NULL);
-    if (!t->vkCmdPushConstants2KHR)
-        t->vkCmdPushConstants2KHR = (PFN_vkCmdPushConstants2KHR)gipa(instance, "vkCmdPushConstants2KHR");
-    t->vkCmdPushDescriptorSet2KHR = (PFN_vkCmdPushDescriptorSet2KHR)(device ? gdpa(device, "vkCmdPushDescriptorSet2KHR") : NULL);
-    if (!t->vkCmdPushDescriptorSet2KHR)
-        t->vkCmdPushDescriptorSet2KHR = (PFN_vkCmdPushDescriptorSet2KHR)gipa(instance, "vkCmdPushDescriptorSet2KHR");
-    t->vkCmdPushDescriptorSetWithTemplate2KHR = (PFN_vkCmdPushDescriptorSetWithTemplate2KHR)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplate2KHR") : NULL);
-    if (!t->vkCmdPushDescriptorSetWithTemplate2KHR)
-        t->vkCmdPushDescriptorSetWithTemplate2KHR = (PFN_vkCmdPushDescriptorSetWithTemplate2KHR)gipa(instance, "vkCmdPushDescriptorSetWithTemplate2KHR");
-    t->vkCmdSetDescriptorBufferOffsets2EXT = (PFN_vkCmdSetDescriptorBufferOffsets2EXT)(device ? gdpa(device, "vkCmdSetDescriptorBufferOffsets2EXT") : NULL);
-    if (!t->vkCmdSetDescriptorBufferOffsets2EXT)
-        t->vkCmdSetDescriptorBufferOffsets2EXT = (PFN_vkCmdSetDescriptorBufferOffsets2EXT)gipa(instance, "vkCmdSetDescriptorBufferOffsets2EXT");
-    t->vkCmdBindDescriptorBufferEmbeddedSamplers2EXT = (PFN_vkCmdBindDescriptorBufferEmbeddedSamplers2EXT)(device ? gdpa(device, "vkCmdBindDescriptorBufferEmbeddedSamplers2EXT") : NULL);
-    if (!t->vkCmdBindDescriptorBufferEmbeddedSamplers2EXT)
-        t->vkCmdBindDescriptorBufferEmbeddedSamplers2EXT = (PFN_vkCmdBindDescriptorBufferEmbeddedSamplers2EXT)gipa(instance, "vkCmdBindDescriptorBufferEmbeddedSamplers2EXT");
-    t->vkCmdCopyMemoryIndirectKHR = (PFN_vkCmdCopyMemoryIndirectKHR)(device ? gdpa(device, "vkCmdCopyMemoryIndirectKHR") : NULL);
-    if (!t->vkCmdCopyMemoryIndirectKHR)
-        t->vkCmdCopyMemoryIndirectKHR = (PFN_vkCmdCopyMemoryIndirectKHR)gipa(instance, "vkCmdCopyMemoryIndirectKHR");
-    t->vkCmdCopyMemoryToImageIndirectKHR = (PFN_vkCmdCopyMemoryToImageIndirectKHR)(device ? gdpa(device, "vkCmdCopyMemoryToImageIndirectKHR") : NULL);
-    if (!t->vkCmdCopyMemoryToImageIndirectKHR)
-        t->vkCmdCopyMemoryToImageIndirectKHR = (PFN_vkCmdCopyMemoryToImageIndirectKHR)gipa(instance, "vkCmdCopyMemoryToImageIndirectKHR");
-    t->vkCmdDecompressMemoryEXT = (PFN_vkCmdDecompressMemoryEXT)(device ? gdpa(device, "vkCmdDecompressMemoryEXT") : NULL);
-    if (!t->vkCmdDecompressMemoryEXT)
-        t->vkCmdDecompressMemoryEXT = (PFN_vkCmdDecompressMemoryEXT)gipa(instance, "vkCmdDecompressMemoryEXT");
-    t->vkCmdDecompressMemoryIndirectCountEXT = (PFN_vkCmdDecompressMemoryIndirectCountEXT)(device ? gdpa(device, "vkCmdDecompressMemoryIndirectCountEXT") : NULL);
-    if (!t->vkCmdDecompressMemoryIndirectCountEXT)
-        t->vkCmdDecompressMemoryIndirectCountEXT = (PFN_vkCmdDecompressMemoryIndirectCountEXT)gipa(instance, "vkCmdDecompressMemoryIndirectCountEXT");
-    t->vkGetClusterAccelerationStructureBuildSizesNV = (PFN_vkGetClusterAccelerationStructureBuildSizesNV)(device ? gdpa(device, "vkGetClusterAccelerationStructureBuildSizesNV") : NULL);
-    if (!t->vkGetClusterAccelerationStructureBuildSizesNV)
-        t->vkGetClusterAccelerationStructureBuildSizesNV = (PFN_vkGetClusterAccelerationStructureBuildSizesNV)gipa(instance, "vkGetClusterAccelerationStructureBuildSizesNV");
-    t->vkCmdBuildClusterAccelerationStructureIndirectNV = (PFN_vkCmdBuildClusterAccelerationStructureIndirectNV)(device ? gdpa(device, "vkCmdBuildClusterAccelerationStructureIndirectNV") : NULL);
-    if (!t->vkCmdBuildClusterAccelerationStructureIndirectNV)
-        t->vkCmdBuildClusterAccelerationStructureIndirectNV = (PFN_vkCmdBuildClusterAccelerationStructureIndirectNV)gipa(instance, "vkCmdBuildClusterAccelerationStructureIndirectNV");
-    t->vkGetPartitionedAccelerationStructuresBuildSizesNV = (PFN_vkGetPartitionedAccelerationStructuresBuildSizesNV)(device ? gdpa(device, "vkGetPartitionedAccelerationStructuresBuildSizesNV") : NULL);
-    if (!t->vkGetPartitionedAccelerationStructuresBuildSizesNV)
-        t->vkGetPartitionedAccelerationStructuresBuildSizesNV = (PFN_vkGetPartitionedAccelerationStructuresBuildSizesNV)gipa(instance, "vkGetPartitionedAccelerationStructuresBuildSizesNV");
-    t->vkCmdBuildPartitionedAccelerationStructuresNV = (PFN_vkCmdBuildPartitionedAccelerationStructuresNV)(device ? gdpa(device, "vkCmdBuildPartitionedAccelerationStructuresNV") : NULL);
-    if (!t->vkCmdBuildPartitionedAccelerationStructuresNV)
-        t->vkCmdBuildPartitionedAccelerationStructuresNV = (PFN_vkCmdBuildPartitionedAccelerationStructuresNV)gipa(instance, "vkCmdBuildPartitionedAccelerationStructuresNV");
-    t->vkGetGeneratedCommandsMemoryRequirementsEXT = (PFN_vkGetGeneratedCommandsMemoryRequirementsEXT)(device ? gdpa(device, "vkGetGeneratedCommandsMemoryRequirementsEXT") : NULL);
-    if (!t->vkGetGeneratedCommandsMemoryRequirementsEXT)
-        t->vkGetGeneratedCommandsMemoryRequirementsEXT = (PFN_vkGetGeneratedCommandsMemoryRequirementsEXT)gipa(instance, "vkGetGeneratedCommandsMemoryRequirementsEXT");
-    t->vkCmdPreprocessGeneratedCommandsEXT = (PFN_vkCmdPreprocessGeneratedCommandsEXT)(device ? gdpa(device, "vkCmdPreprocessGeneratedCommandsEXT") : NULL);
-    if (!t->vkCmdPreprocessGeneratedCommandsEXT)
-        t->vkCmdPreprocessGeneratedCommandsEXT = (PFN_vkCmdPreprocessGeneratedCommandsEXT)gipa(instance, "vkCmdPreprocessGeneratedCommandsEXT");
-    t->vkCmdExecuteGeneratedCommandsEXT = (PFN_vkCmdExecuteGeneratedCommandsEXT)(device ? gdpa(device, "vkCmdExecuteGeneratedCommandsEXT") : NULL);
-    if (!t->vkCmdExecuteGeneratedCommandsEXT)
-        t->vkCmdExecuteGeneratedCommandsEXT = (PFN_vkCmdExecuteGeneratedCommandsEXT)gipa(instance, "vkCmdExecuteGeneratedCommandsEXT");
-    t->vkCreateIndirectCommandsLayoutEXT = (PFN_vkCreateIndirectCommandsLayoutEXT)(device ? gdpa(device, "vkCreateIndirectCommandsLayoutEXT") : NULL);
-    if (!t->vkCreateIndirectCommandsLayoutEXT)
-        t->vkCreateIndirectCommandsLayoutEXT = (PFN_vkCreateIndirectCommandsLayoutEXT)gipa(instance, "vkCreateIndirectCommandsLayoutEXT");
-    t->vkDestroyIndirectCommandsLayoutEXT = (PFN_vkDestroyIndirectCommandsLayoutEXT)(device ? gdpa(device, "vkDestroyIndirectCommandsLayoutEXT") : NULL);
-    if (!t->vkDestroyIndirectCommandsLayoutEXT)
-        t->vkDestroyIndirectCommandsLayoutEXT = (PFN_vkDestroyIndirectCommandsLayoutEXT)gipa(instance, "vkDestroyIndirectCommandsLayoutEXT");
-    t->vkCreateIndirectExecutionSetEXT = (PFN_vkCreateIndirectExecutionSetEXT)(device ? gdpa(device, "vkCreateIndirectExecutionSetEXT") : NULL);
-    if (!t->vkCreateIndirectExecutionSetEXT)
-        t->vkCreateIndirectExecutionSetEXT = (PFN_vkCreateIndirectExecutionSetEXT)gipa(instance, "vkCreateIndirectExecutionSetEXT");
-    t->vkDestroyIndirectExecutionSetEXT = (PFN_vkDestroyIndirectExecutionSetEXT)(device ? gdpa(device, "vkDestroyIndirectExecutionSetEXT") : NULL);
-    if (!t->vkDestroyIndirectExecutionSetEXT)
-        t->vkDestroyIndirectExecutionSetEXT = (PFN_vkDestroyIndirectExecutionSetEXT)gipa(instance, "vkDestroyIndirectExecutionSetEXT");
-    t->vkUpdateIndirectExecutionSetPipelineEXT = (PFN_vkUpdateIndirectExecutionSetPipelineEXT)(device ? gdpa(device, "vkUpdateIndirectExecutionSetPipelineEXT") : NULL);
-    if (!t->vkUpdateIndirectExecutionSetPipelineEXT)
-        t->vkUpdateIndirectExecutionSetPipelineEXT = (PFN_vkUpdateIndirectExecutionSetPipelineEXT)gipa(instance, "vkUpdateIndirectExecutionSetPipelineEXT");
-    t->vkUpdateIndirectExecutionSetShaderEXT = (PFN_vkUpdateIndirectExecutionSetShaderEXT)(device ? gdpa(device, "vkUpdateIndirectExecutionSetShaderEXT") : NULL);
-    if (!t->vkUpdateIndirectExecutionSetShaderEXT)
-        t->vkUpdateIndirectExecutionSetShaderEXT = (PFN_vkUpdateIndirectExecutionSetShaderEXT)gipa(instance, "vkUpdateIndirectExecutionSetShaderEXT");
-    t->vkGetDeviceFaultReportsKHR = (PFN_vkGetDeviceFaultReportsKHR)(device ? gdpa(device, "vkGetDeviceFaultReportsKHR") : NULL);
-    if (!t->vkGetDeviceFaultReportsKHR)
-        t->vkGetDeviceFaultReportsKHR = (PFN_vkGetDeviceFaultReportsKHR)gipa(instance, "vkGetDeviceFaultReportsKHR");
-    t->vkGetDeviceFaultDebugInfoKHR = (PFN_vkGetDeviceFaultDebugInfoKHR)(device ? gdpa(device, "vkGetDeviceFaultDebugInfoKHR") : NULL);
-    if (!t->vkGetDeviceFaultDebugInfoKHR)
-        t->vkGetDeviceFaultDebugInfoKHR = (PFN_vkGetDeviceFaultDebugInfoKHR)gipa(instance, "vkGetDeviceFaultDebugInfoKHR");
+    t->vkGetCalibratedTimestampsKHR = (PFN_vkGetCalibratedTimestampsKHR)(device ? gdpa(device, "vkGetCalibratedTimestampsKHR") : gipa(instance, "vkGetCalibratedTimestampsKHR"));
+    t->vkCmdBindDescriptorSets2KHR = (PFN_vkCmdBindDescriptorSets2KHR)(device ? gdpa(device, "vkCmdBindDescriptorSets2KHR") : gipa(instance, "vkCmdBindDescriptorSets2KHR"));
+    t->vkCmdPushConstants2KHR = (PFN_vkCmdPushConstants2KHR)(device ? gdpa(device, "vkCmdPushConstants2KHR") : gipa(instance, "vkCmdPushConstants2KHR"));
+    t->vkCmdPushDescriptorSet2KHR = (PFN_vkCmdPushDescriptorSet2KHR)(device ? gdpa(device, "vkCmdPushDescriptorSet2KHR") : gipa(instance, "vkCmdPushDescriptorSet2KHR"));
+    t->vkCmdPushDescriptorSetWithTemplate2KHR = (PFN_vkCmdPushDescriptorSetWithTemplate2KHR)(device ? gdpa(device, "vkCmdPushDescriptorSetWithTemplate2KHR") : gipa(instance, "vkCmdPushDescriptorSetWithTemplate2KHR"));
+    t->vkCmdSetDescriptorBufferOffsets2EXT = (PFN_vkCmdSetDescriptorBufferOffsets2EXT)(device ? gdpa(device, "vkCmdSetDescriptorBufferOffsets2EXT") : gipa(instance, "vkCmdSetDescriptorBufferOffsets2EXT"));
+    t->vkCmdBindDescriptorBufferEmbeddedSamplers2EXT = (PFN_vkCmdBindDescriptorBufferEmbeddedSamplers2EXT)(device ? gdpa(device, "vkCmdBindDescriptorBufferEmbeddedSamplers2EXT") : gipa(instance, "vkCmdBindDescriptorBufferEmbeddedSamplers2EXT"));
+    t->vkCmdCopyMemoryIndirectKHR = (PFN_vkCmdCopyMemoryIndirectKHR)(device ? gdpa(device, "vkCmdCopyMemoryIndirectKHR") : gipa(instance, "vkCmdCopyMemoryIndirectKHR"));
+    t->vkCmdCopyMemoryToImageIndirectKHR = (PFN_vkCmdCopyMemoryToImageIndirectKHR)(device ? gdpa(device, "vkCmdCopyMemoryToImageIndirectKHR") : gipa(instance, "vkCmdCopyMemoryToImageIndirectKHR"));
+    t->vkCmdDecompressMemoryEXT = (PFN_vkCmdDecompressMemoryEXT)(device ? gdpa(device, "vkCmdDecompressMemoryEXT") : gipa(instance, "vkCmdDecompressMemoryEXT"));
+    t->vkCmdDecompressMemoryIndirectCountEXT = (PFN_vkCmdDecompressMemoryIndirectCountEXT)(device ? gdpa(device, "vkCmdDecompressMemoryIndirectCountEXT") : gipa(instance, "vkCmdDecompressMemoryIndirectCountEXT"));
+    t->vkGetClusterAccelerationStructureBuildSizesNV = (PFN_vkGetClusterAccelerationStructureBuildSizesNV)(device ? gdpa(device, "vkGetClusterAccelerationStructureBuildSizesNV") : gipa(instance, "vkGetClusterAccelerationStructureBuildSizesNV"));
+    t->vkCmdBuildClusterAccelerationStructureIndirectNV = (PFN_vkCmdBuildClusterAccelerationStructureIndirectNV)(device ? gdpa(device, "vkCmdBuildClusterAccelerationStructureIndirectNV") : gipa(instance, "vkCmdBuildClusterAccelerationStructureIndirectNV"));
+    t->vkGetPartitionedAccelerationStructuresBuildSizesNV = (PFN_vkGetPartitionedAccelerationStructuresBuildSizesNV)(device ? gdpa(device, "vkGetPartitionedAccelerationStructuresBuildSizesNV") : gipa(instance, "vkGetPartitionedAccelerationStructuresBuildSizesNV"));
+    t->vkCmdBuildPartitionedAccelerationStructuresNV = (PFN_vkCmdBuildPartitionedAccelerationStructuresNV)(device ? gdpa(device, "vkCmdBuildPartitionedAccelerationStructuresNV") : gipa(instance, "vkCmdBuildPartitionedAccelerationStructuresNV"));
+    t->vkGetGeneratedCommandsMemoryRequirementsEXT = (PFN_vkGetGeneratedCommandsMemoryRequirementsEXT)(device ? gdpa(device, "vkGetGeneratedCommandsMemoryRequirementsEXT") : gipa(instance, "vkGetGeneratedCommandsMemoryRequirementsEXT"));
+    t->vkCmdPreprocessGeneratedCommandsEXT = (PFN_vkCmdPreprocessGeneratedCommandsEXT)(device ? gdpa(device, "vkCmdPreprocessGeneratedCommandsEXT") : gipa(instance, "vkCmdPreprocessGeneratedCommandsEXT"));
+    t->vkCmdExecuteGeneratedCommandsEXT = (PFN_vkCmdExecuteGeneratedCommandsEXT)(device ? gdpa(device, "vkCmdExecuteGeneratedCommandsEXT") : gipa(instance, "vkCmdExecuteGeneratedCommandsEXT"));
+    t->vkCreateIndirectCommandsLayoutEXT = (PFN_vkCreateIndirectCommandsLayoutEXT)(device ? gdpa(device, "vkCreateIndirectCommandsLayoutEXT") : gipa(instance, "vkCreateIndirectCommandsLayoutEXT"));
+    t->vkDestroyIndirectCommandsLayoutEXT = (PFN_vkDestroyIndirectCommandsLayoutEXT)(device ? gdpa(device, "vkDestroyIndirectCommandsLayoutEXT") : gipa(instance, "vkDestroyIndirectCommandsLayoutEXT"));
+    t->vkCreateIndirectExecutionSetEXT = (PFN_vkCreateIndirectExecutionSetEXT)(device ? gdpa(device, "vkCreateIndirectExecutionSetEXT") : gipa(instance, "vkCreateIndirectExecutionSetEXT"));
+    t->vkDestroyIndirectExecutionSetEXT = (PFN_vkDestroyIndirectExecutionSetEXT)(device ? gdpa(device, "vkDestroyIndirectExecutionSetEXT") : gipa(instance, "vkDestroyIndirectExecutionSetEXT"));
+    t->vkUpdateIndirectExecutionSetPipelineEXT = (PFN_vkUpdateIndirectExecutionSetPipelineEXT)(device ? gdpa(device, "vkUpdateIndirectExecutionSetPipelineEXT") : gipa(instance, "vkUpdateIndirectExecutionSetPipelineEXT"));
+    t->vkUpdateIndirectExecutionSetShaderEXT = (PFN_vkUpdateIndirectExecutionSetShaderEXT)(device ? gdpa(device, "vkUpdateIndirectExecutionSetShaderEXT") : gipa(instance, "vkUpdateIndirectExecutionSetShaderEXT"));
+    t->vkGetDeviceFaultReportsKHR = (PFN_vkGetDeviceFaultReportsKHR)(device ? gdpa(device, "vkGetDeviceFaultReportsKHR") : gipa(instance, "vkGetDeviceFaultReportsKHR"));
+    t->vkGetDeviceFaultDebugInfoKHR = (PFN_vkGetDeviceFaultDebugInfoKHR)(device ? gdpa(device, "vkGetDeviceFaultDebugInfoKHR") : gipa(instance, "vkGetDeviceFaultDebugInfoKHR"));
     t->vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV = (PFN_vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV)gipa(instance, "vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV");
     t->vkEnumeratePhysicalDeviceQueueFamilyPerformanceCountersByRegionARM = (PFN_vkEnumeratePhysicalDeviceQueueFamilyPerformanceCountersByRegionARM)gipa(instance, "vkEnumeratePhysicalDeviceQueueFamilyPerformanceCountersByRegionARM");
     t->vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM = (PFN_vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM)gipa(instance, "vkEnumeratePhysicalDeviceShaderInstrumentationMetricsARM");
-    t->vkCreateShaderInstrumentationARM = (PFN_vkCreateShaderInstrumentationARM)(device ? gdpa(device, "vkCreateShaderInstrumentationARM") : NULL);
-    if (!t->vkCreateShaderInstrumentationARM)
-        t->vkCreateShaderInstrumentationARM = (PFN_vkCreateShaderInstrumentationARM)gipa(instance, "vkCreateShaderInstrumentationARM");
-    t->vkDestroyShaderInstrumentationARM = (PFN_vkDestroyShaderInstrumentationARM)(device ? gdpa(device, "vkDestroyShaderInstrumentationARM") : NULL);
-    if (!t->vkDestroyShaderInstrumentationARM)
-        t->vkDestroyShaderInstrumentationARM = (PFN_vkDestroyShaderInstrumentationARM)gipa(instance, "vkDestroyShaderInstrumentationARM");
-    t->vkCmdBeginShaderInstrumentationARM = (PFN_vkCmdBeginShaderInstrumentationARM)(device ? gdpa(device, "vkCmdBeginShaderInstrumentationARM") : NULL);
-    if (!t->vkCmdBeginShaderInstrumentationARM)
-        t->vkCmdBeginShaderInstrumentationARM = (PFN_vkCmdBeginShaderInstrumentationARM)gipa(instance, "vkCmdBeginShaderInstrumentationARM");
-    t->vkCmdEndShaderInstrumentationARM = (PFN_vkCmdEndShaderInstrumentationARM)(device ? gdpa(device, "vkCmdEndShaderInstrumentationARM") : NULL);
-    if (!t->vkCmdEndShaderInstrumentationARM)
-        t->vkCmdEndShaderInstrumentationARM = (PFN_vkCmdEndShaderInstrumentationARM)gipa(instance, "vkCmdEndShaderInstrumentationARM");
-    t->vkGetShaderInstrumentationValuesARM = (PFN_vkGetShaderInstrumentationValuesARM)(device ? gdpa(device, "vkGetShaderInstrumentationValuesARM") : NULL);
-    if (!t->vkGetShaderInstrumentationValuesARM)
-        t->vkGetShaderInstrumentationValuesARM = (PFN_vkGetShaderInstrumentationValuesARM)gipa(instance, "vkGetShaderInstrumentationValuesARM");
-    t->vkClearShaderInstrumentationMetricsARM = (PFN_vkClearShaderInstrumentationMetricsARM)(device ? gdpa(device, "vkClearShaderInstrumentationMetricsARM") : NULL);
-    if (!t->vkClearShaderInstrumentationMetricsARM)
-        t->vkClearShaderInstrumentationMetricsARM = (PFN_vkClearShaderInstrumentationMetricsARM)gipa(instance, "vkClearShaderInstrumentationMetricsARM");
-    t->vkCmdEndRendering2EXT = (PFN_vkCmdEndRendering2EXT)(device ? gdpa(device, "vkCmdEndRendering2EXT") : NULL);
-    if (!t->vkCmdEndRendering2EXT)
-        t->vkCmdEndRendering2EXT = (PFN_vkCmdEndRendering2EXT)gipa(instance, "vkCmdEndRendering2EXT");
-    t->vkCmdBeginCustomResolveEXT = (PFN_vkCmdBeginCustomResolveEXT)(device ? gdpa(device, "vkCmdBeginCustomResolveEXT") : NULL);
-    if (!t->vkCmdBeginCustomResolveEXT)
-        t->vkCmdBeginCustomResolveEXT = (PFN_vkCmdBeginCustomResolveEXT)gipa(instance, "vkCmdBeginCustomResolveEXT");
-    t->vkCmdEndRendering2KHR = (PFN_vkCmdEndRendering2KHR)(device ? gdpa(device, "vkCmdEndRendering2KHR") : NULL);
-    if (!t->vkCmdEndRendering2KHR)
-        t->vkCmdEndRendering2KHR = (PFN_vkCmdEndRendering2KHR)gipa(instance, "vkCmdEndRendering2KHR");
-    t->vkCmdSetComputeOccupancyPriorityNV = (PFN_vkCmdSetComputeOccupancyPriorityNV)(device ? gdpa(device, "vkCmdSetComputeOccupancyPriorityNV") : NULL);
-    if (!t->vkCmdSetComputeOccupancyPriorityNV)
-        t->vkCmdSetComputeOccupancyPriorityNV = (PFN_vkCmdSetComputeOccupancyPriorityNV)gipa(instance, "vkCmdSetComputeOccupancyPriorityNV");
+    t->vkCreateShaderInstrumentationARM = (PFN_vkCreateShaderInstrumentationARM)(device ? gdpa(device, "vkCreateShaderInstrumentationARM") : gipa(instance, "vkCreateShaderInstrumentationARM"));
+    t->vkDestroyShaderInstrumentationARM = (PFN_vkDestroyShaderInstrumentationARM)(device ? gdpa(device, "vkDestroyShaderInstrumentationARM") : gipa(instance, "vkDestroyShaderInstrumentationARM"));
+    t->vkCmdBeginShaderInstrumentationARM = (PFN_vkCmdBeginShaderInstrumentationARM)(device ? gdpa(device, "vkCmdBeginShaderInstrumentationARM") : gipa(instance, "vkCmdBeginShaderInstrumentationARM"));
+    t->vkCmdEndShaderInstrumentationARM = (PFN_vkCmdEndShaderInstrumentationARM)(device ? gdpa(device, "vkCmdEndShaderInstrumentationARM") : gipa(instance, "vkCmdEndShaderInstrumentationARM"));
+    t->vkGetShaderInstrumentationValuesARM = (PFN_vkGetShaderInstrumentationValuesARM)(device ? gdpa(device, "vkGetShaderInstrumentationValuesARM") : gipa(instance, "vkGetShaderInstrumentationValuesARM"));
+    t->vkClearShaderInstrumentationMetricsARM = (PFN_vkClearShaderInstrumentationMetricsARM)(device ? gdpa(device, "vkClearShaderInstrumentationMetricsARM") : gipa(instance, "vkClearShaderInstrumentationMetricsARM"));
+    t->vkCmdEndRendering2EXT = (PFN_vkCmdEndRendering2EXT)(device ? gdpa(device, "vkCmdEndRendering2EXT") : gipa(instance, "vkCmdEndRendering2EXT"));
+    t->vkCmdBeginCustomResolveEXT = (PFN_vkCmdBeginCustomResolveEXT)(device ? gdpa(device, "vkCmdBeginCustomResolveEXT") : gipa(instance, "vkCmdBeginCustomResolveEXT"));
+    t->vkCmdEndRendering2KHR = (PFN_vkCmdEndRendering2KHR)(device ? gdpa(device, "vkCmdEndRendering2KHR") : gipa(instance, "vkCmdEndRendering2KHR"));
+    t->vkCmdSetComputeOccupancyPriorityNV = (PFN_vkCmdSetComputeOccupancyPriorityNV)(device ? gdpa(device, "vkCmdSetComputeOccupancyPriorityNV") : gipa(instance, "vkCmdSetComputeOccupancyPriorityNV"));
     t->vkGetPhysicalDeviceCooperativeMatrixProperties2EXT = (PFN_vkGetPhysicalDeviceCooperativeMatrixProperties2EXT)gipa(instance, "vkGetPhysicalDeviceCooperativeMatrixProperties2EXT");
-    t->vkCmdSetPrimitiveRestartIndexEXT = (PFN_vkCmdSetPrimitiveRestartIndexEXT)(device ? gdpa(device, "vkCmdSetPrimitiveRestartIndexEXT") : NULL);
-    if (!t->vkCmdSetPrimitiveRestartIndexEXT)
-        t->vkCmdSetPrimitiveRestartIndexEXT = (PFN_vkCmdSetPrimitiveRestartIndexEXT)gipa(instance, "vkCmdSetPrimitiveRestartIndexEXT");
+    t->vkCmdSetPrimitiveRestartIndexEXT = (PFN_vkCmdSetPrimitiveRestartIndexEXT)(device ? gdpa(device, "vkCmdSetPrimitiveRestartIndexEXT") : gipa(instance, "vkCmdSetPrimitiveRestartIndexEXT"));
+    if (!t->vkBindBufferMemory2)
+        t->vkBindBufferMemory2 = (PFN_vkBindBufferMemory2)t->vkBindBufferMemory2KHR;
+    if (!t->vkBindBufferMemory2KHR)
+        t->vkBindBufferMemory2KHR = (PFN_vkBindBufferMemory2KHR)t->vkBindBufferMemory2;
+    if (!t->vkBindImageMemory2)
+        t->vkBindImageMemory2 = (PFN_vkBindImageMemory2)t->vkBindImageMemory2KHR;
+    if (!t->vkBindImageMemory2KHR)
+        t->vkBindImageMemory2KHR = (PFN_vkBindImageMemory2KHR)t->vkBindImageMemory2;
+    if (!t->vkGetDeviceGroupPeerMemoryFeatures)
+        t->vkGetDeviceGroupPeerMemoryFeatures = (PFN_vkGetDeviceGroupPeerMemoryFeatures)t->vkGetDeviceGroupPeerMemoryFeaturesKHR;
+    if (!t->vkGetDeviceGroupPeerMemoryFeaturesKHR)
+        t->vkGetDeviceGroupPeerMemoryFeaturesKHR = (PFN_vkGetDeviceGroupPeerMemoryFeaturesKHR)t->vkGetDeviceGroupPeerMemoryFeatures;
+    if (!t->vkCmdSetDeviceMask)
+        t->vkCmdSetDeviceMask = (PFN_vkCmdSetDeviceMask)t->vkCmdSetDeviceMaskKHR;
+    if (!t->vkCmdSetDeviceMaskKHR)
+        t->vkCmdSetDeviceMaskKHR = (PFN_vkCmdSetDeviceMaskKHR)t->vkCmdSetDeviceMask;
+    if (!t->vkGetImageMemoryRequirements2)
+        t->vkGetImageMemoryRequirements2 = (PFN_vkGetImageMemoryRequirements2)t->vkGetImageMemoryRequirements2KHR;
+    if (!t->vkGetImageMemoryRequirements2KHR)
+        t->vkGetImageMemoryRequirements2KHR = (PFN_vkGetImageMemoryRequirements2KHR)t->vkGetImageMemoryRequirements2;
+    if (!t->vkGetBufferMemoryRequirements2)
+        t->vkGetBufferMemoryRequirements2 = (PFN_vkGetBufferMemoryRequirements2)t->vkGetBufferMemoryRequirements2KHR;
+    if (!t->vkGetBufferMemoryRequirements2KHR)
+        t->vkGetBufferMemoryRequirements2KHR = (PFN_vkGetBufferMemoryRequirements2KHR)t->vkGetBufferMemoryRequirements2;
+    if (!t->vkGetImageSparseMemoryRequirements2)
+        t->vkGetImageSparseMemoryRequirements2 = (PFN_vkGetImageSparseMemoryRequirements2)t->vkGetImageSparseMemoryRequirements2KHR;
+    if (!t->vkGetImageSparseMemoryRequirements2KHR)
+        t->vkGetImageSparseMemoryRequirements2KHR = (PFN_vkGetImageSparseMemoryRequirements2KHR)t->vkGetImageSparseMemoryRequirements2;
+    if (!t->vkTrimCommandPool)
+        t->vkTrimCommandPool = (PFN_vkTrimCommandPool)t->vkTrimCommandPoolKHR;
+    if (!t->vkTrimCommandPoolKHR)
+        t->vkTrimCommandPoolKHR = (PFN_vkTrimCommandPoolKHR)t->vkTrimCommandPool;
+    if (!t->vkCmdDispatchBase)
+        t->vkCmdDispatchBase = (PFN_vkCmdDispatchBase)t->vkCmdDispatchBaseKHR;
+    if (!t->vkCmdDispatchBaseKHR)
+        t->vkCmdDispatchBaseKHR = (PFN_vkCmdDispatchBaseKHR)t->vkCmdDispatchBase;
+    if (!t->vkCreateDescriptorUpdateTemplate)
+        t->vkCreateDescriptorUpdateTemplate = (PFN_vkCreateDescriptorUpdateTemplate)t->vkCreateDescriptorUpdateTemplateKHR;
+    if (!t->vkCreateDescriptorUpdateTemplateKHR)
+        t->vkCreateDescriptorUpdateTemplateKHR = (PFN_vkCreateDescriptorUpdateTemplateKHR)t->vkCreateDescriptorUpdateTemplate;
+    if (!t->vkDestroyDescriptorUpdateTemplate)
+        t->vkDestroyDescriptorUpdateTemplate = (PFN_vkDestroyDescriptorUpdateTemplate)t->vkDestroyDescriptorUpdateTemplateKHR;
+    if (!t->vkDestroyDescriptorUpdateTemplateKHR)
+        t->vkDestroyDescriptorUpdateTemplateKHR = (PFN_vkDestroyDescriptorUpdateTemplateKHR)t->vkDestroyDescriptorUpdateTemplate;
+    if (!t->vkUpdateDescriptorSetWithTemplate)
+        t->vkUpdateDescriptorSetWithTemplate = (PFN_vkUpdateDescriptorSetWithTemplate)t->vkUpdateDescriptorSetWithTemplateKHR;
+    if (!t->vkUpdateDescriptorSetWithTemplateKHR)
+        t->vkUpdateDescriptorSetWithTemplateKHR = (PFN_vkUpdateDescriptorSetWithTemplateKHR)t->vkUpdateDescriptorSetWithTemplate;
+    if (!t->vkGetDescriptorSetLayoutSupport)
+        t->vkGetDescriptorSetLayoutSupport = (PFN_vkGetDescriptorSetLayoutSupport)t->vkGetDescriptorSetLayoutSupportKHR;
+    if (!t->vkGetDescriptorSetLayoutSupportKHR)
+        t->vkGetDescriptorSetLayoutSupportKHR = (PFN_vkGetDescriptorSetLayoutSupportKHR)t->vkGetDescriptorSetLayoutSupport;
+    if (!t->vkCreateSamplerYcbcrConversion)
+        t->vkCreateSamplerYcbcrConversion = (PFN_vkCreateSamplerYcbcrConversion)t->vkCreateSamplerYcbcrConversionKHR;
+    if (!t->vkCreateSamplerYcbcrConversionKHR)
+        t->vkCreateSamplerYcbcrConversionKHR = (PFN_vkCreateSamplerYcbcrConversionKHR)t->vkCreateSamplerYcbcrConversion;
+    if (!t->vkDestroySamplerYcbcrConversion)
+        t->vkDestroySamplerYcbcrConversion = (PFN_vkDestroySamplerYcbcrConversion)t->vkDestroySamplerYcbcrConversionKHR;
+    if (!t->vkDestroySamplerYcbcrConversionKHR)
+        t->vkDestroySamplerYcbcrConversionKHR = (PFN_vkDestroySamplerYcbcrConversionKHR)t->vkDestroySamplerYcbcrConversion;
+    if (!t->vkResetQueryPool)
+        t->vkResetQueryPool = (PFN_vkResetQueryPool)t->vkResetQueryPoolEXT;
+    if (!t->vkResetQueryPoolEXT)
+        t->vkResetQueryPoolEXT = (PFN_vkResetQueryPoolEXT)t->vkResetQueryPool;
+    if (!t->vkGetSemaphoreCounterValue)
+        t->vkGetSemaphoreCounterValue = (PFN_vkGetSemaphoreCounterValue)t->vkGetSemaphoreCounterValueKHR;
+    if (!t->vkGetSemaphoreCounterValueKHR)
+        t->vkGetSemaphoreCounterValueKHR = (PFN_vkGetSemaphoreCounterValueKHR)t->vkGetSemaphoreCounterValue;
+    if (!t->vkWaitSemaphores)
+        t->vkWaitSemaphores = (PFN_vkWaitSemaphores)t->vkWaitSemaphoresKHR;
+    if (!t->vkWaitSemaphoresKHR)
+        t->vkWaitSemaphoresKHR = (PFN_vkWaitSemaphoresKHR)t->vkWaitSemaphores;
+    if (!t->vkSignalSemaphore)
+        t->vkSignalSemaphore = (PFN_vkSignalSemaphore)t->vkSignalSemaphoreKHR;
+    if (!t->vkSignalSemaphoreKHR)
+        t->vkSignalSemaphoreKHR = (PFN_vkSignalSemaphoreKHR)t->vkSignalSemaphore;
+    if (!t->vkGetBufferDeviceAddress)
+        t->vkGetBufferDeviceAddress = (PFN_vkGetBufferDeviceAddress)t->vkGetBufferDeviceAddressEXT;
+    if (!t->vkGetBufferDeviceAddress)
+        t->vkGetBufferDeviceAddress = (PFN_vkGetBufferDeviceAddress)t->vkGetBufferDeviceAddressKHR;
+    if (!t->vkGetBufferDeviceAddressEXT)
+        t->vkGetBufferDeviceAddressEXT = (PFN_vkGetBufferDeviceAddressEXT)t->vkGetBufferDeviceAddress;
+    if (!t->vkGetBufferDeviceAddressEXT)
+        t->vkGetBufferDeviceAddressEXT = (PFN_vkGetBufferDeviceAddressEXT)t->vkGetBufferDeviceAddressKHR;
+    if (!t->vkGetBufferDeviceAddressKHR)
+        t->vkGetBufferDeviceAddressKHR = (PFN_vkGetBufferDeviceAddressKHR)t->vkGetBufferDeviceAddress;
+    if (!t->vkGetBufferDeviceAddressKHR)
+        t->vkGetBufferDeviceAddressKHR = (PFN_vkGetBufferDeviceAddressKHR)t->vkGetBufferDeviceAddressEXT;
+    if (!t->vkGetBufferOpaqueCaptureAddress)
+        t->vkGetBufferOpaqueCaptureAddress = (PFN_vkGetBufferOpaqueCaptureAddress)t->vkGetBufferOpaqueCaptureAddressKHR;
+    if (!t->vkGetBufferOpaqueCaptureAddressKHR)
+        t->vkGetBufferOpaqueCaptureAddressKHR = (PFN_vkGetBufferOpaqueCaptureAddressKHR)t->vkGetBufferOpaqueCaptureAddress;
+    if (!t->vkGetDeviceMemoryOpaqueCaptureAddress)
+        t->vkGetDeviceMemoryOpaqueCaptureAddress = (PFN_vkGetDeviceMemoryOpaqueCaptureAddress)t->vkGetDeviceMemoryOpaqueCaptureAddressKHR;
+    if (!t->vkGetDeviceMemoryOpaqueCaptureAddressKHR)
+        t->vkGetDeviceMemoryOpaqueCaptureAddressKHR = (PFN_vkGetDeviceMemoryOpaqueCaptureAddressKHR)t->vkGetDeviceMemoryOpaqueCaptureAddress;
+    if (!t->vkCmdDrawIndirectCount)
+        t->vkCmdDrawIndirectCount = (PFN_vkCmdDrawIndirectCount)t->vkCmdDrawIndirectCountAMD;
+    if (!t->vkCmdDrawIndirectCount)
+        t->vkCmdDrawIndirectCount = (PFN_vkCmdDrawIndirectCount)t->vkCmdDrawIndirectCountKHR;
+    if (!t->vkCmdDrawIndirectCountAMD)
+        t->vkCmdDrawIndirectCountAMD = (PFN_vkCmdDrawIndirectCountAMD)t->vkCmdDrawIndirectCount;
+    if (!t->vkCmdDrawIndirectCountAMD)
+        t->vkCmdDrawIndirectCountAMD = (PFN_vkCmdDrawIndirectCountAMD)t->vkCmdDrawIndirectCountKHR;
+    if (!t->vkCmdDrawIndirectCountKHR)
+        t->vkCmdDrawIndirectCountKHR = (PFN_vkCmdDrawIndirectCountKHR)t->vkCmdDrawIndirectCount;
+    if (!t->vkCmdDrawIndirectCountKHR)
+        t->vkCmdDrawIndirectCountKHR = (PFN_vkCmdDrawIndirectCountKHR)t->vkCmdDrawIndirectCountAMD;
+    if (!t->vkCmdDrawIndexedIndirectCount)
+        t->vkCmdDrawIndexedIndirectCount = (PFN_vkCmdDrawIndexedIndirectCount)t->vkCmdDrawIndexedIndirectCountAMD;
+    if (!t->vkCmdDrawIndexedIndirectCount)
+        t->vkCmdDrawIndexedIndirectCount = (PFN_vkCmdDrawIndexedIndirectCount)t->vkCmdDrawIndexedIndirectCountKHR;
+    if (!t->vkCmdDrawIndexedIndirectCountAMD)
+        t->vkCmdDrawIndexedIndirectCountAMD = (PFN_vkCmdDrawIndexedIndirectCountAMD)t->vkCmdDrawIndexedIndirectCount;
+    if (!t->vkCmdDrawIndexedIndirectCountAMD)
+        t->vkCmdDrawIndexedIndirectCountAMD = (PFN_vkCmdDrawIndexedIndirectCountAMD)t->vkCmdDrawIndexedIndirectCountKHR;
+    if (!t->vkCmdDrawIndexedIndirectCountKHR)
+        t->vkCmdDrawIndexedIndirectCountKHR = (PFN_vkCmdDrawIndexedIndirectCountKHR)t->vkCmdDrawIndexedIndirectCount;
+    if (!t->vkCmdDrawIndexedIndirectCountKHR)
+        t->vkCmdDrawIndexedIndirectCountKHR = (PFN_vkCmdDrawIndexedIndirectCountKHR)t->vkCmdDrawIndexedIndirectCountAMD;
+    if (!t->vkCreateRenderPass2)
+        t->vkCreateRenderPass2 = (PFN_vkCreateRenderPass2)t->vkCreateRenderPass2KHR;
+    if (!t->vkCreateRenderPass2KHR)
+        t->vkCreateRenderPass2KHR = (PFN_vkCreateRenderPass2KHR)t->vkCreateRenderPass2;
+    if (!t->vkCmdBeginRenderPass2)
+        t->vkCmdBeginRenderPass2 = (PFN_vkCmdBeginRenderPass2)t->vkCmdBeginRenderPass2KHR;
+    if (!t->vkCmdBeginRenderPass2KHR)
+        t->vkCmdBeginRenderPass2KHR = (PFN_vkCmdBeginRenderPass2KHR)t->vkCmdBeginRenderPass2;
+    if (!t->vkCmdNextSubpass2)
+        t->vkCmdNextSubpass2 = (PFN_vkCmdNextSubpass2)t->vkCmdNextSubpass2KHR;
+    if (!t->vkCmdNextSubpass2KHR)
+        t->vkCmdNextSubpass2KHR = (PFN_vkCmdNextSubpass2KHR)t->vkCmdNextSubpass2;
+    if (!t->vkCmdEndRenderPass2)
+        t->vkCmdEndRenderPass2 = (PFN_vkCmdEndRenderPass2)t->vkCmdEndRenderPass2KHR;
+    if (!t->vkCmdEndRenderPass2KHR)
+        t->vkCmdEndRenderPass2KHR = (PFN_vkCmdEndRenderPass2KHR)t->vkCmdEndRenderPass2;
+    if (!t->vkCreatePrivateDataSlot)
+        t->vkCreatePrivateDataSlot = (PFN_vkCreatePrivateDataSlot)t->vkCreatePrivateDataSlotEXT;
+    if (!t->vkCreatePrivateDataSlotEXT)
+        t->vkCreatePrivateDataSlotEXT = (PFN_vkCreatePrivateDataSlotEXT)t->vkCreatePrivateDataSlot;
+    if (!t->vkDestroyPrivateDataSlot)
+        t->vkDestroyPrivateDataSlot = (PFN_vkDestroyPrivateDataSlot)t->vkDestroyPrivateDataSlotEXT;
+    if (!t->vkDestroyPrivateDataSlotEXT)
+        t->vkDestroyPrivateDataSlotEXT = (PFN_vkDestroyPrivateDataSlotEXT)t->vkDestroyPrivateDataSlot;
+    if (!t->vkSetPrivateData)
+        t->vkSetPrivateData = (PFN_vkSetPrivateData)t->vkSetPrivateDataEXT;
+    if (!t->vkSetPrivateDataEXT)
+        t->vkSetPrivateDataEXT = (PFN_vkSetPrivateDataEXT)t->vkSetPrivateData;
+    if (!t->vkGetPrivateData)
+        t->vkGetPrivateData = (PFN_vkGetPrivateData)t->vkGetPrivateDataEXT;
+    if (!t->vkGetPrivateDataEXT)
+        t->vkGetPrivateDataEXT = (PFN_vkGetPrivateDataEXT)t->vkGetPrivateData;
+    if (!t->vkCmdPipelineBarrier2)
+        t->vkCmdPipelineBarrier2 = (PFN_vkCmdPipelineBarrier2)t->vkCmdPipelineBarrier2KHR;
+    if (!t->vkCmdPipelineBarrier2KHR)
+        t->vkCmdPipelineBarrier2KHR = (PFN_vkCmdPipelineBarrier2KHR)t->vkCmdPipelineBarrier2;
+    if (!t->vkCmdWriteTimestamp2)
+        t->vkCmdWriteTimestamp2 = (PFN_vkCmdWriteTimestamp2)t->vkCmdWriteTimestamp2KHR;
+    if (!t->vkCmdWriteTimestamp2KHR)
+        t->vkCmdWriteTimestamp2KHR = (PFN_vkCmdWriteTimestamp2KHR)t->vkCmdWriteTimestamp2;
+    if (!t->vkQueueSubmit2)
+        t->vkQueueSubmit2 = (PFN_vkQueueSubmit2)t->vkQueueSubmit2KHR;
+    if (!t->vkQueueSubmit2KHR)
+        t->vkQueueSubmit2KHR = (PFN_vkQueueSubmit2KHR)t->vkQueueSubmit2;
+    if (!t->vkCmdCopyBuffer2)
+        t->vkCmdCopyBuffer2 = (PFN_vkCmdCopyBuffer2)t->vkCmdCopyBuffer2KHR;
+    if (!t->vkCmdCopyBuffer2KHR)
+        t->vkCmdCopyBuffer2KHR = (PFN_vkCmdCopyBuffer2KHR)t->vkCmdCopyBuffer2;
+    if (!t->vkCmdCopyImage2)
+        t->vkCmdCopyImage2 = (PFN_vkCmdCopyImage2)t->vkCmdCopyImage2KHR;
+    if (!t->vkCmdCopyImage2KHR)
+        t->vkCmdCopyImage2KHR = (PFN_vkCmdCopyImage2KHR)t->vkCmdCopyImage2;
+    if (!t->vkCmdCopyBufferToImage2)
+        t->vkCmdCopyBufferToImage2 = (PFN_vkCmdCopyBufferToImage2)t->vkCmdCopyBufferToImage2KHR;
+    if (!t->vkCmdCopyBufferToImage2KHR)
+        t->vkCmdCopyBufferToImage2KHR = (PFN_vkCmdCopyBufferToImage2KHR)t->vkCmdCopyBufferToImage2;
+    if (!t->vkCmdCopyImageToBuffer2)
+        t->vkCmdCopyImageToBuffer2 = (PFN_vkCmdCopyImageToBuffer2)t->vkCmdCopyImageToBuffer2KHR;
+    if (!t->vkCmdCopyImageToBuffer2KHR)
+        t->vkCmdCopyImageToBuffer2KHR = (PFN_vkCmdCopyImageToBuffer2KHR)t->vkCmdCopyImageToBuffer2;
+    if (!t->vkGetDeviceBufferMemoryRequirements)
+        t->vkGetDeviceBufferMemoryRequirements = (PFN_vkGetDeviceBufferMemoryRequirements)t->vkGetDeviceBufferMemoryRequirementsKHR;
+    if (!t->vkGetDeviceBufferMemoryRequirementsKHR)
+        t->vkGetDeviceBufferMemoryRequirementsKHR = (PFN_vkGetDeviceBufferMemoryRequirementsKHR)t->vkGetDeviceBufferMemoryRequirements;
+    if (!t->vkGetDeviceImageMemoryRequirements)
+        t->vkGetDeviceImageMemoryRequirements = (PFN_vkGetDeviceImageMemoryRequirements)t->vkGetDeviceImageMemoryRequirementsKHR;
+    if (!t->vkGetDeviceImageMemoryRequirementsKHR)
+        t->vkGetDeviceImageMemoryRequirementsKHR = (PFN_vkGetDeviceImageMemoryRequirementsKHR)t->vkGetDeviceImageMemoryRequirements;
+    if (!t->vkGetDeviceImageSparseMemoryRequirements)
+        t->vkGetDeviceImageSparseMemoryRequirements = (PFN_vkGetDeviceImageSparseMemoryRequirements)t->vkGetDeviceImageSparseMemoryRequirementsKHR;
+    if (!t->vkGetDeviceImageSparseMemoryRequirementsKHR)
+        t->vkGetDeviceImageSparseMemoryRequirementsKHR = (PFN_vkGetDeviceImageSparseMemoryRequirementsKHR)t->vkGetDeviceImageSparseMemoryRequirements;
+    if (!t->vkCmdSetEvent2)
+        t->vkCmdSetEvent2 = (PFN_vkCmdSetEvent2)t->vkCmdSetEvent2KHR;
+    if (!t->vkCmdSetEvent2KHR)
+        t->vkCmdSetEvent2KHR = (PFN_vkCmdSetEvent2KHR)t->vkCmdSetEvent2;
+    if (!t->vkCmdResetEvent2)
+        t->vkCmdResetEvent2 = (PFN_vkCmdResetEvent2)t->vkCmdResetEvent2KHR;
+    if (!t->vkCmdResetEvent2KHR)
+        t->vkCmdResetEvent2KHR = (PFN_vkCmdResetEvent2KHR)t->vkCmdResetEvent2;
+    if (!t->vkCmdWaitEvents2)
+        t->vkCmdWaitEvents2 = (PFN_vkCmdWaitEvents2)t->vkCmdWaitEvents2KHR;
+    if (!t->vkCmdWaitEvents2KHR)
+        t->vkCmdWaitEvents2KHR = (PFN_vkCmdWaitEvents2KHR)t->vkCmdWaitEvents2;
+    if (!t->vkCmdBlitImage2)
+        t->vkCmdBlitImage2 = (PFN_vkCmdBlitImage2)t->vkCmdBlitImage2KHR;
+    if (!t->vkCmdBlitImage2KHR)
+        t->vkCmdBlitImage2KHR = (PFN_vkCmdBlitImage2KHR)t->vkCmdBlitImage2;
+    if (!t->vkCmdResolveImage2)
+        t->vkCmdResolveImage2 = (PFN_vkCmdResolveImage2)t->vkCmdResolveImage2KHR;
+    if (!t->vkCmdResolveImage2KHR)
+        t->vkCmdResolveImage2KHR = (PFN_vkCmdResolveImage2KHR)t->vkCmdResolveImage2;
+    if (!t->vkCmdBeginRendering)
+        t->vkCmdBeginRendering = (PFN_vkCmdBeginRendering)t->vkCmdBeginRenderingKHR;
+    if (!t->vkCmdBeginRenderingKHR)
+        t->vkCmdBeginRenderingKHR = (PFN_vkCmdBeginRenderingKHR)t->vkCmdBeginRendering;
+    if (!t->vkCmdEndRendering)
+        t->vkCmdEndRendering = (PFN_vkCmdEndRendering)t->vkCmdEndRenderingKHR;
+    if (!t->vkCmdEndRenderingKHR)
+        t->vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)t->vkCmdEndRendering;
+    if (!t->vkCmdSetCullMode)
+        t->vkCmdSetCullMode = (PFN_vkCmdSetCullMode)t->vkCmdSetCullModeEXT;
+    if (!t->vkCmdSetCullModeEXT)
+        t->vkCmdSetCullModeEXT = (PFN_vkCmdSetCullModeEXT)t->vkCmdSetCullMode;
+    if (!t->vkCmdSetFrontFace)
+        t->vkCmdSetFrontFace = (PFN_vkCmdSetFrontFace)t->vkCmdSetFrontFaceEXT;
+    if (!t->vkCmdSetFrontFaceEXT)
+        t->vkCmdSetFrontFaceEXT = (PFN_vkCmdSetFrontFaceEXT)t->vkCmdSetFrontFace;
+    if (!t->vkCmdSetPrimitiveTopology)
+        t->vkCmdSetPrimitiveTopology = (PFN_vkCmdSetPrimitiveTopology)t->vkCmdSetPrimitiveTopologyEXT;
+    if (!t->vkCmdSetPrimitiveTopologyEXT)
+        t->vkCmdSetPrimitiveTopologyEXT = (PFN_vkCmdSetPrimitiveTopologyEXT)t->vkCmdSetPrimitiveTopology;
+    if (!t->vkCmdSetViewportWithCount)
+        t->vkCmdSetViewportWithCount = (PFN_vkCmdSetViewportWithCount)t->vkCmdSetViewportWithCountEXT;
+    if (!t->vkCmdSetViewportWithCountEXT)
+        t->vkCmdSetViewportWithCountEXT = (PFN_vkCmdSetViewportWithCountEXT)t->vkCmdSetViewportWithCount;
+    if (!t->vkCmdSetScissorWithCount)
+        t->vkCmdSetScissorWithCount = (PFN_vkCmdSetScissorWithCount)t->vkCmdSetScissorWithCountEXT;
+    if (!t->vkCmdSetScissorWithCountEXT)
+        t->vkCmdSetScissorWithCountEXT = (PFN_vkCmdSetScissorWithCountEXT)t->vkCmdSetScissorWithCount;
+    if (!t->vkCmdBindVertexBuffers2)
+        t->vkCmdBindVertexBuffers2 = (PFN_vkCmdBindVertexBuffers2)t->vkCmdBindVertexBuffers2EXT;
+    if (!t->vkCmdBindVertexBuffers2EXT)
+        t->vkCmdBindVertexBuffers2EXT = (PFN_vkCmdBindVertexBuffers2EXT)t->vkCmdBindVertexBuffers2;
+    if (!t->vkCmdSetDepthTestEnable)
+        t->vkCmdSetDepthTestEnable = (PFN_vkCmdSetDepthTestEnable)t->vkCmdSetDepthTestEnableEXT;
+    if (!t->vkCmdSetDepthTestEnableEXT)
+        t->vkCmdSetDepthTestEnableEXT = (PFN_vkCmdSetDepthTestEnableEXT)t->vkCmdSetDepthTestEnable;
+    if (!t->vkCmdSetDepthWriteEnable)
+        t->vkCmdSetDepthWriteEnable = (PFN_vkCmdSetDepthWriteEnable)t->vkCmdSetDepthWriteEnableEXT;
+    if (!t->vkCmdSetDepthWriteEnableEXT)
+        t->vkCmdSetDepthWriteEnableEXT = (PFN_vkCmdSetDepthWriteEnableEXT)t->vkCmdSetDepthWriteEnable;
+    if (!t->vkCmdSetDepthCompareOp)
+        t->vkCmdSetDepthCompareOp = (PFN_vkCmdSetDepthCompareOp)t->vkCmdSetDepthCompareOpEXT;
+    if (!t->vkCmdSetDepthCompareOpEXT)
+        t->vkCmdSetDepthCompareOpEXT = (PFN_vkCmdSetDepthCompareOpEXT)t->vkCmdSetDepthCompareOp;
+    if (!t->vkCmdSetDepthBoundsTestEnable)
+        t->vkCmdSetDepthBoundsTestEnable = (PFN_vkCmdSetDepthBoundsTestEnable)t->vkCmdSetDepthBoundsTestEnableEXT;
+    if (!t->vkCmdSetDepthBoundsTestEnableEXT)
+        t->vkCmdSetDepthBoundsTestEnableEXT = (PFN_vkCmdSetDepthBoundsTestEnableEXT)t->vkCmdSetDepthBoundsTestEnable;
+    if (!t->vkCmdSetStencilTestEnable)
+        t->vkCmdSetStencilTestEnable = (PFN_vkCmdSetStencilTestEnable)t->vkCmdSetStencilTestEnableEXT;
+    if (!t->vkCmdSetStencilTestEnableEXT)
+        t->vkCmdSetStencilTestEnableEXT = (PFN_vkCmdSetStencilTestEnableEXT)t->vkCmdSetStencilTestEnable;
+    if (!t->vkCmdSetStencilOp)
+        t->vkCmdSetStencilOp = (PFN_vkCmdSetStencilOp)t->vkCmdSetStencilOpEXT;
+    if (!t->vkCmdSetStencilOpEXT)
+        t->vkCmdSetStencilOpEXT = (PFN_vkCmdSetStencilOpEXT)t->vkCmdSetStencilOp;
+    if (!t->vkCmdSetRasterizerDiscardEnable)
+        t->vkCmdSetRasterizerDiscardEnable = (PFN_vkCmdSetRasterizerDiscardEnable)t->vkCmdSetRasterizerDiscardEnableEXT;
+    if (!t->vkCmdSetRasterizerDiscardEnableEXT)
+        t->vkCmdSetRasterizerDiscardEnableEXT = (PFN_vkCmdSetRasterizerDiscardEnableEXT)t->vkCmdSetRasterizerDiscardEnable;
+    if (!t->vkCmdSetDepthBiasEnable)
+        t->vkCmdSetDepthBiasEnable = (PFN_vkCmdSetDepthBiasEnable)t->vkCmdSetDepthBiasEnableEXT;
+    if (!t->vkCmdSetDepthBiasEnableEXT)
+        t->vkCmdSetDepthBiasEnableEXT = (PFN_vkCmdSetDepthBiasEnableEXT)t->vkCmdSetDepthBiasEnable;
+    if (!t->vkCmdSetPrimitiveRestartEnable)
+        t->vkCmdSetPrimitiveRestartEnable = (PFN_vkCmdSetPrimitiveRestartEnable)t->vkCmdSetPrimitiveRestartEnableEXT;
+    if (!t->vkCmdSetPrimitiveRestartEnableEXT)
+        t->vkCmdSetPrimitiveRestartEnableEXT = (PFN_vkCmdSetPrimitiveRestartEnableEXT)t->vkCmdSetPrimitiveRestartEnable;
+    if (!t->vkMapMemory2)
+        t->vkMapMemory2 = (PFN_vkMapMemory2)t->vkMapMemory2KHR;
+    if (!t->vkMapMemory2KHR)
+        t->vkMapMemory2KHR = (PFN_vkMapMemory2KHR)t->vkMapMemory2;
+    if (!t->vkUnmapMemory2)
+        t->vkUnmapMemory2 = (PFN_vkUnmapMemory2)t->vkUnmapMemory2KHR;
+    if (!t->vkUnmapMemory2KHR)
+        t->vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)t->vkUnmapMemory2;
+    if (!t->vkGetDeviceImageSubresourceLayout)
+        t->vkGetDeviceImageSubresourceLayout = (PFN_vkGetDeviceImageSubresourceLayout)t->vkGetDeviceImageSubresourceLayoutKHR;
+    if (!t->vkGetDeviceImageSubresourceLayoutKHR)
+        t->vkGetDeviceImageSubresourceLayoutKHR = (PFN_vkGetDeviceImageSubresourceLayoutKHR)t->vkGetDeviceImageSubresourceLayout;
+    if (!t->vkGetImageSubresourceLayout2)
+        t->vkGetImageSubresourceLayout2 = (PFN_vkGetImageSubresourceLayout2)t->vkGetImageSubresourceLayout2EXT;
+    if (!t->vkGetImageSubresourceLayout2)
+        t->vkGetImageSubresourceLayout2 = (PFN_vkGetImageSubresourceLayout2)t->vkGetImageSubresourceLayout2KHR;
+    if (!t->vkGetImageSubresourceLayout2EXT)
+        t->vkGetImageSubresourceLayout2EXT = (PFN_vkGetImageSubresourceLayout2EXT)t->vkGetImageSubresourceLayout2;
+    if (!t->vkGetImageSubresourceLayout2EXT)
+        t->vkGetImageSubresourceLayout2EXT = (PFN_vkGetImageSubresourceLayout2EXT)t->vkGetImageSubresourceLayout2KHR;
+    if (!t->vkGetImageSubresourceLayout2KHR)
+        t->vkGetImageSubresourceLayout2KHR = (PFN_vkGetImageSubresourceLayout2KHR)t->vkGetImageSubresourceLayout2;
+    if (!t->vkGetImageSubresourceLayout2KHR)
+        t->vkGetImageSubresourceLayout2KHR = (PFN_vkGetImageSubresourceLayout2KHR)t->vkGetImageSubresourceLayout2EXT;
+    if (!t->vkCopyMemoryToImage)
+        t->vkCopyMemoryToImage = (PFN_vkCopyMemoryToImage)t->vkCopyMemoryToImageEXT;
+    if (!t->vkCopyMemoryToImageEXT)
+        t->vkCopyMemoryToImageEXT = (PFN_vkCopyMemoryToImageEXT)t->vkCopyMemoryToImage;
+    if (!t->vkCopyImageToMemory)
+        t->vkCopyImageToMemory = (PFN_vkCopyImageToMemory)t->vkCopyImageToMemoryEXT;
+    if (!t->vkCopyImageToMemoryEXT)
+        t->vkCopyImageToMemoryEXT = (PFN_vkCopyImageToMemoryEXT)t->vkCopyImageToMemory;
+    if (!t->vkCopyImageToImage)
+        t->vkCopyImageToImage = (PFN_vkCopyImageToImage)t->vkCopyImageToImageEXT;
+    if (!t->vkCopyImageToImageEXT)
+        t->vkCopyImageToImageEXT = (PFN_vkCopyImageToImageEXT)t->vkCopyImageToImage;
+    if (!t->vkTransitionImageLayout)
+        t->vkTransitionImageLayout = (PFN_vkTransitionImageLayout)t->vkTransitionImageLayoutEXT;
+    if (!t->vkTransitionImageLayoutEXT)
+        t->vkTransitionImageLayoutEXT = (PFN_vkTransitionImageLayoutEXT)t->vkTransitionImageLayout;
+    if (!t->vkCmdPushDescriptorSet)
+        t->vkCmdPushDescriptorSet = (PFN_vkCmdPushDescriptorSet)t->vkCmdPushDescriptorSetKHR;
+    if (!t->vkCmdPushDescriptorSetKHR)
+        t->vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)t->vkCmdPushDescriptorSet;
+    if (!t->vkCmdPushDescriptorSetWithTemplate)
+        t->vkCmdPushDescriptorSetWithTemplate = (PFN_vkCmdPushDescriptorSetWithTemplate)t->vkCmdPushDescriptorSetWithTemplateKHR;
+    if (!t->vkCmdPushDescriptorSetWithTemplateKHR)
+        t->vkCmdPushDescriptorSetWithTemplateKHR = (PFN_vkCmdPushDescriptorSetWithTemplateKHR)t->vkCmdPushDescriptorSetWithTemplate;
+    if (!t->vkCmdBindDescriptorSets2)
+        t->vkCmdBindDescriptorSets2 = (PFN_vkCmdBindDescriptorSets2)t->vkCmdBindDescriptorSets2KHR;
+    if (!t->vkCmdBindDescriptorSets2KHR)
+        t->vkCmdBindDescriptorSets2KHR = (PFN_vkCmdBindDescriptorSets2KHR)t->vkCmdBindDescriptorSets2;
+    if (!t->vkCmdPushConstants2)
+        t->vkCmdPushConstants2 = (PFN_vkCmdPushConstants2)t->vkCmdPushConstants2KHR;
+    if (!t->vkCmdPushConstants2KHR)
+        t->vkCmdPushConstants2KHR = (PFN_vkCmdPushConstants2KHR)t->vkCmdPushConstants2;
+    if (!t->vkCmdPushDescriptorSet2)
+        t->vkCmdPushDescriptorSet2 = (PFN_vkCmdPushDescriptorSet2)t->vkCmdPushDescriptorSet2KHR;
+    if (!t->vkCmdPushDescriptorSet2KHR)
+        t->vkCmdPushDescriptorSet2KHR = (PFN_vkCmdPushDescriptorSet2KHR)t->vkCmdPushDescriptorSet2;
+    if (!t->vkCmdPushDescriptorSetWithTemplate2)
+        t->vkCmdPushDescriptorSetWithTemplate2 = (PFN_vkCmdPushDescriptorSetWithTemplate2)t->vkCmdPushDescriptorSetWithTemplate2KHR;
+    if (!t->vkCmdPushDescriptorSetWithTemplate2KHR)
+        t->vkCmdPushDescriptorSetWithTemplate2KHR = (PFN_vkCmdPushDescriptorSetWithTemplate2KHR)t->vkCmdPushDescriptorSetWithTemplate2;
+    if (!t->vkCmdSetLineStipple)
+        t->vkCmdSetLineStipple = (PFN_vkCmdSetLineStipple)t->vkCmdSetLineStippleEXT;
+    if (!t->vkCmdSetLineStipple)
+        t->vkCmdSetLineStipple = (PFN_vkCmdSetLineStipple)t->vkCmdSetLineStippleKHR;
+    if (!t->vkCmdSetLineStippleEXT)
+        t->vkCmdSetLineStippleEXT = (PFN_vkCmdSetLineStippleEXT)t->vkCmdSetLineStipple;
+    if (!t->vkCmdSetLineStippleEXT)
+        t->vkCmdSetLineStippleEXT = (PFN_vkCmdSetLineStippleEXT)t->vkCmdSetLineStippleKHR;
+    if (!t->vkCmdSetLineStippleKHR)
+        t->vkCmdSetLineStippleKHR = (PFN_vkCmdSetLineStippleKHR)t->vkCmdSetLineStipple;
+    if (!t->vkCmdSetLineStippleKHR)
+        t->vkCmdSetLineStippleKHR = (PFN_vkCmdSetLineStippleKHR)t->vkCmdSetLineStippleEXT;
+    if (!t->vkCmdBindIndexBuffer2)
+        t->vkCmdBindIndexBuffer2 = (PFN_vkCmdBindIndexBuffer2)t->vkCmdBindIndexBuffer2KHR;
+    if (!t->vkCmdBindIndexBuffer2KHR)
+        t->vkCmdBindIndexBuffer2KHR = (PFN_vkCmdBindIndexBuffer2KHR)t->vkCmdBindIndexBuffer2;
+    if (!t->vkGetRenderingAreaGranularity)
+        t->vkGetRenderingAreaGranularity = (PFN_vkGetRenderingAreaGranularity)t->vkGetRenderingAreaGranularityKHR;
+    if (!t->vkGetRenderingAreaGranularityKHR)
+        t->vkGetRenderingAreaGranularityKHR = (PFN_vkGetRenderingAreaGranularityKHR)t->vkGetRenderingAreaGranularity;
+    if (!t->vkCmdSetRenderingAttachmentLocations)
+        t->vkCmdSetRenderingAttachmentLocations = (PFN_vkCmdSetRenderingAttachmentLocations)t->vkCmdSetRenderingAttachmentLocationsKHR;
+    if (!t->vkCmdSetRenderingAttachmentLocationsKHR)
+        t->vkCmdSetRenderingAttachmentLocationsKHR = (PFN_vkCmdSetRenderingAttachmentLocationsKHR)t->vkCmdSetRenderingAttachmentLocations;
+    if (!t->vkCmdSetRenderingInputAttachmentIndices)
+        t->vkCmdSetRenderingInputAttachmentIndices = (PFN_vkCmdSetRenderingInputAttachmentIndices)t->vkCmdSetRenderingInputAttachmentIndicesKHR;
+    if (!t->vkCmdSetRenderingInputAttachmentIndicesKHR)
+        t->vkCmdSetRenderingInputAttachmentIndicesKHR = (PFN_vkCmdSetRenderingInputAttachmentIndicesKHR)t->vkCmdSetRenderingInputAttachmentIndices;
+    if (!t->vkGetRayTracingShaderGroupHandlesKHR)
+        t->vkGetRayTracingShaderGroupHandlesKHR = (PFN_vkGetRayTracingShaderGroupHandlesKHR)t->vkGetRayTracingShaderGroupHandlesNV;
+    if (!t->vkGetRayTracingShaderGroupHandlesNV)
+        t->vkGetRayTracingShaderGroupHandlesNV = (PFN_vkGetRayTracingShaderGroupHandlesNV)t->vkGetRayTracingShaderGroupHandlesKHR;
+    if (!t->vkGetCalibratedTimestampsEXT)
+        t->vkGetCalibratedTimestampsEXT = (PFN_vkGetCalibratedTimestampsEXT)t->vkGetCalibratedTimestampsKHR;
+    if (!t->vkGetCalibratedTimestampsKHR)
+        t->vkGetCalibratedTimestampsKHR = (PFN_vkGetCalibratedTimestampsKHR)t->vkGetCalibratedTimestampsEXT;
+    if (!t->vkCmdEndRendering2EXT)
+        t->vkCmdEndRendering2EXT = (PFN_vkCmdEndRendering2EXT)t->vkCmdEndRendering2KHR;
+    if (!t->vkCmdEndRendering2KHR)
+        t->vkCmdEndRendering2KHR = (PFN_vkCmdEndRendering2KHR)t->vkCmdEndRendering2EXT;
 }
 
 #endif
