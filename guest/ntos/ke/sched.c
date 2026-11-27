@@ -268,9 +268,12 @@ void KiRequestDispatch(ULONG number)
     PKPRCB prcb = KiProcessorBlock[number];
     prcb->DispatchPending = TRUE;
     if (prcb != KeGetCurrentPrcb()) {
-        /* a processor that spins while idle sees the request by itself; one that stops spinning looks again. */
+        /*
+         * an idle processor sees the request by itself until it halts, and looks again once it said it halts. between
+         * its waits it is on its way to look, and no interrupt gets it there sooner.
+         */
         KiMemoryBarrierFull();
-        if (prcb->IdleState == KI_IDLE_POLLING)
+        if (prcb->CurrentThread == prcb->IdleThread && prcb->IdleState != KI_IDLE_HALTED)
             return;
         prcb->IpiSent++;
         KiSendIpi(number);
