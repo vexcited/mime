@@ -41,7 +41,7 @@ enum {
 };
 
 /* a shape of the cursor theme, in the order of MIME_CURSOR_*. */
-enum { MIME_WL_SHAPES = 11 };
+enum { MIME_WL_SHAPES = 12 };
 
 /* what the compositor tells, each on the main thread. positions are in the surface coordinates of the window. */
 typedef struct MimeWlHandlers {

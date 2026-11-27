@@ -135,8 +135,9 @@ static ULONG host_cursor_for_idc(ULONG id)
     case 32513: /* IDC_IBEAM */
         return MIME_CURSOR_IBEAM;
     case 32514: /* IDC_WAIT */
-    case 32650: /* IDC_APPSTARTING */
         return MIME_CURSOR_WAIT;
+    case 32650: /* IDC_APPSTARTING */
+        return MIME_CURSOR_PROGRESS;
     case 32515: /* IDC_CROSS */
         return MIME_CURSOR_CROSS;
     case 32649: /* IDC_HAND */

@@ -1431,6 +1431,7 @@ enum {
     MIME_CURSOR_SIZE_NESW,
     MIME_CURSOR_SIZE_ALL,
     MIME_CURSOR_NO,
+    MIME_CURSOR_PROGRESS, /* the arrow with the busy sign, IDC_APPSTARTING. */
     MIME_CURSOR_HIDDEN,
 };
 

@@ -2033,6 +2033,7 @@ static NSCursor *host_cursor(uint32_t c)
                                           inDirections:NSCursorFrameResizeDirectionsAll];
     case MIME_CURSOR_SIZE_ALL: return NSCursor.openHandCursor;
     case MIME_CURSOR_NO: return NSCursor.operationNotAllowedCursor;
+    case MIME_CURSOR_PROGRESS: return wait_cursor();
     default: return NSCursor.arrowCursor;
     }
 }

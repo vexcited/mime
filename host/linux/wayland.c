@@ -1575,6 +1575,7 @@ static const struct {
     {WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE, {"nesw-resize", "size_bdiag", "fd_double_arrow"}},
     {WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE, {"move", "fleur", "all-scroll"}},
     {WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NOT_ALLOWED, {"not-allowed", "crossed_circle", "forbidden"}},
+    {WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS, {"progress", "left_ptr_watch", "half-busy"}},
 };
 
 static struct wl_surface *cursor_surface(void)
