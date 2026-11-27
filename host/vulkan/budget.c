@@ -13,10 +13,14 @@ typedef struct BudgetDevice {
     PFN_vkAllocateMemory allocate;
     VkPhysicalDeviceMemoryProperties memory;
     bool budgets; /* the device reports VK_EXT_memory_budget. */
+    int32_t spill; /* the type in system memory every image and buffer takes, or -1, spill_type. */
 } BudgetDevice;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static BudgetDevice g_devices[MAX_DEVICES];
+/* bytes of video memory given system memory since the last warning, and in all. */
+static VkDeviceSize g_spilled_recent, g_spilled;
+static uint64_t g_spill_warned;
 static PFN_vkGetPhysicalDeviceMemoryProperties2 g_properties2;
 static PFN_vkEnumerateDeviceExtensionProperties g_extensions;
 /* bytes being allocated on each heap, which the driver does not count yet. */
@@ -89,18 +93,92 @@ static bool reserve(const BudgetDevice *d, uint32_t heap, VkDeviceSize size)
     else
         fits = size <= d->memory.memoryHeaps[heap].size - MIME_MIN(margin_of(d->memory.memoryHeaps[heap].size),
                                                                     d->memory.memoryHeaps[heap].size);
-    if (fits) {
+    if (fits)
         g_pending[heap] += size;
-        return true;
-    }
+    return fits;
+}
+
+/* under g_lock. */
+static void warn_refused(const BudgetDevice *d, uint32_t heap, VkDeviceSize size)
+{
     uint64_t now = mime_now_ns();
     if (now - g_warned > WARN_INTERVAL_NS) {
         g_warned = now;
-        mime_warn("vulkan: %llu KiB more on heap %u would leave the desktop less than %llu MiB of video memory, refused",
+        mime_warn("vulkan: %llu KiB more on heap %u would leave the desktop less than %llu MiB of video memory, and "
+                  "system memory has no room for it, refused",
                   (unsigned long long)(size >> 10), heap,
                   (unsigned long long)(margin_of(d->memory.memoryHeaps[heap].size) >> 20));
     }
-    return false;
+}
+
+/*
+ * the memory type of system memory that every resource may live in, the one video memory spills to. WDDM pages video
+ * memory out to system memory when a program asks for more than the gpu has, so its allocations succeed and the
+ * program runs slower. the Linux drivers refuse instead, NVIDIA at the size of the heap with
+ * VK_ERROR_OUT_OF_DEVICE_MEMORY, and a game that only retries freezes. NVIDIA lets images of every kind and buffers
+ * live in its type 0, system memory without any property, which is where they go. found from the memory types the
+ * resources the gpu has take, -1 when none fits them all.
+ */
+static int32_t spill_type(MvkConnection *c, const VkPhysicalDeviceMemoryProperties *memory)
+{
+    if (!c->fn.vkCreateImage || !c->fn.vkGetImageMemoryRequirements || !c->fn.vkDestroyImage || !c->fn.vkCreateBuffer ||
+        !c->fn.vkGetBufferMemoryRequirements || !c->fn.vkDestroyBuffer)
+        return -1;
+    static const struct {
+        VkFormat format;
+        VkImageUsageFlags usage;
+        VkSampleCountFlagBits samples;
+    } images[] = {
+        {VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                       VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_SAMPLE_COUNT_1_BIT},
+        {VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+         VK_SAMPLE_COUNT_1_BIT},
+        {VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+         VK_SAMPLE_COUNT_1_BIT},
+        {VK_FORMAT_D24_UNORM_S8_UINT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_SAMPLE_COUNT_1_BIT},
+        {VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_SAMPLE_COUNT_4_BIT},
+        {VK_FORMAT_BC7_UNORM_BLOCK, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_SAMPLE_COUNT_1_BIT},
+    };
+    uint32_t bits = ~0u;
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(images); i++) {
+        VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, nullptr, 0, VK_IMAGE_TYPE_2D, images[i].format,
+                                  {256, 256, 1}, 1, 1, images[i].samples, VK_IMAGE_TILING_OPTIMAL, images[i].usage,
+                                  VK_SHARING_MODE_EXCLUSIVE, 0, nullptr, VK_IMAGE_LAYOUT_UNDEFINED};
+        VkImage image;
+        /* a format the gpu does not have is left out. */
+        if (c->fn.vkCreateImage(c->device, &info, nullptr, &image) != VK_SUCCESS)
+            continue;
+        VkMemoryRequirements req;
+        c->fn.vkGetImageMemoryRequirements(c->device, image, &req);
+        c->fn.vkDestroyImage(c->device, image, nullptr);
+        bits &= req.memoryTypeBits;
+    }
+    VkBufferCreateInfo binfo = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, 65536,
+                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                    VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+                                    VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                                VK_SHARING_MODE_EXCLUSIVE};
+    VkBuffer buffer;
+    if (c->fn.vkCreateBuffer(c->device, &binfo, nullptr, &buffer) != VK_SUCCESS)
+        return -1;
+    VkMemoryRequirements req;
+    c->fn.vkGetBufferMemoryRequirements(c->device, buffer, &req);
+    c->fn.vkDestroyBuffer(c->device, buffer, nullptr);
+    bits &= req.memoryTypeBits;
+    int32_t found = -1;
+    for (uint32_t i = 0; i < memory->memoryTypeCount; i++) {
+        const VkMemoryType *t = &memory->memoryTypes[i];
+        if (!(bits & (1u << i)) || (memory->memoryHeaps[t->heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ||
+            (t->propertyFlags & (VK_MEMORY_PROPERTY_PROTECTED_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)))
+            continue;
+        /* without host access the driver may place it as it likes, so that one comes first. */
+        if (found < 0 || !t->propertyFlags)
+            found = (int32_t)i;
+        if (!t->propertyFlags)
+            break;
+    }
+    return found;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL allocate_memory(VkDevice device, const VkMemoryAllocateInfo *info,
@@ -120,8 +198,37 @@ static VKAPI_ATTR VkResult VKAPI_CALL allocate_memory(VkDevice device, const VkM
             heap = (int32_t)h;
     }
     if (heap >= 0 && !reserve(d, (uint32_t)heap, info->allocationSize)) {
+        /*
+         * past the budget the allocation goes to system memory, as WDDM would page it out, and the program goes on
+         * slower. only with room in system memory, else the program hears what windows tells when both are full.
+         */
+        int32_t spill = d->spill;
+        bool room = spill >= 0 && info->allocationSize <= mime_memory_room();
+        if (!room)
+            warn_refused(d, (uint32_t)heap, info->allocationSize);
         pthread_mutex_unlock(&g_lock);
-        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (!room)
+            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        VkMemoryAllocateInfo moved = *info;
+        moved.memoryTypeIndex = (uint32_t)spill;
+        VkResult r = allocate(device, &moved, a, memory);
+        pthread_mutex_lock(&g_lock);
+        if (r != VK_SUCCESS) {
+            warn_refused(d, (uint32_t)heap, info->allocationSize);
+            pthread_mutex_unlock(&g_lock);
+            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        }
+        g_spilled += info->allocationSize;
+        g_spilled_recent += info->allocationSize;
+        uint64_t now = mime_now_ns();
+        if (now - g_spill_warned > WARN_INTERVAL_NS) {
+            g_spill_warned = now;
+            mime_info("vulkan: %llu MiB of video memory went to system memory, %llu MiB since the gpu was full",
+                      (unsigned long long)(g_spilled_recent >> 20), (unsigned long long)(g_spilled >> 20));
+            g_spilled_recent = 0;
+        }
+        pthread_mutex_unlock(&g_lock);
+        return VK_SUCCESS;
     }
     /* system memory the driver allocates for the guest is host RAM the guest's own grants do not cover. */
     if (heap < 0 && info->memoryTypeIndex < d->memory.memoryTypeCount && !imports(info) &&
@@ -211,6 +318,7 @@ void mvk_budget_hook(MvkConnection *c)
     BudgetDevice d = {c->device, c->physical_device, c->fn.vkAllocateMemory};
     c->fn.vkGetPhysicalDeviceMemoryProperties(c->physical_device, &d.memory);
     d.budgets = has_budget_extension(c->physical_device);
+    d.spill = spill_type(c, &d.memory);
     pthread_mutex_lock(&g_lock);
     BudgetDevice *slot = find_device(c->device);
     if (!slot)
