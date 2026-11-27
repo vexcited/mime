@@ -407,6 +407,7 @@ EXPORTS
     RtlGetNtSystemRoot@0
     RtlGetNtVersionNumbers@12
     RtlGetOwnerSecurityDescriptor@12
+    RtlGetPersistedStateLocation@28
     RtlGetProcessHeaps@8
     RtlGetSaclSecurityDescriptor@16
     RtlGetSecurityDescriptorRMControl@8

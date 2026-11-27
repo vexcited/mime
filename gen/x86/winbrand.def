@@ -1,0 +1,18 @@
+LIBRARY winbrand.dll
+EXPORTS
+    BrandingFormatString=_BrandingFormatString@4 @1
+    BrandingFormatStringForEdition=_BrandingFormatStringForEdition@12 @2
+    BrandingLoadBitmap=_BrandingLoadBitmap@8 @3
+    BrandingLoadCursor=_BrandingLoadCursor@8 @4
+    BrandingLoadIcon=_BrandingLoadIcon@8 @5
+    BrandingLoadImage=_BrandingLoadImage@24 @6
+    BrandingLoadNeutralStringForEdition=_BrandingLoadNeutralStringForEdition@20 @7
+    BrandingLoadString=_BrandingLoadString@16 @8
+    BrandingLoadStringForEdition=_BrandingLoadStringForEdition@24 @9
+    EulaFreeBuffer=_EulaFreeBuffer@4 @10
+    GetEULAFile=_GetEULAFile@20 @11
+    GetEULAFileEx=_GetEULAFileEx@24 @12
+    GetEULAInCurrentUILanguage=_GetEULAInCurrentUILanguage@4 @13
+    GetHinstanceByNameSpace=_GetHinstanceByNameSpace@4 @14
+    GetInstalledEULAPath=_GetInstalledEULAPath@4 @15
+    InstallEULA=_InstallEULA@16 @16
