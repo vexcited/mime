@@ -2319,6 +2319,47 @@ HWND NTAPI NtUserChildWindowFromPointEx(HWND hwnd, ULONG_PTR point, UINT flags)
     return found;
 }
 
+/*
+ * RealChildWindowFromPoint, as win32kfull 26300 does it. the point is in the client area of the parent and outside
+ * that area or the shape of the parent there is no window. inside, the answer is the first visible direct child from
+ * the top whose window rectangle holds the point, disabled and transparent ones included. a group box, which is a
+ * window of the Button class with that style, only answers when no other child is there, and the parent when no
+ * child is.
+ */
+HWND NTAPI NtUserRealChildWindowFromPoint(HWND hwnd, ULONG_PTR point)
+{
+    POINT pt = {(LONG)(ULONG)point, (LONG)(ULONG)(point >> 32)};
+    UserEnterRead();
+    WND *w = WndLookup(hwnd);
+    HWND found = nullptr;
+    if (w) {
+        size_from_caller(w, &pt);
+        if (w != g_desktop) {
+            pt.x += w->ClientRect.left;
+            pt.y += w->ClientRect.top;
+        }
+        if (RectContains(&w->ClientRect, pt.x, pt.y) && LayerHitTest(w, pt)) {
+            ATOM button = AtomFind(L"Button");
+            found = WndHandle(w);
+            for (WND *c = w->FirstChild; c; c = c->Next) {
+                POINT at = pt;
+                if (w == g_desktop)
+                    DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
+                if (!(c->Style & WS_VISIBLE) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
+                    continue;
+                found = WndHandle(c);
+                if (!c->Class || (c->Class->PlainAtom ? c->Class->PlainAtom : c->Class->Atom) != button ||
+                    (c->Style & BS_TYPEMASK) != BS_GROUPBOX)
+                    break;
+            }
+        }
+    }
+    UserLeave();
+    if (!w)
+        W32SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return found;
+}
+
 /* the processes SetAdditionalForegroundBoostProcesses named for the window, which it lets go of. */
 static void release_boost(WND *w)
 {

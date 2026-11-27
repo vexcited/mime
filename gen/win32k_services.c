@@ -36,6 +36,7 @@ void NtUserShowCursor(void);
 void NtUserDisableProcessWindowsGhosting(void);
 void NtUserReplyMessage(void);
 void NtUserSetMessageExtraInfo(void);
+void NtUserRealChildWindowFromPoint(void);
 void NtGdiDdDDICloseAdapter(void);
 void NtGdiDdDDIQueryAdapterInfo(void);
 void NtGdiDdDDIQueryStatistics(void);
@@ -2846,5 +2847,10 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserSetMessageExtraInfo & 0xFFF] = (SERVICE){(void *)NtUserSetMessageExtraInfo, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtUserSetMessageExtraInfo has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserRealChildWindowFromPoint
+    table[MIME_SVC_NtUserRealChildWindowFromPoint & 0xFFF] = (SERVICE){(void *)NtUserRealChildWindowFromPoint, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserRealChildWindowFromPoint has no syscall number"
 #endif
 }
