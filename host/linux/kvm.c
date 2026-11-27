@@ -591,11 +591,22 @@ static bool setup_vcpu(MimeVcpu *vcpu)
         return false;
     }
 
-    /* the guest's TSC runs with the host's, so both read the same clock. */
+    /*
+     * the guest's TSC runs with the host's, so both read the same clock: no offset at all. a value written
+     * instead lands late by the time the write took, and kvm gives a processor written after another one was
+     * made an offset of its own, so the processors of a guest read tens of microseconds apart.
+     */
     struct kvm_msrs *msrs = calloc(1, sizeof(*msrs) + 3 * sizeof(struct kvm_msr_entry));
-    msrs->nmsrs = 1;
-    msrs->entries[0].index = MSR_IA32_TSC;
-    msrs->entries[0].data = __rdtsc();
+    bool same_tsc = false;
+#ifdef KVM_VCPU_TSC_CTRL
+    uint64_t tsc_offset = 0;
+    struct kvm_device_attr tsc = {.group = KVM_VCPU_TSC_CTRL, .attr = KVM_VCPU_TSC_OFFSET, .addr = (uint64_t)&tsc_offset};
+    same_tsc = ioctl(vcpu->fd, KVM_SET_DEVICE_ATTR, &tsc) == 0;
+#endif
+    if (!same_tsc) {
+        msrs->entries[msrs->nmsrs].index = MSR_IA32_TSC;
+        msrs->entries[msrs->nmsrs++].data = __rdtsc();
+    }
     if (g_intel) {
         /* vmx enabled outside smx and locked, as a real intel machine has it: windows reads it back as
            virtualization firmware enabled. */
@@ -607,7 +618,8 @@ static bool setup_vcpu(MimeVcpu *vcpu)
         msrs->entries[msrs->nmsrs].index = 0x8B;
         msrs->entries[msrs->nmsrs++].data = mime_host_microcode();
     }
-    ioctl(vcpu->fd, KVM_SET_MSRS, msrs);
+    if (msrs->nmsrs)
+        ioctl(vcpu->fd, KVM_SET_MSRS, msrs);
     free(msrs);
     return true;
 }
