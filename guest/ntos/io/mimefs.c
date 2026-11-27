@@ -10,6 +10,7 @@
 #define MIMEFS_CHUNK (128 * 1024)
 #define STATUS_USER_MAPPED_FILE ((NTSTATUS)0xC0000243L)
 #define STATUS_CANNOT_DELETE ((NTSTATUS)0xC0000121L)
+#define STATUS_FILE_DELETED ((NTSTATUS)0xC0000123L)
 #define STATUS_INVALID_VOLUME_LABEL ((NTSTATUS)0xC0000086L)
 
 typedef struct MIMEFS_COUNTERS {
@@ -40,6 +41,7 @@ typedef struct MIMEFS_VOLUME {
 } MIMEFS_VOLUME;
 
 static NTSTATUS volume_bytes(MIMEFS_VOLUME *vol, ULONGLONG *bytes);
+static BOOLEAN stat_name(ULONG volume, const WCHAR *path, ULONG chars, MimeFsInfo *info);
 static NTSTATUS volume_size(MIMEFS_VOLUME *vol, ULONG64 host, MimeFsVolumeInfo *out);
 
 typedef struct MIMEFS_FCB {
@@ -55,6 +57,8 @@ typedef struct MIMEFS_FCB {
     BOOLEAN NoAccessTime; /* reads leave the access time alone. */
     LONGLONG LastTouch;   /* when a read last set the access time. */
     BOOLEAN StatOnly;    /* answers one query by name: no host handle, OpenInfo is the answer. */
+    BOOLEAN Deferred;    /* opened for its attributes alone, without a host handle until one is needed, see ensure_host. */
+    ULONG DeferredFlags; /* MIME_FS_OPEN_* of the open, for the host handle made later. */
     MimeFsInfo OpenInfo; /* what the host reported at open. */
     BOOLEAN OpenInfoWatched; /* OpenInfo answers queries while FsAttrUnchanged says so, see query. */
     LONG OpenInfoToken;
@@ -79,6 +83,8 @@ typedef struct MIMEFS_FCB {
     UCHAR Sharing;       /* SHARE_* of the open while it counts among the opens of the file, see share_open. */
     BOOLEAN ShareHeld;   /* the open is counted. */
 } MIMEFS_FCB;
+
+static NTSTATUS ensure_host(MIMEFS_FCB *fcb, PFILE_OBJECT file);
 
 /*
  * the opens of each host file, as IoCheckShareAccess keeps them for a file: who reads, writes or may delete, and who
@@ -517,7 +523,7 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
         *size = fcb->Rom->size;
         return TRUE;
     }
-    if (fcb->Directory || fcb->StatOnly || (writable && !file->WriteAccess))
+    if (fcb->Directory || fcb->StatOnly || (writable && !file->WriteAccess) || !NT_SUCCESS(ensure_host(fcb, file)))
         return FALSE;
     MIMEFS_WINDOW_REF *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'W', 'r'));
     if (!r)
@@ -627,6 +633,11 @@ NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_h
     MIMEFS_FCB *fcb = file->FsContext;
     if (fcb->Rom || !fcb->Directory)
         return STATUS_INVALID_PARAMETER;
+    if (host_handle) {
+        NTSTATUS status = ensure_host(fcb, file);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     *volume = fcb->Volume;
     if (host_handle)
         *host_handle = fcb->HostHandle;
@@ -635,6 +646,87 @@ NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_h
 
 /* as long as the attribute cache would keep an answer of the host, see io/fsattr.c. */
 #define OPEN_INFO_LIFE 5000000ll
+
+/* a host handle for the file of a deferred open, by its name or its id: 0 when the file is gone. */
+static ULONG64 open_deferred(MIMEFS_FCB *fcb, PFILE_OBJECT file, BOOLEAN by_id)
+{
+    MimeFsOpen *req = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MimeFsOpen), KI_TAG('M', 'f', 'O', 'p'));
+    ULONG chars = file->FileName.Length / sizeof(WCHAR);
+    if (!req || (!by_id && chars > RTL_NUMBER_OF(req->path))) {
+        if (req)
+            ExFreePool(req);
+        return 0;
+    }
+    memset(req, 0, sizeof(*req));
+    req->volume = fcb->Volume;
+    req->flags = fcb->DeferredFlags;
+    req->disposition = MIME_FS_DISP_OPEN;
+    if (by_id) {
+        req->flags |= MIME_FS_OPEN_BY_ID;
+        memcpy(req->path, &fcb->FileId, sizeof(fcb->FileId));
+        req->path_chars = sizeof(fcb->FileId) / sizeof(WCHAR);
+    } else {
+        memcpy(req->path, file->FileName.Buffer, chars * sizeof(WCHAR));
+        req->path_chars = chars;
+    }
+    ULONG64 host = 0;
+    if (HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_OK) {
+        host = req->handle_out;
+        /* the name may be another file's by now: a rename or a delete since the open. */
+        if (host && req->info_out.file_id != fcb->FileId) {
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+            host = 0;
+        }
+    }
+    ExFreePool(req);
+    return host;
+}
+
+/*
+ * gives a deferred open its host handle, for anything but the attribute queries: by its name, else by its id when the
+ * name has moved on. one host handle per file object at most.
+ */
+static NTSTATUS ensure_host(MIMEFS_FCB *fcb, PFILE_OBJECT file)
+{
+    if (!fcb || !fcb->Deferred || __atomic_load_n(&fcb->HostHandle, __ATOMIC_ACQUIRE))
+        return STATUS_SUCCESS;
+    ULONG64 host = open_deferred(fcb, file, FALSE);
+    if (!host)
+        host = open_deferred(fcb, file, TRUE);
+    if (!host)
+        return STATUS_FILE_DELETED;
+    ULONG64 expected = 0;
+    if (!__atomic_compare_exchange_n(&fcb->HostHandle, &expected, host, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+        return STATUS_SUCCESS;
+    }
+    fcb->OpenInfoWatched = FALSE;
+    if (!fcb->Directory && !fcb->Link)
+        FsWbOpen(&fcb->Wb, fcb->Volume, fcb->FileId, host, &file->FileName);
+    return STATUS_SUCCESS;
+}
+
+/* the attributes of a deferred open, from its open while the name is unchanged, then by its name. */
+static BOOLEAN query_deferred(MIMEFS_FCB *fcb, MimeFsInfo *info)
+{
+    PFILE_OBJECT file = fcb->OpenFile;
+    if (fcb->OpenInfoWatched) {
+        if ((LONGLONG)KeQueryInterruptTime() - fcb->OpenInfoTime <= OPEN_INFO_LIFE && !share_writers(fcb->Volume, fcb->FileId) &&
+            FsAttrUnchanged(fcb->Volume, &file->FileName, fcb->OpenInfoToken)) {
+            *info = fcb->OpenInfo;
+            return TRUE;
+        }
+        fcb->OpenInfoWatched = FALSE;
+    }
+    /* buffered writes of other handles count, as they do for a query with a handle. */
+    FsWbSyncPath(fcb->Volume, &file->FileName, fcb->Directory);
+    BOOLEAN missing;
+    if (FsAttrLookup(fcb->Volume, &file->FileName, &missing, info))
+        return !missing && info->file_id == fcb->FileId;
+    ULONG chars = file->FileName.Length / sizeof(WCHAR);
+    return stat_name(fcb->Volume, file->FileName.Buffer, chars, info) && info->file_id == fcb->FileId &&
+           !(info->attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+}
 
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
 {
@@ -645,6 +737,13 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
     if (fcb->StatOnly) {
         *info = fcb->OpenInfo;
         return STATUS_SUCCESS;
+    }
+    if (fcb->Deferred && !__atomic_load_n(&fcb->HostHandle, __ATOMIC_ACQUIRE)) {
+        if (query_deferred(fcb, info))
+            return STATUS_SUCCESS;
+        NTSTATUS status = ensure_host(fcb, fcb->OpenFile);
+        if (!NT_SUCCESS(status))
+            return status;
     }
     /*
      * a handle that only reads, of a file nobody writes, in a watched directory, is answered from its open for a
@@ -918,6 +1017,15 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
                         !(req->flags & MIME_FS_OPEN_WRITE) && !(file->Flags & FO_DELETE_ON_CLOSE);
     if (stat_only)
         req->flags |= MIME_FS_OPEN_STAT_ONLY;
+    /*
+     * a handle for the attributes alone, the way stat is made, is answered without a host handle. the host is asked
+     * for one only when the handle needs it, which saves its open and its close.
+     */
+    BOOLEAN deferred = !stat_only && disposition == FILE_OPEN && !by_id &&
+                       !(access & ~(ACCESS_MASK)(FILE_READ_ATTRIBUTES | SYNCHRONIZE)) && !(options & FILE_DELETE_ON_CLOSE) &&
+                       !(file->Flags & FO_DELETE_ON_CLOSE);
+    if (deferred)
+        req->flags |= MIME_FS_OPEN_STAT_ONLY;
     ULONG host_disposition;
     switch (disposition) {
     case FILE_SUPERSEDE: host_disposition = MIME_FS_DISP_SUPERSEDE; break;
@@ -941,7 +1049,7 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
     if (disposition == FILE_OPEN && !by_id) {
         BOOLEAN missing;
         MimeFsInfo known;
-        BOOLEAN plain = stat_only && !check && !(options & (FILE_DIRECTORY_FILE | FILE_NON_DIRECTORY_FILE));
+        BOOLEAN plain = (stat_only || deferred) && !check && !(options & (FILE_DIRECTORY_FILE | FILE_NON_DIRECTORY_FILE));
         if (FsAttrLookup(vol->HostVolume, &file->FileName, &missing, &known)) {
             if (missing) {
                 ExFreePool(req);
@@ -1054,6 +1162,12 @@ opened:
         ExFreePool(req);
         return complete(irp, status, 0);
     }
+    /* a link opened as itself reads its target through the handle, so it gets one at once. */
+    if (deferred && (req->flags & MIME_FS_OPEN_STAT_ONLY) && (req->info_out.attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        req->flags &= ~(ULONG)MIME_FS_OPEN_STAT_ONLY;
+        deferred = FALSE;
+        goto reopen;
+    }
     ULONG64 host = req->handle_out;
     ULONG action = req->action_out;
     ULONG req_flags = req->flags;
@@ -1117,7 +1231,9 @@ opened:
     fcb->Volume = vol->HostVolume;
     fcb->FileId = opened.file_id;
     /* the other opens of the file have their say once the descriptor has had its own, as on windows. */
-    if (host && !(req_flags & MIME_FS_OPEN_STAT_ONLY)) {
+    /* a deferred open counts as a handle too: a file with a handle open is not replaced by a rename. */
+    fcb->Deferred = deferred && !host;
+    if ((host && !(req_flags & MIME_FS_OPEN_STAT_ONLY)) || fcb->Deferred) {
         NTSTATUS shared = share_open(fcb, share_bits(access, stack->Parameters.Create.ShareAccess));
         if (!NT_SUCCESS(shared)) {
             ExFreePool(fcb);
@@ -1126,18 +1242,25 @@ opened:
         }
     }
     fcb->HostHandle = host;
-    fcb->StatOnly = (req_flags & MIME_FS_OPEN_STAT_ONLY) != 0;
+    fcb->StatOnly = (req_flags & MIME_FS_OPEN_STAT_ONLY) != 0 && !fcb->Deferred;
+    if (fcb->Deferred) {
+        fcb->DeferredFlags = req_flags & ~(ULONG)(MIME_FS_OPEN_STAT_ONLY | MIME_FS_OPEN_WANT_SD);
+        fcb->OpenFile = file;
+        fcb->OpenInfoWatched = info_watched;
+        fcb->OpenInfoToken = info_token;
+        fcb->OpenInfoTime = (LONGLONG)KeQueryInterruptTime();
+    }
     fcb->OpenInfo = opened;
     fcb->Directory = directory;
     fcb->Link = (opened.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && host != 0;
     fcb->Access = granted;
     fcb->NoAccessTime = (req_flags & MIME_FS_OPEN_NO_ACCESS_TIME) != 0;
     fcb->Buffered = (req_flags & MIME_FS_OPEN_WRITE) && !(options & (FILE_WRITE_THROUGH | FILE_NO_INTERMEDIATE_BUFFERING));
-    if (!fcb->Directory && !fcb->StatOnly && !fcb->Link)
+    if (!fcb->Directory && !fcb->StatOnly && !fcb->Deferred && !fcb->Link)
         FsWbOpen(&fcb->Wb, vol->HostVolume, opened.file_id, host, &file->FileName);
     if (!fcb->Directory && opened.links > 1)
         FsWbNoteLinked(vol->HostVolume, opened.file_id);
-    if (!fcb->Directory && !fcb->StatOnly && !fcb->Link) {
+    if (!fcb->Directory && !fcb->StatOnly && !fcb->Deferred && !fcb->Link) {
         if (req_flags & MIME_FS_OPEN_WRITE || action != FILE_OPENED)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         else
@@ -1707,6 +1830,13 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
     MIMEFS_FCB *fcb = file->FsContext;
     if (!fcb)
         return complete(irp, STATUS_INVALID_HANDLE, 0);
+    FILE_INFORMATION_CLASS klass = stack->Parameters.QueryFile.FileInformationClass;
+    if (!fcb->Rom && fcb->Deferred &&
+        (klass == FileStatInformation || klass == FileStatLxInformation || klass == FileHardLinkInformation)) {
+        NTSTATUS status = ensure_host(fcb, file);
+        if (!NT_SUCCESS(status))
+            return complete(irp, status, 0);
+    }
     MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MimeFsInfo), KI_TAG('M', 'f', 'I', 'n'));
     if (!info)
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
@@ -2615,6 +2745,9 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
         MimeFsVolumeInfo volume;
         MIMEFS_FCB *fcb = stack->FileObject ? stack->FileObject->FsContext : nullptr;
+        /* the size is that of the host file system the file is on. */
+        if (fcb && !fcb->Rom && !NT_SUCCESS(ensure_host(fcb, stack->FileObject)))
+            fcb = nullptr;
         NTSTATUS status = volume_size(vol, fcb ? fcb->HostHandle : 0, &volume);
         if (!NT_SUCCESS(status))
             return complete(irp, status, 0);
@@ -3867,6 +4000,21 @@ static NTSTATUS create_disk(PDRIVER_OBJECT driver, ULONG serial)
     return STATUS_SUCCESS;
 }
 
+static PDRIVER_DISPATCH g_with_host[IRP_MJ_MAXIMUM_FUNCTION + 1];
+
+/* the requests that need the host's handle of the file give a deferred open one first. */
+static NTSTATUS NTAPI mimefs_with_host(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    MIMEFS_FCB *fcb = stack->FileObject ? stack->FileObject->FsContext : nullptr;
+    if (fcb && !fcb->Rom && fcb->Deferred) {
+        NTSTATUS status = ensure_host(fcb, stack->FileObject);
+        if (!NT_SUCCESS(status))
+            return complete(irp, status, 0);
+    }
+    return g_with_host[stack->MajorFunction](device, irp);
+}
+
 NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     g_driver = driver;
@@ -3891,6 +4039,13 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     driver->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = mimefs_flush;
     driver->MajorFunction[IRP_MJ_QUERY_SECURITY] = mimefs_query_security;
     driver->MajorFunction[IRP_MJ_SET_SECURITY] = mimefs_set_security;
+    static const UCHAR needing[] = {IRP_MJ_READ, IRP_MJ_WRITE, IRP_MJ_SET_INFORMATION, IRP_MJ_DIRECTORY_CONTROL,
+                                    IRP_MJ_SET_VOLUME_INFORMATION, IRP_MJ_DEVICE_CONTROL, IRP_MJ_FILE_SYSTEM_CONTROL,
+                                    IRP_MJ_FLUSH_BUFFERS, IRP_MJ_QUERY_SECURITY, IRP_MJ_SET_SECURITY};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(needing); i++) {
+        g_with_host[needing[i]] = driver->MajorFunction[needing[i]];
+        driver->MajorFunction[needing[i]] = mimefs_with_host;
+    }
     /* C: has no label, like a fresh install; Z: shows the name of the host volume. */
     ULONG serial = HalBootInfo->volume_serial;
     NTSTATUS status = create_volume(driver, L"\\Device\\HarddiskVolume1", MIME_FS_VOLUME_SYSTEM, "", serial);
