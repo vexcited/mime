@@ -457,7 +457,8 @@ typedef struct MimeBootInfo {
      * manager waits before reading display.
      */
     uint32_t display_ready;
-    uint32_t pad2;
+    /* x64: mwaitx runs in the guest and never exits to the host, so an idle processor waits in it, see KiIdleWait. */
+    uint32_t idle_mwaitx;
     /* the locale of the user and the code pages that follow from it, set at setup, see host/locale.c. */
     uint32_t locale_lcid;
     uint16_t ansi_code_page;

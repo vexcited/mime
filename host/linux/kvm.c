@@ -63,6 +63,7 @@ static struct kvm_cpuid2 *g_cpuid;
 static uint32_t g_cpuid_room;
 static bool g_intel;
 static bool g_xapic;
+static bool g_mwaitx;
 static volatile bool g_dump_requested;
 static volatile bool g_profiling;
 static void profile_sample(MimeVcpu *vcpu);
@@ -221,6 +222,28 @@ static bool host_wants_xapic(uint32_t vcpu_count)
     host_cpuid(0x8000000A, 0, host);
     /* an xapic id is eight bits and 255 names every processor. */
     return (host[3] & (1u << 13)) && !(host[3] & (1u << 18)) && vcpu_count <= 255;
+}
+
+/*
+ * mwait run by the guest itself: an idle processor that waits in it is woken by a write of another one with no
+ * exit on either side, where a halt costs both an exit and the wait for a thread of the host. only mwaitx ends
+ * such a wait by a timer of its own, so the guest is told of that one alone. it must be asked for before the
+ * first vcpu exists.
+ */
+static bool guest_runs_mwaitx(MimeVm *vm)
+{
+    uint32_t host[4];
+    host_cpuid(0x80000000, 0, host);
+    if (host[0] < 0x80000001)
+        return false;
+    host_cpuid(0x80000001, 0, host);
+    if (!(host[2] & (1u << 29)))
+        return false;
+    int exits = ioctl(vm->vm_fd, KVM_CHECK_EXTENSION, KVM_CAP_X86_DISABLE_EXITS);
+    if (exits <= 0 || !(exits & KVM_X86_DISABLE_EXITS_MWAIT))
+        return false;
+    struct kvm_enable_cap cap = {.cap = KVM_CAP_X86_DISABLE_EXITS, .args = {KVM_X86_DISABLE_EXITS_MWAIT}};
+    return ioctl(vm->vm_fd, KVM_ENABLE_CAP, &cap) == 0;
 }
 
 /* kvm leaves the brand string to the machine when it has the leaves; without them the guest would read zeros. */
@@ -412,6 +435,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     if (!triple_event)
         mime_error("kvm cannot report the state of a triple fault: %s", strerror(errno));
     g_xapic = host_wants_xapic(vm->vcpu_count);
+    g_mwaitx = guest_runs_mwaitx(vm);
     if (!load_cpuid(vm))
         return false;
     if (!cpuid_has(0x80000001, 3, 26)) {
@@ -724,6 +748,7 @@ static void *vcpu_main(void *arg)
         int khz = ioctl(vcpu->fd, KVM_GET_TSC_KHZ, 0);
         vm->tsc_hz = khz > 0 ? (uint64_t)khz * 1000 : 0;
         vm->boot->timer_frequency = vm->tsc_hz;
+        vm->boot->idle_mwaitx = g_mwaitx;
         struct timespec now;
         clock_gettime(CLOCK_REALTIME, &now);
         vm->boot->boot_filetime = mime_unix_to_filetime(now);

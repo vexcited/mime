@@ -300,6 +300,11 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
  *
  * how long it watches follows how its halts end, as linux's haltpoll governor does: see KiIdleHaltEnded.
  *
+ * where the host lets mwaitx run in the guest the processor spins for the shortest watch only and sleeps in
+ * mwaitx for the rest of it. a write of the line its flags are in wakes it in half a microsecond with no exit
+ * on either side, and the timer of mwaitx ends the watch. the core is left to its other thread meanwhile, so
+ * the watch may last five times longer.
+ *
  * hlt ends only on an interrupt taken with interrupts enabled. the clock and a request from another processor
  * work under the dispatcher lock alone. any other interrupt finds IdleSleeping and takes the kernel lock first,
  * see KiTrapCommon, and the processor holds it after. none of them delivers dpcs or switches threads here, see
@@ -324,9 +329,11 @@ void KiIdleWait(void)
 {
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
+    BOOLEAN mwaitx = HalBootInfo->idle_mwaitx != 0;
     if (!prcb->IdlePoll) {
         g_idle_poll_shortest = HalBootInfo->timer_frequency / 80000; /* 12.5 microseconds */
-        g_idle_poll_longest = HalBootInfo->timer_frequency / 5000;   /* 200 microseconds */
+        /* 200 microseconds of spinning, a millisecond of mwaitx. */
+        g_idle_poll_longest = HalBootInfo->timer_frequency / (mwaitx ? 1000 : 5000);
         prcb->IdlePoll = g_idle_poll_shortest;
     }
     ULONG64 poll = prcb->IdlePoll;
@@ -336,7 +343,8 @@ void KiIdleWait(void)
         __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
     __asm__ volatile("sti" ::: "memory");
     ULONG64 since = HalReadCounter(), now = since;
-    while (now - since < poll) {
+    ULONG64 spin = mwaitx && poll > g_idle_poll_shortest ? g_idle_poll_shortest : poll;
+    while (now - since < spin) {
         for (int i = 0; i < KI_IDLE_PAUSE_ROW && !idle_work(pcr, prcb); i++)
             __builtin_ia32_pause();
         ULONG64 gap = HalReadCounter();
@@ -347,6 +355,18 @@ void KiIdleWait(void)
             break;
     }
     __asm__ volatile("cli" ::: "memory");
+    /*
+     * the monitor is armed before the flags are read, so a write between the two ends the mwaitx at once. a
+     * pending interrupt ends it too, masked as it is, and is taken in the window after.
+     */
+    while (now - since < poll && !idle_work(pcr, prcb)) {
+        __asm__ volatile("monitorx" ::"a"(&prcb->DispatchPending), "c"(0), "d"(0) : "memory");
+        if (idle_work(pcr, prcb))
+            break;
+        __asm__ volatile("mwaitx" ::"a"(0), "b"((ULONG)(poll - (now - since))), "c"(3) : "memory");
+        __asm__ volatile("sti; nop; cli" ::: "memory");
+        now = HalReadCounter();
+    }
     if (!idle_work(pcr, prcb)) {
         /* published before looking again, so a request that came meanwhile is seen or sends the interrupt. */
         __atomic_store_n(&prcb->IdleState, KI_IDLE_HALTED, __ATOMIC_SEQ_CST);
