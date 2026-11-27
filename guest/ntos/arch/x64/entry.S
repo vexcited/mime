@@ -204,11 +204,16 @@ KiFlushIpi:
 1:  movq    %cr3, %rax
     movq    %rax, %cr3                  /* the translations of the address space, not the global ones */
     lock andb $0xFE, %gs:KPCR_FLUSH_PENDING
+    cmpb    $0, HalApicMemory(%rip)
+    jne     3f
     xorl    %eax, %eax
     xorl    %edx, %edx
     movl    $0x80B, %ecx                /* the end of the interrupt, MSR_X2APIC_EOI */
     wrmsr
-    testb   $RPL_USER, 32(%rsp)
+    jmp     4f
+3:  movabsq $KTRAP_APIC_EOI, %rax
+    movl    $0, (%rax)
+4:  testb   $RPL_USER, 32(%rsp)
     jz      2f
     swapgs
 2:  popq    %rdx
@@ -571,10 +576,15 @@ KiTrapCommon:
     jb      4f
     cmpq    $KI_VECTOR_SPURIOUS, %rax
     je      4f
+    cmpb    $0, HalApicMemory(%rip)
+    jne     3f
     xorl    %eax, %eax
     xorl    %edx, %edx
     movl    $0x80B, %ecx                /* MSR_X2APIC_EOI */
     wrmsr
+    jmp     4f
+3:  movabsq $KTRAP_APIC_EOI, %rax
+    movl    $0, (%rax)
 4:  testb   $RPL_USER, KTRAP_CS(%rbx)
     jz      2f
     /*

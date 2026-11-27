@@ -8,6 +8,8 @@
  * hardware frame, so its top is the stack top of an entry.
  */
 #define KTRAP_PHYSMAP 0xFFFF800000000000ull
+/* the end of interrupt register of the local apic in xapic mode, see HalApicMemory. */
+#define KTRAP_APIC_EOI 0xFFFF8000FEE000B0ull
 
 #define KTRAP_XMM0 0x000
 #define KTRAP_RAX 0x100

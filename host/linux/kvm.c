@@ -62,6 +62,7 @@ static int g_vcpu_mmap_size;
 static struct kvm_cpuid2 *g_cpuid;
 static uint32_t g_cpuid_room;
 static bool g_intel;
+static bool g_xapic;
 static volatile bool g_dump_requested;
 static volatile bool g_profiling;
 static void profile_sample(MimeVcpu *vcpu);
@@ -195,6 +196,31 @@ static void set_leaf(uint32_t function, uint32_t index, bool indexed, uint32_t e
 static void host_cpuid(uint32_t function, uint32_t index, uint32_t out[4])
 {
     __asm__ volatile("cpuid" : "=a"(out[0]), "=b"(out[1]), "=c"(out[2]), "=d"(out[3]) : "a"(function), "c"(index));
+}
+
+/*
+ * amd's avic runs the reads and writes of the local apic in the guest, with no exit for an end of interrupt or an
+ * ipi to a running processor. it does so for the msrs of x2apic mode only on processors with x2avic, zen 4 and
+ * later: before those the guest is left in xapic mode, whose registers are memory. without avic that memory is
+ * emulated an instruction at a time and x2apic is the cheaper one.
+ */
+static bool host_wants_xapic(uint32_t vcpu_count)
+{
+    char on = 'N';
+    int fd = open("/sys/module/kvm_amd/parameters/avic", O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    ssize_t n = read(fd, &on, 1);
+    close(fd);
+    if (n != 1 || (on != 'Y' && on != '1'))
+        return false;
+    uint32_t host[4];
+    host_cpuid(0x80000000, 0, host);
+    if (host[0] < 0x8000000A)
+        return false;
+    host_cpuid(0x8000000A, 0, host);
+    /* an xapic id is eight bits and 255 names every processor. */
+    return (host[3] & (1u << 13)) && !(host[3] & (1u << 18)) && vcpu_count <= 255;
 }
 
 /* kvm leaves the brand string to the machine when it has the leaves; without them the guest would read zeros. */
@@ -385,6 +411,7 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
     int triple_event = ioctl(vm->vm_fd, KVM_ENABLE_CAP, &triple) == 0;
     if (!triple_event)
         mime_error("kvm cannot report the state of a triple fault: %s", strerror(errno));
+    g_xapic = host_wants_xapic(vm->vcpu_count);
     if (!load_cpuid(vm))
         return false;
     if (!cpuid_has(0x80000001, 3, 26)) {
@@ -586,6 +613,10 @@ static bool setup_vcpu(MimeVcpu *vcpu)
     sregs.cr3 = vm->boot->ttbr1_phys;
     sregs.cr4 = CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT;
     sregs.efer = EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
+    /* the local apic is handed over enabled, in x2apic mode unless the host runs xapic mode without exits. */
+    sregs.apic_base |= 1ull << 11;
+    if (!g_xapic)
+        sregs.apic_base |= 1ull << 10;
     if (ioctl(vcpu->fd, KVM_SET_SREGS, &sregs) != 0) {
         mime_error("KVM_SET_SREGS failed: %s", strerror(errno));
         return false;

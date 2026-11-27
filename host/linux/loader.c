@@ -193,7 +193,7 @@ bool mime_vm_load_kernel(MimeVm *vm)
 
     /* page tables follow the kernel: 256 kernel root entries, a 2 MiB-page RAM physmap, ROM and kernel pages. */
     uint64_t tables = MIME_ALIGN_UP(kernel_phys + span, 1ull << 21);
-    uint64_t table_pages = 1 + 256 + (vm->ram_size >> 30) + 2 + (boot->rom_size >> 21) + 2 + (span >> 21) + 8;
+    uint64_t table_pages = 1 + 256 + (vm->ram_size >> 30) + 2 + (boot->rom_size >> 21) + 2 + (span >> 21) + 10;
     TableAlloc ta = {vm, tables, tables + table_pages * MIME_PAGE_SIZE};
     uint64_t root = alloc_table(&ta);
     uint64_t *root_table = table_ptr(&ta, root);
@@ -202,6 +202,8 @@ bool mime_vm_load_kernel(MimeVm *vm)
     map_physmap(&ta, root, boot->ram_base, boot->ram_size);
     map_rom(&ta, root, boot->rom_phys, MIME_ALIGN_UP(boot->rom_size, MIME_PAGE_SIZE));
     map_windows(&ta, root);
+    /* the local apic registers, for a guest the host leaves in xapic mode. */
+    map_page(&ta, root, MIME_KVA_PHYSMAP + MIME_APIC_BASE, MIME_APIC_BASE, PTE_RW | PTE_G | PTE_NX | PTE_D);
 
     for (uint64_t off = 0; off < MIME_ALIGN_UP((uint64_t)headers_size, MIME_PAGE_SIZE); off += MIME_PAGE_SIZE)
         map_page(&ta, root, kernel_virt + off, kernel_phys + off, PTE_G | PTE_NX);

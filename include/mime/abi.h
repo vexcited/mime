@@ -24,6 +24,7 @@
  */
 #define MIME_ROM_BASE 0x10000000ull /* the system files, read only, below RAM. */
 #define MIME_RAM_BASE 0x100000000ull
+#define MIME_APIC_BASE 0xFEE00000ull /* the local apic registers, also mapped at physmap + this. */
 /*
  * host files placed read only by MIME_HC_FS_MAP, above RAM, mapped from
  * the host page cache. it ends at 512 GiB since intel client processors address 39 bits and KVM refuses

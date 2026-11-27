@@ -1,4 +1,4 @@
-/* x64 hal: port hypercalls, the tsc, the x2apic and its tsc deadline timer. */
+/* x64 hal: port hypercalls, the tsc, the local apic and its tsc deadline timer. */
 #include "../../ntos.h"
 
 /* rax = number, rdi rsi rdx r10 r8 r9 = arguments; rax = status, rdx = value. */
@@ -68,10 +68,40 @@ void HalDisarmTimer(void)
     KiWriteMsr(MSR_TSC_DEADLINE, 0);
 }
 
+/*
+ * the local apic is in xapic mode and its registers are memory. the host leaves a processor so when its hardware
+ * runs those reads and writes in the guest and exits on the msrs of x2apic mode, see setup_vcpu in host/linux/kvm.c.
+ */
+UCHAR HalApicMemory;
+
+#define APIC_REGISTER(msr) (*(volatile ULONG *)(MIME_KVA_PHYSMAP + MIME_APIC_BASE + (((msr) - 0x800) << 4)))
+#define APIC_ICR_HIGH 0x831
+
+static void apic_write(ULONG msr, ULONG value)
+{
+    if (HalApicMemory)
+        APIC_REGISTER(msr) = value;
+    else
+        KiWriteMsr(msr, value);
+}
+
 /* the apic ids are the processor numbers, which the host gives its vcpus. */
+static void send_ipi(ULONG processor, ULONG vector)
+{
+    if (!HalApicMemory) {
+        KiWriteMsr(MSR_X2APIC_ICR, (ULONG64)processor << 32 | vector);
+        return;
+    }
+    /* the destination and the command are two registers: an interrupt sending its own between them changes the first. */
+    ULONG64 flags = KiDisableInterrupts();
+    APIC_REGISTER(APIC_ICR_HIGH) = processor << 24;
+    APIC_REGISTER(MSR_X2APIC_ICR) = vector;
+    KiRestoreInterrupts(flags);
+}
+
 void HalSendIpi(ULONG processor)
 {
-    KiWriteMsr(MSR_X2APIC_ICR, (ULONG64)processor << 32 | KI_VECTOR_IPI);
+    send_ipi(processor, KI_VECTOR_IPI);
 }
 
 /*
@@ -81,6 +111,12 @@ void HalSendIpi(ULONG processor)
  */
 static void send_mask(ULONG64 mask, ULONG vector)
 {
+    /* a write per processor here: only one for a processor that sleeps exits to the host. */
+    if (HalApicMemory) {
+        for (; mask; mask &= mask - 1)
+            send_ipi((ULONG)__builtin_ctzll(mask), vector);
+        return;
+    }
     for (ULONG cluster = 0; mask; cluster++, mask >>= 16) {
         ULONG bits = (ULONG)(mask & 0xFFFF);
         if (!bits)
@@ -106,18 +142,18 @@ void HalSendFlushIpi(ULONG64 mask)
 /* exported to drivers. the kernel's own interrupts are ended in KiTrapCommon. */
 void HalEndOfInterrupt(ULONG vector)
 {
-    KiWriteMsr(MSR_X2APIC_EOI, 0);
+    apic_write(MSR_X2APIC_EOI, 0);
 }
 
-/* x2apic mode, with the timer in tsc deadline mode. */
+/* the mode the host left the local apic in, with the timer in tsc deadline mode. */
 void HalInitializeProcessor(void)
 {
     KiPrepareHypervisor();
-    KiWriteMsr(MSR_APIC_BASE, KiReadMsr(MSR_APIC_BASE) | (1ull << 11) | (1ull << 10));
-    KeGetPcr()->ApicId = (ULONG)KiReadMsr(MSR_X2APIC_ID);
-    KiWriteMsr(MSR_X2APIC_TPR, 0);
-    KiWriteMsr(MSR_X2APIC_SVR, 0x100 | KI_VECTOR_SPURIOUS);
-    KiWriteMsr(MSR_X2APIC_LVT_TIMER, (2u << 17) | KI_VECTOR_CLOCK);
+    HalApicMemory = !(KiReadMsr(MSR_APIC_BASE) & (1ull << 10));
+    KeGetPcr()->ApicId = HalApicMemory ? APIC_REGISTER(MSR_X2APIC_ID) >> 24 : (ULONG)KiReadMsr(MSR_X2APIC_ID);
+    apic_write(MSR_X2APIC_TPR, 0);
+    apic_write(MSR_X2APIC_SVR, 0x100 | KI_VECTOR_SPURIOUS);
+    apic_write(MSR_X2APIC_LVT_TIMER, (2u << 17) | KI_VECTOR_CLOCK);
     KiWriteMsr(MSR_TSC_DEADLINE, 0);
     /* user mode reads its processor number with rdtscp or rdpid, as on windows. */
     KiWriteMsr(MSR_TSC_AUX, KeGetCurrentPrcb()->Number);
