@@ -582,17 +582,21 @@ ULONG DeskCleanSerial(void)
     return g_dirty ? 0 : g_serial;
 }
 
+static void sync_thread(W32THREAD *t)
+{
+    if (!t || !t->DeskInfo)
+        return;
+    /* bit 1 of the flags is what InSendMessage answers with no call. */
+    *(PULONG)(g_heap + t->DeskInfo) = MsgInSendFlags(t) ? 2 : 0;
+    PULONG64 windows = (PULONG64)(g_heap + t->DeskInfo + 0x20);
+    windows[0] = (ULONG64)(ULONG_PTR)t->Focus;
+    windows[1] = (ULONG64)(ULONG_PTR)t->Active;
+}
+
 static void sync_threads(void)
 {
-    for (W32THREAD *t = W32NextThread(nullptr); t; t = W32NextThread(t)) {
-        if (!t->DeskInfo)
-            continue;
-        /* bit 1 of the flags is what InSendMessage answers with no call. */
-        *(PULONG)(g_heap + t->DeskInfo) = MsgInSendFlags(t) ? 2 : 0;
-        PULONG64 windows = (PULONG64)(g_heap + t->DeskInfo + 0x20);
-        windows[0] = (ULONG64)(ULONG_PTR)t->Focus;
-        windows[1] = (ULONG64)(ULONG_PTR)t->Active;
-    }
+    for (W32THREAD *t = W32NextThread(nullptr); t; t = W32NextThread(t))
+        sync_thread(t);
 }
 
 /* called with the lock held, as its last owner lets go of it. */
@@ -604,7 +608,8 @@ void DeskSync(void)
     if (!p || !p->DeskBase)
         return;
     if (!g_dirty) {
-        sync_threads();
+        /* the message a thread answers changes under this lock too, and only for the thread itself. */
+        sync_thread(W32GetThread());
         return;
     }
     g_dirty = FALSE;
