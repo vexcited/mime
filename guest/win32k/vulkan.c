@@ -37,11 +37,15 @@ static void free_block(VK_BLOCK *b, BOOLEAN unmap)
     b->User = b->Section = b->Kernel = nullptr;
 }
 
+/*
+ * made before the user lock is taken: clearing tens of megabytes takes a tenth of a second while the host backs the
+ * pages again, which no other thread waits for.
+ */
 static NTSTATUS alloc_block(VK_BLOCK *b, SIZE_T size)
 {
     memset(b, 0, sizeof(*b));
     b->Size = size;
-    b->Kernel = MmAllocateContiguousPages(size);
+    b->Kernel = MmAllocateContiguousPagesUnlocked(size);
     if (!b->Kernel)
         return STATUS_NO_MEMORY;
     b->Pa = (ULONG64)MmGetPhysicalAddress(b->Kernel).QuadPart;
@@ -64,18 +68,36 @@ NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base)
     NTSTATUS status = STATUS_SUCCESS;
     UserEnter();
     W32PROCESS *p = W32GetProcess();
-    W32VK *v = p ? p->Vk : nullptr;
+    W32VK *v = p ? p->Vk : nullptr, *made = nullptr;
     if (p && !v) {
-        v = W32Alloc(sizeof(W32VK));
-        status = v ? alloc_block(&v->Main, MVK_CONNECTION_SIZE) : STATUS_NO_MEMORY;
+        UserLeave();
+        made = W32Alloc(sizeof(W32VK));
+        NTSTATUS allocated = made ? alloc_block(&made->Main, MVK_CONNECTION_SIZE) : STATUS_NO_MEMORY;
+        UserEnter();
+        v = p->Vk;
+        /* another thread of the process connected meanwhile. */
+        if (v || !NT_SUCCESS(allocated)) {
+            if (made && NT_SUCCESS(allocated))
+                free_block(&made->Main, TRUE);
+            if (made)
+                W32Free(made);
+            made = nullptr;
+            if (!v)
+                status = allocated;
+        } else {
+            v = made;
+        }
+    }
+    if (made) {
         ULONG64 connection = 0;
-        if (NT_SUCCESS(status) && HalMimeHypercall(MIME_HC_VK_OPEN, v->Main.Pa, MVK_CONNECTION_SIZE, 0, 0, 0, 0,
-                                                   &connection) != MIME_HC_STATUS_OK)
+        if (HalMimeHypercall(MIME_HC_VK_OPEN, v->Main.Pa, MVK_CONNECTION_SIZE, 0, 0, 0, 0, &connection) !=
+            MIME_HC_STATUS_OK)
             status = STATUS_DEVICE_NOT_READY;
         if (NT_SUCCESS(status)) {
             v->Connection = (ULONG)connection;
             v->Header = v->Main.Kernel;
-            p->Vk = v;
+            /* the kick reads it without any lock, see VkFastKick. */
+            __atomic_store_n(&p->Vk, v, __ATOMIC_RELEASE);
             __atomic_add_fetch(&VkProcessCount, 1, __ATOMIC_RELAXED);
         } else if (v) {
             free_block(&v->Main, TRUE);
@@ -98,20 +120,22 @@ NTSTATUS NTAPI NtGdiMimeVkAlloc(SIZE_T size, PVOID *base, PULONG64 pa)
     if (size < 0x1000 || size > (256u << 20))
         return STATUS_INVALID_PARAMETER;
     size = (size + 0xFFFF) & ~(SIZE_T)0xFFFF;
+    if (!process_vk())
+        return STATUS_INVALID_DEVICE_STATE;
+    VK_BLOCK *b = W32Alloc(sizeof(VK_BLOCK));
+    NTSTATUS status = b ? alloc_block(b, size) : STATUS_NO_MEMORY;
     UserEnter();
     W32VK *v = process_vk();
-    NTSTATUS status = v ? STATUS_SUCCESS : STATUS_INVALID_DEVICE_STATE;
-    VK_BLOCK *b = v ? W32Alloc(sizeof(VK_BLOCK)) : nullptr;
-    if (v && !b)
-        status = STATUS_NO_MEMORY;
-    if (NT_SUCCESS(status))
-        status = alloc_block(b, size);
-    if (NT_SUCCESS(status)) {
+    if (NT_SUCCESS(status) && v) {
         b->Next = v->Blocks;
         v->Blocks = b;
     } else if (b) {
+        if (NT_SUCCESS(status))
+            free_block(b, TRUE);
         W32Free(b);
         b = nullptr;
+        if (NT_SUCCESS(status))
+            status = STATUS_INVALID_DEVICE_STATE;
     }
     PVOID user = b ? b->User : nullptr;
     ULONG64 phys = b ? b->Pa : 0;
@@ -141,6 +165,21 @@ NTSTATUS NTAPI NtGdiMimeVkFree(PVOID base)
     }
     UserLeave();
     return status;
+}
+
+/*
+ * the kick only wakes the host's thread for the connection, so the kernel asks for it before it takes any lock, with
+ * interrupts off. the connection outlives every thread of its process.
+ */
+BOOLEAN VkFastKick(ULONG64 *result)
+{
+    W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
+    W32VK *v = p ? __atomic_load_n(&p->Vk, __ATOMIC_ACQUIRE) : nullptr;
+    if (!v)
+        return FALSE;
+    HalMimeHypercall(MIME_HC_VK_KICK, v->Connection, 0, 0, 0, 0, 0, nullptr);
+    *result = STATUS_SUCCESS;
+    return TRUE;
 }
 
 NTSTATUS NTAPI NtGdiMimeVkKick(void)

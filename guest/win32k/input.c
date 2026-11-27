@@ -188,6 +188,10 @@ SHORT NTAPI NtUserGetKeyState(int key)
  */
 BOOLEAN NTAPI W32FastService(ULONG number, ULONG64 argument, ULONG64 *result)
 {
+    if (number == MIME_SVC_NtGdiMimeVkKick)
+        return VkFastKick(result);
+    if (number == MIME_SVC_NtGdiMimeGpuKick)
+        return GpuFastKick(result);
     W32THREAD *t = PsGetCurrentThreadWin32Thread();
     ULONG key = (ULONG)argument;
     if (number != MIME_SVC_NtUserGetKeyState || !t || key >= 256 ||

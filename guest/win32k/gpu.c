@@ -32,12 +32,15 @@ static void free_block(GPU_BLOCK *b)
     memset(b, 0, sizeof(*b));
 }
 
-/* aligned to its power of two size, so to the host's 16K pages too. */
+/*
+ * aligned to its power of two size, so to the host's 16K pages too. made before the user lock is taken, and cleared
+ * without the kernel lock, as the blocks of vulkan.c.
+ */
 static NTSTATUS alloc_block(GPU_BLOCK *b, SIZE_T size)
 {
     memset(b, 0, sizeof(*b));
     b->Size = size;
-    b->Kernel = MmAllocateContiguousPages(size);
+    b->Kernel = MmAllocateContiguousPagesUnlocked(size);
     if (!b->Kernel)
         return STATUS_NO_MEMORY;
     b->Pa = (ULONG64)MmGetPhysicalAddress(b->Kernel).QuadPart;
@@ -60,29 +63,46 @@ NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size)
     NTSTATUS status = STATUS_SUCCESS;
     UserEnter();
     W32PROCESS *p = W32GetProcess();
-    W32GPU *g = p ? p->Gpu : nullptr;
+    W32GPU *g = p ? p->Gpu : nullptr, *made = nullptr;
     if (p && !g) {
-        g = W32Alloc(sizeof(W32GPU));
-        status = g ? alloc_block(&g->Blocks[0], MIME_GPU_CHANNEL_SIZE) : STATUS_NO_MEMORY;
+        UserLeave();
+        made = W32Alloc(sizeof(W32GPU));
+        NTSTATUS allocated = made ? alloc_block(&made->Blocks[0], MIME_GPU_CHANNEL_SIZE) : STATUS_NO_MEMORY;
+        UserEnter();
+        g = p->Gpu;
+        /* another thread of the process opened the channel meanwhile. */
+        if (g || !NT_SUCCESS(allocated)) {
+            if (made && NT_SUCCESS(allocated))
+                free_block(&made->Blocks[0]);
+            if (made)
+                W32Free(made);
+            made = nullptr;
+            if (!g)
+                status = allocated;
+        } else {
+            g = made;
+        }
+    } else if (!p) {
+        status = STATUS_NO_MEMORY;
+    }
+    if (made) {
         ULONG64 channel = 0;
-        if (NT_SUCCESS(status) &&
-            HalMimeHypercall(MIME_HC_GPU_OPEN, g->Blocks[0].Pa, MIME_GPU_CHANNEL_SIZE, 0, 0, 0, 0, &channel) !=
-                MIME_HC_STATUS_OK)
+        if (HalMimeHypercall(MIME_HC_GPU_OPEN, g->Blocks[0].Pa, MIME_GPU_CHANNEL_SIZE, 0, 0, 0, 0, &channel) !=
+            MIME_HC_STATUS_OK)
             status = STATUS_DEVICE_NOT_READY;
         if (NT_SUCCESS(status)) {
             g->Channel = (ULONG)channel;
             g->BlockCount = 1;
             g->Header = g->Blocks[0].Kernel;
-            p->Gpu = g;
+            /* the kick reads it without any lock, see GpuFastKick. */
+            __atomic_store_n(&p->Gpu, g, __ATOMIC_RELEASE);
             /* what an OpenGL program presents reaches the host as an image too, which captures read back. */
             __atomic_add_fetch(&VkProcessCount, 1, __ATOMIC_RELAXED);
-        } else if (g) {
+        } else {
             free_block(&g->Blocks[0]);
             W32Free(g);
             g = nullptr;
         }
-    } else if (!p) {
-        status = STATUS_NO_MEMORY;
     }
     PVOID user = g ? g->Blocks[0].User : nullptr;
     UserLeave();
@@ -99,14 +119,19 @@ NTSTATUS NTAPI NtGdiMimeGpuAddBlock(ULONG size, PVOID *base, PULONG index)
 {
     if (size < 0x10000 || size > MIME_GPU_MAX_BLOCK_SIZE || (size & (size - 1)))
         return STATUS_INVALID_PARAMETER;
+    if (!process_gpu())
+        return STATUS_INVALID_DEVICE_STATE;
+    GPU_BLOCK block;
+    NTSTATUS status = alloc_block(&block, size);
     UserEnter();
     W32GPU *g = process_gpu();
-    NTSTATUS status = g ? STATUS_SUCCESS : STATUS_INVALID_DEVICE_STATE;
     ULONG i = g ? g->BlockCount : 0;
-    if (g && i >= MIME_GPU_MAX_BLOCKS)
-        status = STATUS_INSUFFICIENT_RESOURCES;
+    if (NT_SUCCESS(status) && (!g || i >= MIME_GPU_MAX_BLOCKS)) {
+        free_block(&block);
+        status = g ? STATUS_INSUFFICIENT_RESOURCES : STATUS_INVALID_DEVICE_STATE;
+    }
     if (NT_SUCCESS(status))
-        status = alloc_block(&g->Blocks[i], size);
+        g->Blocks[i] = block;
     if (NT_SUCCESS(status) &&
         HalMimeHypercall(MIME_HC_GPU_BLOCK, g->Channel, i, g->Blocks[i].Pa, size, 0, 0, nullptr) != MIME_HC_STATUS_OK) {
         free_block(&g->Blocks[i]);
@@ -125,12 +150,25 @@ NTSTATUS NTAPI NtGdiMimeGpuAddBlock(ULONG size, PVOID *base, PULONG index)
     return STATUS_SUCCESS;
 }
 
+/* like VkFastKick, before any lock. */
+BOOLEAN GpuFastKick(ULONG64 *result)
+{
+    W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
+    W32GPU *g = p ? __atomic_load_n(&p->Gpu, __ATOMIC_ACQUIRE) : nullptr;
+    if (!g)
+        return FALSE;
+    HalMimeHypercall(MIME_HC_GPU_KICK, g->Channel, 0, 0, 0, 0, 0, nullptr);
+    *result = STATUS_SUCCESS;
+    return TRUE;
+}
+
 NTSTATUS NTAPI NtGdiMimeGpuKick(void)
 {
     W32GPU *g = process_gpu();
     if (!g)
         return STATUS_INVALID_DEVICE_STATE;
-    HalMimeHypercall(MIME_HC_GPU_KICK, g->Channel, 0, 0, 0, 0, 0, nullptr);
+    /* the host only wakes its thread for the channel, which needs nothing the kernel lock guards. */
+    HalMimeHypercallUnlocked(MIME_HC_GPU_KICK, g->Channel, 0, 0, 0, 0, 0, nullptr);
     return STATUS_SUCCESS;
 }
 

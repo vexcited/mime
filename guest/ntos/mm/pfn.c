@@ -587,7 +587,7 @@ void MmFreePage(ULONG64 pa)
     MmFreePages(&pa, 1);
 }
 
-ULONG64 MmAllocateContiguous(SIZE_T pages)
+static ULONG64 allocate_contiguous(SIZE_T pages, BOOLEAN unlocked)
 {
     if (pages == 0)
         return 0;
@@ -620,9 +620,16 @@ ULONG64 MmAllocateContiguous(SIZE_T pages)
         return 0;
     }
     ULONG64 pa = index_to_pa(index);
-    if (!zeroed)
+    if (!zeroed && unlocked)
+        KiZeroUnlocked(HalPhysmap(pa), pages << PAGE_SHIFT);
+    else if (!zeroed)
         memset(HalPhysmap(pa), 0, pages << PAGE_SHIFT);
     return pa;
+}
+
+ULONG64 MmAllocateContiguous(SIZE_T pages)
+{
+    return allocate_contiguous(pages, FALSE);
 }
 
 void MmFreeContiguous(ULONG64 pa, SIZE_T pages)
@@ -689,6 +696,16 @@ void MmReturnCredit(void)
 PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes)
 {
     ULONG64 pa = MmAllocateContiguous(BYTES_TO_PAGES(bytes));
+    return pa ? HalPhysmap(pa) : nullptr;
+}
+
+/*
+ * clearing tens of megabytes the host backs again page by page takes a tenth of a second, so the kernel lock is let go
+ * meanwhile. the caller is below dispatch level and relies on nothing only the kernel lock guards.
+ */
+PVOID NTAPI MmAllocateContiguousPagesUnlocked(SIZE_T bytes)
+{
+    ULONG64 pa = allocate_contiguous(BYTES_TO_PAGES(bytes), TRUE);
     return pa ? HalPhysmap(pa) : nullptr;
 }
 

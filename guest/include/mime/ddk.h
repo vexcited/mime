@@ -1038,6 +1038,8 @@ NTKERNELAPI USHORT NTAPI MimeAddGlobalAtom(PCWSTR name);
 NTKERNELAPI NTSTATUS NTAPI MimeCopyToUser(void *user_dst, const void *src, SIZE_T length);
 NTKERNELAPI const void *NTAPI HalMimeGetBootInfo(void);
 NTKERNELAPI PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes);
+/* the same, cleared with the kernel lock let go: the caller relies on nothing only the kernel lock guards. */
+NTKERNELAPI PVOID NTAPI MmAllocateContiguousPagesUnlocked(SIZE_T bytes);
 NTKERNELAPI void NTAPI MmFreeContiguousPages(PVOID va, SIZE_T bytes);
 NTKERNELAPI NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *section);
 NTKERNELAPI NTSTATUS NTAPI MmCreateReservedSection(SIZE_T size, SIZE_T committed, PVOID *kernel_base, PVOID *section);

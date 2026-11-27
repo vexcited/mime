@@ -115,6 +115,30 @@ void KiCopyUnlocked(void *to, const void *from, SIZE_T length)
     }
 }
 
+/* the same for a clear, of pages that may be the host's to back on first touch. */
+void KiZeroUnlocked(void *to, SIZE_T length)
+{
+    while (length) {
+        SIZE_T n = length < 0x10000 ? length : 0x10000;
+        ULONG64 state = KiDisableInterrupts();
+        BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number &&
+                       !KiDispatcherLockHeld();
+        ULONG64 start = held ? HalReadCounter() : 0;
+        ULONG reason = held ? KiKernelLock[KI_LOCK_REASON] : 0;
+        if (held)
+            KiReleaseKernelLock();
+        memset(to, 0, n);
+        if (held) {
+            KiAcquireKernelLock();
+            KiKernelLock[KI_LOCK_REASON] = reason;
+            KiCurrentThread()->BlockedTicks += HalReadCounter() - start;
+        }
+        KiRestoreInterrupts(state);
+        to = (PUCHAR)to + n;
+        length -= n;
+    }
+}
+
 void KiInitializeScheduler(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();

@@ -244,6 +244,7 @@ EXPORTS
     MmAllocateContiguous
     MmAllocateContiguousMemory
     MmAllocateContiguousPages
+    MmAllocateContiguousPagesUnlocked
     MmAllocateKernelStack
     MmAllocatePage
     MmAllocatePageNoZero

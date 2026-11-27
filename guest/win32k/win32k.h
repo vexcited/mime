@@ -1402,6 +1402,9 @@ void InputHostDragStep(WND *w, LONG dx, LONG dy, LONG cursor_dx, LONG cursor_dy)
 void InputReleaseLeftButton(void);         /* another host program pastes a clipboard format owned by the session. */
 void GpuFreeProcess(W32PROCESS *p);
 void VkFreeProcess(W32PROCESS *p);
+/* the kicks the kernel asks for before it takes any lock, see W32FastService. */
+BOOLEAN VkFastKick(ULONG64 *result);
+BOOLEAN GpuFastKick(ULONG64 *result);
 void AudioFreeProcess(W32PROCESS *p);
 void GfxShareFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
