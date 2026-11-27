@@ -132,9 +132,11 @@ NTSTATUS NTAPI NtSetTimerResolution(ULONG desired, BOOLEAN set, PULONG current)
     return NT_SUCCESS(status) ? KiCopyToUser(current, &cur, sizeof(cur)) : status;
 }
 
+/* the tick count of the shared page, which is what GetTickCount reads in user mode: a time taken here is never ahead of it. */
 ULONG NTAPI NtGetTickCount(void)
 {
-    return (ULONG)(KiQueryInterruptTime() / 10000);
+    ULONG64 ticks = (ULONG64)(ULONG)SharedUserData->TickCount.High1Time << 32 | SharedUserData->TickCount.LowPart;
+    return (ULONG)(ticks * SharedUserData->TickCountMultiplier >> 24);
 }
 
 static NTSTATUS copy_info(PVOID dst, const void *src, ULONG size, ULONG length, PULONG returned)

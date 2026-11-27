@@ -93,7 +93,7 @@ void W32SetLastError(ULONG error)
 
 DWORD W32TickCount(void)
 {
-    return (DWORD)(KeQueryInterruptTime() / 10000);
+    return NtGetTickCount();
 }
 
 /* ------------------------------------------------------------------ the user lock */
