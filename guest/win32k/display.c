@@ -1079,6 +1079,16 @@ typedef struct QDC_HEADER {
  * of another adapter or number is STATUS_UNSUCCESSFUL, a target or an adapter STATUS_INVALID_PARAMETER, and so is a
  * type that is not asked for, a setting among them.
  */
+/*
+ * the name of a monitor is read from six keys of the registry, which a game asks for every frame. it is kept while
+ * the monitors stay as they are, see MonitorGeneration.
+ */
+static struct {
+    ULONG Generation;
+    BOOLEAN Valid;
+    UCHAR Body[420 - sizeof(QDC_HEADER)];
+} g_target_names[MIME_MAX_MONITORS];
+
 NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
 {
     QDC_HEADER h;
@@ -1109,14 +1119,21 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
     DISPLAY_MODE native;
     MIME_MONITOR_INFO info;
     BOOLEAN known = ours && h.Id < count && display_current(h.Id, TRUE, &native) && MonitorGet(h.Id, &info);
+    ULONG generation = MonitorGeneration();
+    UCHAR packet[420] = {};
+    BOOLEAN cached = known && h.Type == DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME && g_target_names[h.Id].Valid &&
+                     g_target_names[h.Id].Generation == generation;
+    if (cached)
+        memcpy(packet + sizeof(h), g_target_names[h.Id].Body, sizeof(g_target_names[h.Id].Body));
     UserLeave();
     if (h.Type == DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME && !known)
         return STATUS_UNSUCCESSFUL;
     if (h.Type == DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME ? !ours : !known)
         return STATUS_INVALID_PARAMETER;
-    UCHAR packet[420] = {};
     memcpy(packet, &h, sizeof(h));
     PUCHAR body = packet + sizeof(h);
+    if (cached)
+        return NT_SUCCESS(MimeCopyToUser(user_packet, packet, want)) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
     switch (h.Type) {
     case DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME:
         info.Device[31] = 0;
@@ -1136,6 +1153,11 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
         }
         if (monitor_device(h.Id, TRUE, &d))
             memcpy(body + 16 + 128, d.DeviceID, sizeof(d.DeviceID));
+        UserEnter();
+        memcpy(g_target_names[h.Id].Body, body, sizeof(g_target_names[h.Id].Body));
+        g_target_names[h.Id].Generation = generation;
+        g_target_names[h.Id].Valid = TRUE;
+        UserLeave();
         break;
     }
     case DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_PREFERRED_MODE: {
