@@ -1850,6 +1850,13 @@ void WndShowOwned(WND *owner, UINT cmd)
     W32Free(list);
 }
 
+static BOOLEAN stays_shown(const WND *w, int cmd)
+{
+    return (w->Style & WS_VISIBLE) &&
+           (cmd == SW_SHOW || (!(w->Style & (WS_MINIMIZE | WS_MAXIMIZE)) &&
+                               (cmd == SW_SHOWNORMAL || cmd == SW_RESTORE || cmd == SW_SHOWNOACTIVATE)));
+}
+
 void WndShow(WND *w, int cmd)
 {
     if (!w || w == g_desktop || (UINT)cmd > SW_FORCEMINIMIZE)
@@ -1900,8 +1907,7 @@ void WndShow(WND *w, int cmd)
      * xxxShowWindowEx: a window that is already shown is left as it is and does not become active, by SW_SHOW
      * whatever its state, and by the commands that restore when it is neither an icon nor maximized.
      */
-    if (was_visible && (cmd == SW_SHOW || (!old_state && (cmd == SW_SHOWNORMAL || cmd == SW_RESTORE ||
-                                                          cmd == SW_SHOWNOACTIVATE))))
+    if (stays_shown(w, cmd))
         goto done;
     if (state_changed && (HookCbt(w, HCBT_MINMAX, (WPARAM)WndHandle(w), cmd, 0) || !alive(w)))
         goto done;
@@ -3070,11 +3076,16 @@ BOOL NTAPI NtUserShowWindow(HWND hwnd, int cmd)
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     BOOL was = FALSE;
     if (can_touch(w)) {
         was = (w->Style & WS_VISIBLE) != 0;
+        /* a window shown or hidden as asked already stays as it is, and the desktop heap with it. */
+        BOOLEAN leaves = (w->Flags & WNDF_FULLSCREEN) && cmd != SW_SHOW && cmd != SW_SHOWNA;
+        BOOLEAN hidden = cmd == SW_HIDE && !was;
+        if (leaves || !(hidden || stays_shown(w, cmd == SW_SHOWDEFAULT ? SW_SHOWNORMAL : cmd)))
+            DeskTouch();
         WndShow(w, cmd);
     }
     UserLeave();
@@ -3837,7 +3848,7 @@ BOOL NTAPI NtUserDefSetText(HWND hwnd, PUNICODE_STRING user_text)
 
 int NTAPI NtUserInternalGetWindowText(HWND hwnd, LPWSTR buffer, int count)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     int n = 0;
     if (w && buffer && count > 0) {
@@ -3991,7 +4002,7 @@ static void placement_offset(WND *w, RECT *rect, BOOLEAN to_screen)
 
 BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *user_wp)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     BOOL ok = FALSE;
     if (can_touch(w)) {
@@ -4501,7 +4512,7 @@ HWND NTAPI NtUserWindowFromPoint(ULONG_PTR point, ULONG_PTR second)
 #else
     POINT pt = {(LONG)point, (LONG)second};
 #endif
-    UserEnter();
+    UserEnterRead();
     HWND found = nullptr;
     DpiPixelConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
     WND *desktop = WndDesktop();
@@ -4951,7 +4962,7 @@ static void map_points(WND *from, WND *to, POINT *pts, UINT count)
  */
 ULONG_PTR NTAPI NtUserQueryWindow(HWND hwnd, ULONG klass)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = WndLookup(hwnd);
     ULONG_PTR r = 0;
     W32THREAD *t = w ? w->Thread : nullptr;
@@ -4992,9 +5003,37 @@ ULONG_PTR NTAPI NtUserQueryWindow(HWND hwnd, ULONG klass)
     return r;
 }
 
+/* the routines of NtUserCallHwndParam that change nothing the desktop heap shows. */
+static BOOLEAN param_reads(ULONG routine)
+{
+    switch (routine) {
+    case MIME_HWNDPARAM_GETWINDOWLONG:
+    case MIME_HWNDPARAM_GETWINDOW:
+    case MIME_HWNDPARAM_GETWINDOWRECT:
+    case MIME_HWNDPARAM_GETCLIENTRECT:
+    case MIME_HWNDPARAM_ISCHILD:
+    case MIME_HWNDPARAM_GETDLGITEM:
+    case MIME_HWNDPARAM_GETTHREADPROCESSID:
+    case MIME_HWNDPARAM_MAPPOINTS:
+    case MIME_HWNDPARAM_GETWINDOWINFO:
+    case MIME_HWNDPARAM_ADJUSTRECT:
+    case MIME_HWNDPARAM_CHILDFROMPOINT:
+    case MIME_HWNDPARAM_GETCONTEXTHELPID:
+    case MIME_HWNDPARAM_DPICONVERT:
+    case MIME_HWNDPARAM_PRESENTLAYER:
+    case MIME_HWNDPARAM_GETAFFINITY:
+    case MIME_HWNDPARAM_GETCLASSWORD:
+        return TRUE;
+    }
+    return FALSE;
+}
+
 ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
 {
-    UserEnter();
+    if (param_reads(routine))
+        UserEnterRead();
+    else
+        UserEnter();
     WND *w = WndLookup(hwnd);
     ULONG_PTR r = 0;
     if (!w && !((routine == MIME_HWNDPARAM_MAPPOINTS || routine == MIME_HWNDPARAM_DPICONVERT) && !hwnd)) {
@@ -5256,6 +5295,8 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     }
     case MIME_HWNDPARAM_PRESENTLAYER: {
         MIME_PRESENT_LAYER layer;
+        if (!(w->Flags & WNDF_PRESENTS))
+            DeskTouch();
         w->Flags |= WNDF_PRESENTS;
         ScreenLayer(w, &layer);
         r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &layer, sizeof(layer)));

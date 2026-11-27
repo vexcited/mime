@@ -560,7 +560,7 @@ BOOLEAN TimerKill(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system)
 
 UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance)
 {
-    UserEnter();
+    UserEnterRead();
     UINT_PTR result = TimerSet(W32GetThread(), hwnd, id, elapse, proc, FALSE);
     UserLeave();
     (void)tolerance;
@@ -570,7 +570,7 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
 /* user32 runs the procedure of a WM_TIMER only when a timer of the process was set with it, as ValidateTimerCallback. */
 BOOL NTAPI NtUserValidateTimerCallback(LPARAM proc)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *self = W32GetThread();
     BOOL valid = FALSE;
     for (PLIST_ENTRY e = g_timers.Flink; self && e != &g_timers && !valid; e = e->Flink) {
@@ -583,7 +583,7 @@ BOOL NTAPI NtUserValidateTimerCallback(LPARAM proc)
 
 BOOL NTAPI NtUserKillTimer(HWND hwnd, UINT_PTR id)
 {
-    UserEnter();
+    UserEnterRead();
     BOOLEAN killed = TimerKill(W32GetThread(), hwnd, id, FALSE);
     UserLeave();
     return killed;
@@ -1817,7 +1817,7 @@ BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         W32SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     BOOL ok = FALSE;
     if (is_broadcast(hwnd)) {
         ok = post_to_all(msg, wparam, lparam);
@@ -1851,7 +1851,7 @@ BOOL NTAPI NtUserPostThreadMessage(DWORD thread, UINT msg, WPARAM wparam, LPARAM
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     BOOL ok = FALSE;
     if (post_allowed(msg, wparam)) {
         W32THREAD *t = W32LookupThread((HANDLE)(ULONG_PTR)thread);

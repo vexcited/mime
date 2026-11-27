@@ -63,7 +63,7 @@ DWORD NTAPI NtUserGetQueueStatusReadonly(UINT flags)
  */
 ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     ULONG_PTR v = 0;
     if (t) {

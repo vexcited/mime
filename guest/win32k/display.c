@@ -673,7 +673,7 @@ NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DE
         return STATUS_BUFFER_TOO_SMALL;
     ULONG number = device_number(device);
     video_read();
-    UserEnter();
+    UserEnterRead();
     LONG display = numbered_display(number);
     struct {
         DEVMODEW m;
@@ -762,7 +762,7 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
     }
     ULONG number = device_number(device);
     video_read();
-    UserEnter();
+    UserEnterRead();
     LONG display = numbered_display(number);
     DISPLAY_MODE current, want;
     if (display < 0 || !display_current((ULONG)display, FALSE, &current)) {
@@ -1114,7 +1114,7 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
         return STATUS_INVALID_PARAMETER;
     BOOLEAN ours = h.AdapterLow == QDC_ADAPTER_LUID && !h.AdapterHigh;
     video_read();
-    UserEnter();
+    UserEnterRead();
     ULONG count = config_paths();
     DISPLAY_MODE native;
     MIME_MONITOR_INFO info;
@@ -1153,7 +1153,7 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
         }
         if (monitor_device(h.Id, TRUE, &d))
             memcpy(body + 16 + 128, d.DeviceID, sizeof(d.DeviceID));
-        UserEnter();
+        UserEnterRead();
         memcpy(g_target_names[h.Id].Body, body, sizeof(g_target_names[h.Id].Body));
         g_target_names[h.Id].Generation = generation;
         g_target_names[h.Id].Valid = TRUE;

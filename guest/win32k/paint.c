@@ -660,7 +660,7 @@ void PaintReleaseDC(DC *dc)
 
 HDC NTAPI NtUserGetDCEx(HWND hwnd, HRGN clip, ULONG flags)
 {
-    UserEnter();
+    UserEnterRead();
     WND *w = hwnd ? WndLookup(hwnd) : WndDesktop();
     HDC dc = w ? PaintGetDC(w, clip, flags) : nullptr;
     UserLeave();
@@ -690,7 +690,7 @@ HWND NTAPI NtUserWindowFromDC(HDC hdc)
 /* user32 26300.9457 gives the device context alone. */
 int NTAPI NtUserReleaseDC(HDC hdc)
 {
-    UserEnter();
+    UserEnterRead();
     DC *dc = DcLookup(hdc);
     int ok = 0;
     if (dc && (dc->Flags & DC_WINDOW) && !(dc->Flags & DC_PAINT)) {
@@ -702,6 +702,7 @@ int NTAPI NtUserReleaseDC(HDC hdc)
          */
         if (top && !(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && top->Thread == W32GetThread()) {
             UserReference(&top->Header);
+            DeskTouch();
             top->Flags &= ~WNDF_FRAME_DIRTY;
             MsgSend(top, WM_NCPAINT, 1, 0);
             BOOLEAN gone = top->Header.Destroyed;

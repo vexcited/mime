@@ -1459,6 +1459,7 @@ void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
     /* a window only its children draw in has nothing of its own to show, yet its layers need a host window. */
     if (!(top->Flags & WNDF_PRESENTED)) {
         top->Flags |= WNDF_PRESENTED;
+        DeskTouch();
         HostConfigure(top, FALSE);
     }
     REGION area;

@@ -79,7 +79,7 @@ BOOL NTAPI NtUserGetGUIThreadInfo(DWORD thread_id, GUITHREADINFO *user_info)
     }
     memset(&info, 0, sizeof(info));
     info.cbSize = sizeof(info);
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = nullptr;
     if (thread_id) {
         for (W32THREAD *c = W32NextThread(nullptr); c && !t; c = W32NextThread(c))
@@ -161,7 +161,7 @@ static void sync_with_async(W32THREAD *t)
 
 SHORT NTAPI NtUserGetKeyState(int key)
 {
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     SHORT r = 0;
     /* read first: a change that comes while the answer is made leaves it out of date at once. */
@@ -256,7 +256,7 @@ BOOL NTAPI NtUserTrackMouseEvent(TRACKMOUSEEVENT *user_track)
     TRACKMOUSEEVENT tme;
     if (!NT_SUCCESS(MimeCopyFromUser(&tme, user_track, sizeof(tme))) || tme.cbSize != sizeof(tme))
         return FALSE;
-    UserEnter();
+    UserEnterRead();
     W32THREAD *t = W32GetThread();
     BOOL ok = FALSE;
     if (t) {

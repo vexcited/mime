@@ -177,7 +177,7 @@ BOOL NTAPI NtUserClipCursor(const RECT *user_rect)
         W32SetLastError(ERROR_NOACCESS);
         return FALSE;
     }
-    UserEnter();
+    UserEnterRead();
     if (!user_rect) {
         g_clipped = FALSE;
         g_clip_owner = nullptr;
@@ -212,7 +212,7 @@ BOOL NTAPI NtUserClipCursor(const RECT *user_rect)
 
 BOOL NTAPI NtUserGetClipCursor(LPRECT user_rect)
 {
-    UserEnter();
+    UserEnterRead();
     RECT r = g_clipped ? g_clip : screen();
     UserLeave();
     if (!user_rect || !NT_SUCCESS(MimeCopyToUser(user_rect, &r, sizeof(r)))) {
