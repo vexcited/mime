@@ -71,6 +71,8 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state, 
     qm->Input = *ev;
     qm->Origin = origin;
     qm->ExtraInfo = extra;
+    if (ev->type >= MIME_INPUT_MOUSE_MOVE && ev->type <= MIME_INPUT_MOUSE_WHEEL)
+        qm->Under = InputTopAt((POINT){ev->x, ev->y});
     /* raw input keeps mouse flags in the otherwise unused message payload. */
     qm->Msg.wParam = mouse_state;
     InsertTailList(&t->Input, &qm->Links);

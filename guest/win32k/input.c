@@ -279,6 +279,21 @@ BOOL NTAPI NtUserTrackMouseEvent(TRACKMOUSEEVENT *user_track)
 
 /* ------------------------------------------------------------------ the input thread */
 
+/* the top level window over a point of the screen in the order of the guest, past the layered ones it goes through. */
+HWND InputTopAt(POINT physical)
+{
+    const DWORD through = WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    for (WND *c = WndDesktop()->FirstChild; c; c = c->Next) {
+        if (!(c->Style & WS_VISIBLE) || (c->ExStyle & through) == through)
+            continue;
+        POINT at = physical;
+        DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
+        if (RectContains(&c->WindowRect, at.x, at.y) && LayerHitTest(c, at))
+            return WndHandle(c);
+    }
+    return nullptr;
+}
+
 /*
  * the queue the mouse goes to has the cursor of the screen, as UpdateGlobalCursorOwner of win32kbase keeps it at each
  * mouse input. the thread of the host window is told once, when the mouse comes to it: the window under the pointer
@@ -625,6 +640,7 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         QUEUED_MESSAGE *last = CONTAINING_RECORD(t->Input.Blink, QUEUED_MESSAGE, Links);
         if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev->window_id) {
             last->Input = *ev;
+            last->Under = InputTopAt((POINT){ev->x, ev->y});
             last->Msg.wParam = mouse_state;
             last->Origin = injected ? IMO_INJECTED : IMO_HARDWARE;
             last->ExtraInfo = extra;
@@ -681,6 +697,7 @@ static void queue_mouse_refresh(void)
         if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id) {
             last->Input.x = ev.x;
             last->Input.y = ev.y;
+            last->Under = InputTopAt(InputCursorPos);
             return;
         }
     }
@@ -1040,6 +1057,21 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         hit = t->CaptureNc ? (LONG)t->CaptureNc : HTCLIENT;
         DpiPixelConvert(&pt, DPI_PHYSICAL, capture->Awareness);
     } else {
+        /*
+         * the window of another queue came over the point after the button or the move was queued: the thread that
+         * reads it takes the arrow for itself and the window there has the input, as xxxScanSysQueue does. measured on
+         * windows. the wheel goes to the focus and is left alone.
+         */
+        HWND now = ev->type != MIME_INPUT_MOUSE_WHEEL ? InputTopAt((POINT){ev->x, ev->y}) : nullptr;
+        WND *over = now && now != qm->Under ? WndLookup(now) : nullptr;
+        if (over && over->Thread && !over->Thread->Destroying && W32InputOwner(over->Thread) != W32InputOwner(t)) {
+            CursorSet(CursorSystem(32512 /* IDC_ARROW */));
+            MimeInputEvent moved = *ev;
+            moved.window_id = (uint32_t)(ULONG_PTR)now;
+            QueuePostInput(over->Thread, &moved, qm->Msg.wParam, qm->Origin, qm->ExtraInfo);
+            *consumed = TRUE;
+            return FALSE;
+        }
         WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
         if (!top || top->Thread != t || !(top->Style & WS_VISIBLE)) {
             *consumed = TRUE;

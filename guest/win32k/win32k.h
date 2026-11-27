@@ -626,6 +626,7 @@ typedef struct QUEUED_MESSAGE {
     ULONG_PTR ExtraInfo;
     ULONG Kind; /* QM_* */
     ULONG Origin; /* IMO_* of an input message: the hardware, SendInput or the system. */
+    HWND Under;   /* the top level window over the point of a mouse event when it was queued, InputTopAt. */
     union {
         MimeInputEvent Input;
         WINDOWPLACEMENT Placement;
@@ -1520,6 +1521,7 @@ void CursorAttached(W32THREAD *from, W32THREAD *to);
 void CursorDetached(W32THREAD *gone, W32THREAD *asked);
 void CursorHeir(W32THREAD *from, W32THREAD *heir);
 void InputCursorTarget(W32THREAD *t);
+HWND InputTopAt(POINT physical);
 void InputCursorThreadGone(W32THREAD *t);
 BOOLEAN RawInputCapturesMouse(const struct W32PROCESS *p);
 HCURSOR CursorSystem(ULONG idc);
