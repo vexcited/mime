@@ -7,15 +7,24 @@ NTKERNELAPI extern MimeBootInfo *HalBootInfo;
 #define KMT_HANDLE_STEP 0x40u
 #define KMT_ADAPTERS (MIME_BOOT_GPUS + 1)
 
+#ifndef KEY_QUERY_VALUE
+#define KEY_QUERY_VALUE 0x0001
+#endif
+
 #define KMTQAITYPE_UMDRIVERNAME 1
 #define KMTQAITYPE_GETSEGMENTSIZE 3
+#define KMTQAITYPE_ADAPTERADDRESS 6
+#define KMTQAITYPE_ADAPTERREGISTRYINFO 8
 #define KMTQAITYPE_CHECKDRIVERUPDATESTATUS 11
 #define KMTQAITYPE_DRIVERVERSION 13
 #define KMTQAITYPE_ADAPTERTYPE 15
 #define KMTQAITYPE_UMD_DRIVER_VERSION 18
+#define KMTQAITYPE_NODEMETADATA 25
 #define KMTQAITYPE_PHYSICALADAPTERCOUNT 30
 #define KMTQAITYPE_PHYSICALADAPTERDEVICEIDS 31
 #define KMTQAITYPE_DRIVERVERSION_RENDER 56
+#define KMTQAITYPE_NODEPERFDATA 61
+#define KMTQAITYPE_ADAPTERPERFDATA 62
 #define KMTQAITYPE_DRIVER_DESCRIPTION 66
 
 /* D3DKMT_ADAPTERTYPE. */
@@ -43,6 +52,9 @@ typedef struct KMT_ADAPTER {
     ULONG64 Dedicated;
     WCHAR Name[128];
     const WCHAR *Umd;
+    /* the bus, device and function of a pci adapter, and the number of its key under the display class or -1. */
+    ULONG Place[3];
+    LONG Key;
 } KMT_ADAPTER;
 
 typedef struct KMT_ADAPTERINFO {
@@ -77,6 +89,9 @@ static void basic(KMT_ADAPTER *a, ULONG luid, ULONG type, ULONG wddm, const WCHA
     a->Wddm = wddm;
     a->UmdVersion = WARP_VERSION;
     a->Umd = L"d3d10warp.dll";
+    a->Place[0] = ~0u;
+    a->Place[1] = a->Place[2] = 0xFFFF;
+    a->Key = -1;
     wcscpy(a->Name, name);
 }
 
@@ -102,11 +117,18 @@ static ULONG adapters(KMT_ADAPTER *list)
     a->Wddm = WDDM_3_2;
     a->UmdVersion = (31ull << 48) | (63ull << 16) | 7;
     a->Umd = L"qcdx11arm64xum.dll";
+    a->Place[0] = ~0u;
+    a->Place[1] = a->Place[2] = 0xFFFF;
     wcscpy(a->Name, L"Qualcomm(R) Adreno(TM) X1-85 GPU");
 #else
     if (!HalBootInfo->gpu_count) {
-        basic(&list[n++], LUID_BASIC_DISPLAY, ADAPTER_DISPLAY | ADAPTER_POST | ADAPTER_ACG, WDDM_1_3,
+        basic(&list[n], LUID_BASIC_DISPLAY, ADAPTER_DISPLAY | ADAPTER_POST | ADAPTER_ACG, WDDM_1_3,
               L"Microsoft Basic Render Driver");
+        /* the vga device of the machine, at device 3 of bus 0. */
+        list[n].Place[0] = 0;
+        list[n].Place[1] = 3;
+        list[n].Place[2] = 0;
+        list[n++].Key = 0;
     }
     for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
         const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
@@ -120,6 +142,10 @@ static ULONG adapters(KMT_ADAPTER *list)
         a->SubSystem = gpu->subsystem >> 16;
         a->Revision = gpu->revision;
         a->Bus = 3;
+        a->Place[0] = gpu->bus;
+        a->Place[1] = gpu->slot >> 3;
+        a->Place[2] = gpu->slot & 7;
+        a->Key = (LONG)i;
         a->Wddm = WDDM_3_2;
         USHORT parts[4];
         MimeGpuDriverVersion(gpu->vendor, gpu->driver_version, parts);
@@ -166,22 +192,28 @@ typedef struct KMT_ENUMADAPTERS2 {
  * 34 counts as 34. enum2 lists every adapter with its video sources, one for an adapter that displays. enum3 tells no
  * sources and leaves out the adapters that only display unless its filter asks for them.
  */
+static UINT adapter_infos(KMT_ADAPTERINFO *infos, ULONG64 filter, BOOLEAN sources)
+{
+    KMT_ADAPTER list[KMT_ADAPTERS];
+    ULONG all = adapters(list);
+    UINT count = 0;
+    for (ULONG i = 0; i < all; i++) {
+        BOOLEAN display_only = (list[i].Type & ADAPTER_DISPLAY) && !(list[i].Type & ADAPTER_RENDER);
+        if (display_only && !(filter & FILTER_DISPLAY_ONLY))
+            continue;
+        infos[count++] = (KMT_ADAPTERINFO){handle_of(i), {list[i].Luid, 0},
+                                           sources && (list[i].Type & ADAPTER_DISPLAY) ? 1 : 0, FALSE};
+    }
+    return count;
+}
+
 static NTSTATUS enum_adapters(UINT *user_count, KMT_ADAPTERINFO *user_list, UINT room, ULONG64 filter,
                               BOOLEAN sources)
 {
     UINT count = KMT_SESSION_ADAPTERS;
     if (user_list) {
-        KMT_ADAPTER list[KMT_ADAPTERS];
-        ULONG all = adapters(list);
         KMT_ADAPTERINFO infos[KMT_ADAPTERS];
-        count = 0;
-        for (ULONG i = 0; i < all; i++) {
-            BOOLEAN display_only = (list[i].Type & ADAPTER_DISPLAY) && !(list[i].Type & ADAPTER_RENDER);
-            if (display_only && !(filter & FILTER_DISPLAY_ONLY))
-                continue;
-            infos[count++] = (KMT_ADAPTERINFO){handle_of(i), {list[i].Luid, 0},
-                                               sources && (list[i].Type & ADAPTER_DISPLAY) ? 1 : 0, FALSE};
-        }
+        count = adapter_infos(infos, filter, sources);
         if ((room < KMT_SESSION_ADAPTERS ? room : KMT_SESSION_ADAPTERS) < count)
             return STATUS_BUFFER_TOO_SMALL;
         if (!NT_SUCCESS(MimeCopyToUser(user_list, infos, count * sizeof(KMT_ADAPTERINFO))))
@@ -210,6 +242,27 @@ NTSTATUS NTAPI NtGdiDdDDIEnumAdapters2(KMT_ENUMADAPTERS2 *user)
     if (!NT_SUCCESS(MimeCopyFromUser(&e, user, sizeof(e))))
         return STATUS_ACCESS_VIOLATION;
     return enum_adapters(&user->NumAdapters, e.Adapters, e.NumAdapters, FILTER_DISPLAY_ONLY, TRUE);
+}
+
+#define KMT_ENUM_ADAPTERS 16
+
+typedef struct KMT_ENUMADAPTERS {
+    UINT NumAdapters;
+    KMT_ADAPTERINFO Adapters[KMT_ENUM_ADAPTERS];
+} KMT_ENUMADAPTERS;
+MIME_STATIC_ASSERT(KMT_ADAPTERS <= KMT_ENUM_ADAPTERS, "adapters of the first list");
+
+/*
+ * DxgkEnumAdaptersImpl of dxgkrnl 26300: the adapters of the second list in sixteen places written whole, the unused
+ * ones as zeros. a list that cannot be written is a wrong parameter.
+ */
+NTSTATUS NTAPI NtGdiDdDDIEnumAdapters(KMT_ENUMADAPTERS *user)
+{
+    KMT_ENUMADAPTERS e = {0};
+    if (!user)
+        return STATUS_INVALID_PARAMETER;
+    e.NumAdapters = adapter_infos(e.Adapters, FILTER_DISPLAY_ONLY, TRUE);
+    return NT_SUCCESS(MimeCopyToUser(user, &e, sizeof(e))) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
 }
 
 NTSTATUS NTAPI NtGdiDdDDIOpenAdapterFromLuid(PVOID user)
@@ -432,6 +485,70 @@ static NTSTATUS answer(PVOID data, UINT size, const void *value, UINT length)
     return NT_SUCCESS(MimeCopyToUser(data, value, length)) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
 }
 
+NTKERNELAPI NTSTATUS NTAPI ZwOpenKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
+NTKERNELAPI NTSTATUS NTAPI ZwQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PVOID info, ULONG length,
+                                           PULONG returned);
+
+#define REGISTRY_CHARS 260
+#define REGISTRY_BYTES 518
+#define REGISTRY_INFO_BYTES (4 * REGISTRY_CHARS * sizeof(WCHAR))
+
+/* DpiReadPnpRegistryValue: a value of the adapter's driver key, whatever its type, cut to the room it has. */
+static NTSTATUS registry_value(const KMT_ADAPTER *a, PCWSTR value, WCHAR *out)
+{
+    WCHAR path[160];
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE key;
+    if (a->Key < 0)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    _snwprintf(path, RTL_NUMBER_OF(path) - 1,
+               L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\%04d",
+               (int)a->Key);
+    path[RTL_NUMBER_OF(path) - 1] = 0;
+    RtlInitUnicodeString(&name, path);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
+    NTSTATUS status = ZwOpenKey(&key, KEY_QUERY_VALUE, &oa);
+    if (!NT_SUCCESS(status))
+        return status;
+    struct {
+        ULONG title, type, size;
+        UCHAR data[REGISTRY_BYTES + 2];
+    } info;
+    ULONG got = 0;
+    RtlInitUnicodeString(&name, value);
+    status = ZwQueryValueKey(key, &name, 2, &info, sizeof(info), &got);
+    ZwClose(key);
+    if (!NT_SUCCESS(status) && status != STATUS_BUFFER_OVERFLOW)
+        return status;
+    memcpy(out, info.data, info.size < REGISTRY_BYTES ? info.size : REGISTRY_BYTES);
+    return STATUS_SUCCESS;
+}
+
+/*
+ * DpiQueryAdapterRegistryInfo of dxgkrnl 26300: the adapter, bios, dac and chip strings of the driver key. a string
+ * that is not there stays empty, and with none of them the answer is that nothing was found.
+ */
+static NTSTATUS registry_info(const KMT_ADAPTER *a, WCHAR *info)
+{
+    NTSTATUS first = registry_value(a, L"HardwareInformation.AdapterString", info);
+    if (!NT_SUCCESS(first) && first != STATUS_OBJECT_NAME_NOT_FOUND)
+        return first;
+    NTSTATUS status = registry_value(a, L"HardwareInformation.BiosString", info + REGISTRY_CHARS);
+    BOOLEAN found = NT_SUCCESS(status) || NT_SUCCESS(first);
+    if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_NOT_FOUND)
+        return status;
+    status = registry_value(a, L"HardwareInformation.DacType", info + 2 * REGISTRY_CHARS);
+    if (NT_SUCCESS(status))
+        found = TRUE;
+    else if (status != STATUS_OBJECT_NAME_NOT_FOUND)
+        return status;
+    status = registry_value(a, L"HardwareInformation.ChipType", info + 3 * REGISTRY_CHARS);
+    return status == STATUS_OBJECT_NAME_NOT_FOUND && found ? STATUS_SUCCESS : status;
+}
+
+static NTSTATUS engine_query(const KMT_ADAPTER *a, ULONG type, PVOID data, UINT size);
+
 NTSTATUS NTAPI NtGdiDdDDIQueryAdapterInfo(const KMT_QUERYADAPTERINFO *user)
 {
     KMT_QUERYADAPTERINFO q;
@@ -443,6 +560,24 @@ NTSTATUS NTAPI NtGdiDdDDIQueryAdapterInfo(const KMT_QUERYADAPTERINFO *user)
     switch (q.Type) {
     case KMTQAITYPE_ADAPTERTYPE:
         return answer(q.Data, q.Size, &a.Type, sizeof(ULONG));
+    case KMTQAITYPE_ADAPTERADDRESS:
+        return answer(q.Data, q.Size, a.Place, sizeof(a.Place));
+    case KMTQAITYPE_ADAPTERREGISTRYINFO: {
+        if (q.Size != REGISTRY_INFO_BYTES || !q.Data)
+            return STATUS_INVALID_PARAMETER;
+        WCHAR *strings = ExAllocatePool2(POOL_FLAG_PAGED, REGISTRY_INFO_BYTES, 'tmkM');
+        if (!strings)
+            return STATUS_NO_MEMORY;
+        NTSTATUS status = registry_info(&a, strings);
+        if (NT_SUCCESS(status))
+            status = answer(q.Data, q.Size, strings, REGISTRY_INFO_BYTES);
+        ExFreePool(strings);
+        return status;
+    }
+    case KMTQAITYPE_NODEMETADATA:
+    case KMTQAITYPE_NODEPERFDATA:
+    case KMTQAITYPE_ADAPTERPERFDATA:
+        return engine_query(&a, q.Type, q.Data, q.Size);
     case KMTQAITYPE_PHYSICALADAPTERCOUNT: {
         ULONG one = 1;
         return answer(q.Data, q.Size, &one, sizeof(one));
@@ -562,6 +697,56 @@ static void shape_of(const KMT_ADAPTER *a, KMT_SHAPE *s)
     s->VSync = (a->Type & ADAPTER_DISPLAY) != 0;
     s->Segment[0] = (KMT_SEGMENT){a->Dedicated, FALSE, 0, 1 << 2};
     s->Segment[1] = (KMT_SEGMENT){~0ull, TRUE, 3, 0x149};
+}
+
+#define NODEMETADATA_SIZE 78
+#define NODEPERFDATA_SIZE 56
+#define ADAPTERPERFDATA_SIZE 64
+#define ENGINE_3D 1
+
+/*
+ * what dxgkrnl 26300 tells of the engines: every node is a 3d engine named 3DNode and its number, under an io mmu,
+ * where the driver names none. the frequencies, voltages, fan and temperature are the driver's: the basic drivers
+ * have none and refuse, and a gpu's are zeros, Mime reads none of them from the host. an adapter that only displays
+ * is answered by the basic render driver, as for the statistics. measured on windows 11 for the basic adapters.
+ */
+static NTSTATUS engine_query(const KMT_ADAPTER *a, ULONG type, PVOID data, UINT size)
+{
+    KMT_ADAPTER list[KMT_ADAPTERS];
+    KMT_SHAPE s;
+    UCHAR in[NODEMETADATA_SIZE];
+    UINT wanted = type == KMTQAITYPE_NODEMETADATA ? NODEMETADATA_SIZE
+                  : type == KMTQAITYPE_NODEPERFDATA ? NODEPERFDATA_SIZE : ADAPTERPERFDATA_SIZE;
+    if (size != wanted || !NT_SUCCESS(MimeCopyFromUser(in, data, wanted)))
+        return STATUS_INVALID_PARAMETER;
+    if (!(a->Type & ADAPTER_RENDER))
+        a = &list[adapters(list) - 1];
+    shape_of(a, &s);
+    ULONG first = *(ULONG *)in, second = *(ULONG *)(in + 4);
+    switch (type) {
+    case KMTQAITYPE_NODEMETADATA: {
+        if (first >> 16 || first >= s.Nodes)
+            return STATUS_INVALID_PARAMETER;
+        memset(in + 4, 0, sizeof(in) - 4);
+        *(ULONG *)(in + 4) = ENGINE_3D;
+        WCHAR name[12];
+        _snwprintf(name, RTL_NUMBER_OF(name), L"3DNode%02u", first);
+        memcpy(in + 8, name, sizeof(L"3DNode00"));
+        in[77] = TRUE;
+        break;
+    }
+    case KMTQAITYPE_NODEPERFDATA:
+        if (!s.Driver || first >= s.Nodes || second)
+            return STATUS_INVALID_PARAMETER;
+        memset(in + 8, 0, wanted - 8);
+        break;
+    default:
+        if (!s.Driver || first)
+            return STATUS_INVALID_PARAMETER;
+        memset(in + 4, 0, wanted - 4);
+        break;
+    }
+    return answer(data, size, in, wanted);
 }
 
 static const KMT_ADAPTER *adapter_by_luid(const KMT_ADAPTER *list, ULONG count, LUID luid)
