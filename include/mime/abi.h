@@ -661,7 +661,7 @@ enum {
     MIME_HC_NET_CONNECT = 0x34,    /* (socket, MimeNetAddr pa) WSAEWOULDBLOCK while it goes on */
     MIME_HC_NET_ACCEPT = 0x35,     /* (socket, MimeNetAddr pa) -> socket of the connection */
     MIME_HC_NET_SEND = 0x36,       /* (socket, pa, len, MSG_*, MimeNetAddr pa or 0) -> bytes */
-    MIME_HC_NET_RECV = 0x37,       /* (socket, pa, len, MSG_*, MimeNetAddr pa or 0) -> bytes */
+    MIME_HC_NET_RECV = 0x37,       /* (socket, pa, len, MSG_*, MimeNetAddr pa or 0, MimeNetRecvInfo pa or 0) -> bytes */
     MIME_HC_NET_SHUTDOWN = 0x38,   /* (socket, SD_*) */
     MIME_HC_NET_NAME = 0x39,       /* (socket, peer, MimeNetAddr pa) */
     MIME_HC_NET_OPTION = 0x3A,     /* (socket, MIME_NET_OPT_*, set, value) -> value */
@@ -821,7 +821,33 @@ enum {
     MIME_NET_OPT_KEEPINTVL = 14,
     MIME_NET_OPT_KEEPCNT = 15,
     MIME_NET_OPT_ATMARK = 16,
+    /*
+     * what the receives of a datagram socket report in MimeNetRecvInfo, a bit each: windows' IP_PKTINFO, IP_RECVECN,
+     * IP_RECVTTL and IP_RECVTOS for IPv4 datagrams, then IPV6_PKTINFO, IPV6_RECVECN, IPV6_HOPLIMIT and
+     * IPV6_RECVTCLASS for IPv6 ones.
+     */
+    MIME_NET_OPT_RECV_FIRST = 17,
+    MIME_NET_OPT_RECV_LAST = 24,
 };
+
+/* MimeNetRecvInfo.present, the records in the order windows writes them. */
+enum {
+    MIME_NET_RECV_PKTINFO = 1u << 0,
+    MIME_NET_RECV_ECN = 1u << 1,
+    MIME_NET_RECV_TTL = 1u << 2,
+    MIME_NET_RECV_TOS = 1u << 3,
+    MIME_NET_RECV_V6 = 1u << 4, /* an IPv6 datagram, not one of IPv4 a dual stack socket took. */
+};
+
+/* what a datagram carried beside its data, for the MIME_NET_OPT_RECV_* its socket asked. */
+typedef struct MimeNetRecvInfo {
+    uint32_t present;
+    uint32_t ifindex; /* the interface it came in on. */
+    uint8_t tos;      /* type of service or traffic class, the ecn in its low two bits. */
+    uint8_t ttl;      /* time to live or hop limit. */
+    uint8_t pad[2];
+    uint8_t to[16];   /* the address it was sent to, the first four bytes for IPv4. */
+} MimeNetRecvInfo;
 
 #define MIME_NET_RESOLVED 0x80000000u
 

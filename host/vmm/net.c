@@ -3,6 +3,10 @@
  * epoll thread queues ready sockets and raises MIME_IRQ_NET. DNS lookups run on separate threads so slow
  * resolvers never stall vCPUs.
  */
+#ifdef __APPLE__
+/* the IPv6 receive options of RFC 3542. */
+#define __APPLE_USE_RFC_3542
+#endif
 #include "vmm.h"
 
 #include <arpa/inet.h>
@@ -62,6 +66,7 @@ typedef struct NetSocket {
     uint32_t polled_at;
     bool echo;               /* an icmp echo of MIME_HC_NET_ECHO. */
     uint16_t echo_id, echo_sequence;
+    uint8_t recv_info; /* the MIME_NET_OPT_RECV_* asked, a bit each from the first. */
 } NetSocket;
 
 typedef struct NetResolve {
@@ -391,6 +396,7 @@ static NetSocket *add_socket(int fd, bool stream)
         s->remote = false;
         s->severed = false;
         s->echo = false;
+        s->recv_info = 0;
         return s;
     }
     return nullptr;
@@ -473,8 +479,57 @@ static uint64_t net_send(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
     return MIME_HC_STATUS_OK;
 }
 
+/* what the host told of a datagram, for the windows options its socket asked. */
+static void recv_info(const NetSocket *s, struct msghdr *msg, const struct sockaddr_storage *from, MimeNetRecvInfo *info)
+{
+    memset(info, 0, sizeof(*info));
+    bool v6 = from->ss_family == AF_INET6 && !IN6_IS_ADDR_V4MAPPED(&((const struct sockaddr_in6 *)from)->sin6_addr);
+    uint32_t got = 0;
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(msg); c; c = CMSG_NXTHDR(msg, c)) {
+        const uint8_t *d = CMSG_DATA(c);
+        size_t n = c->cmsg_len - CMSG_LEN(0);
+        int v = 0;
+        if (n >= sizeof(int))
+            memcpy(&v, d, sizeof(int));
+        else if (n)
+            v = d[0];
+        if (c->cmsg_level == IPPROTO_IP && !v6) {
+            /* linux answers IP_TOS with a byte and IP_TTL with an int, macos names both by their option. */
+            if (c->cmsg_type == IP_TOS || c->cmsg_type == IP_RECVTOS) {
+                info->tos = d[0];
+                got |= MIME_NET_RECV_TOS | MIME_NET_RECV_ECN;
+            } else if (c->cmsg_type == IP_TTL || c->cmsg_type == IP_RECVTTL) {
+                info->ttl = (uint8_t)v;
+                got |= MIME_NET_RECV_TTL;
+            } else if (c->cmsg_type == IP_PKTINFO && n >= sizeof(struct in_pktinfo)) {
+                struct in_pktinfo p;
+                memcpy(&p, d, sizeof(p));
+                info->ifindex = (uint32_t)p.ipi_ifindex;
+                memcpy(info->to, &p.ipi_addr, 4);
+                got |= MIME_NET_RECV_PKTINFO;
+            }
+        } else if (c->cmsg_level == IPPROTO_IPV6 && v6) {
+            if (c->cmsg_type == IPV6_TCLASS) {
+                info->tos = (uint8_t)v;
+                got |= MIME_NET_RECV_TOS | MIME_NET_RECV_ECN;
+            } else if (c->cmsg_type == IPV6_HOPLIMIT) {
+                info->ttl = (uint8_t)v;
+                got |= MIME_NET_RECV_TTL;
+            } else if (c->cmsg_type == IPV6_PKTINFO && n >= sizeof(struct in6_pktinfo)) {
+                struct in6_pktinfo p;
+                memcpy(&p, d, sizeof(p));
+                info->ifindex = (uint32_t)p.ipi6_ifindex;
+                memcpy(info->to, &p.ipi6_addr, 16);
+                got |= MIME_NET_RECV_PKTINFO;
+            }
+        }
+    }
+    uint32_t asked = v6 ? (uint32_t)s->recv_info >> 4 : s->recv_info & 15u;
+    info->present = (asked & got) | (v6 ? MIME_NET_RECV_V6 : 0);
+}
+
 static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, uint64_t flags, uint64_t addr_pa,
-                         uint64_t *value)
+                         uint64_t info_pa, uint64_t *value)
 {
     char dummy;
     void *data = len ? mime_vm_phys(vm, pa, len) : &dummy;
@@ -483,17 +538,26 @@ static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
     MimeNetAddr *a = nullptr;
     if (addr_pa && !(a = guest_addr(vm, addr_pa)))
         return MIME_HC_STATUS_INVALID;
+    MimeNetRecvInfo *info = info_pa ? mime_vm_phys(vm, info_pa, sizeof(MimeNetRecvInfo)) : nullptr;
+    if (info_pa && !info)
+        return MIME_HC_STATUS_INVALID;
     if (s->severed)
         return fail(value, 10053);
     struct sockaddr_storage ss;
     struct iovec iov = {data, len};
     struct msghdr msg = {};
+    union {
+        struct cmsghdr align;
+        char bytes[256];
+    } control;
     ssize_t n;
     for (;;) {
         msg.msg_name = &ss;
         msg.msg_namelen = sizeof(ss);
         msg.msg_iov = &iov;
         msg.msg_iovlen = 1;
+        msg.msg_control = info ? control.bytes : nullptr;
+        msg.msg_controllen = info ? sizeof(control.bytes) : 0;
         memset(&ss, 0, sizeof(ss));
         n = recvmsg(s->fd, &msg, host_flags(flags));
         /* offline, datagrams from other hosts are dropped. */
@@ -514,6 +578,8 @@ static uint64_t net_recv(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t len, ui
         else
             memset(a, 0, sizeof(*a));
     }
+    if (info)
+        recv_info(s, &msg, &ss, info);
     if (!s->stream && (msg.msg_flags & MSG_TRUNC))
         return fail(value, 10040); /* WSAEMSGSIZE, the buffer is full. */
     *value = (uint64_t)n;
@@ -530,12 +596,50 @@ static int sockopt_int(int fd, int level, int name, bool set, int v, uint64_t *v
     return r;
 }
 
+static bool turn(int fd, int level, int name, bool on)
+{
+    int v = on;
+    return setsockopt(fd, level, name, &v, sizeof(v)) == 0;
+}
+
+/*
+ * windows' receive options of a datagram socket, MIME_NET_OPT_RECV_*. a dual stack socket reports its IPv4 datagrams
+ * with the IPv4 options and its IPv6 ones with the IPv6 options, on windows as on linux.
+ */
+static uint64_t recv_option(NetSocket *s, uint32_t bit, bool set, bool on, uint64_t *value)
+{
+    if (s->stream)
+        return fail(value, 10042); /* WSAENOPROTOOPT */
+    if (!set) {
+        *value = (s->recv_info >> bit) & 1;
+        return MIME_HC_STATUS_OK;
+    }
+    uint8_t mask = on ? (uint8_t)(s->recv_info | 1u << bit) : (uint8_t)(s->recv_info & ~(1u << bit));
+    struct sockaddr_storage ss;
+    socklen_t sl = sizeof(ss);
+    bool v6 = getsockname(s->fd, (struct sockaddr *)&ss, &sl) == 0 && ss.ss_family == AF_INET6;
+    const uint8_t tos = MIME_NET_RECV_TOS | MIME_NET_RECV_ECN;
+    bool ok4 = turn(s->fd, IPPROTO_IP, IP_PKTINFO, mask & MIME_NET_RECV_PKTINFO) &&
+               turn(s->fd, IPPROTO_IP, IP_RECVTTL, mask & MIME_NET_RECV_TTL) &&
+               turn(s->fd, IPPROTO_IP, IP_RECVTOS, mask & tos);
+    bool ok6 = !v6 || (turn(s->fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, (mask >> 4) & MIME_NET_RECV_PKTINFO) &&
+                       turn(s->fd, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, (mask >> 4) & MIME_NET_RECV_TTL) &&
+                       turn(s->fd, IPPROTO_IPV6, IPV6_RECVTCLASS, (mask >> 4) & tos));
+    /* the IPv4 options of an IPv6 socket only serve the IPv4 datagrams of a dual stack one. */
+    if (!ok6 || (!ok4 && !v6))
+        return fail_errno(value);
+    s->recv_info = mask;
+    return MIME_HC_STATUS_OK;
+}
+
 static uint64_t net_option(NetSocket *s, uint64_t option, bool set, uint64_t v, uint64_t *value)
 {
     int fd = s->fd, r = -1;
     struct sockaddr_storage ss;
     socklen_t sl = sizeof(ss);
     *value = 0;
+    if (option >= MIME_NET_OPT_RECV_FIRST && option <= MIME_NET_OPT_RECV_LAST)
+        return recv_option(s, (uint32_t)(option - MIME_NET_OPT_RECV_FIRST), set, v != 0, value);
     switch (option) {
     case MIME_NET_OPT_REUSEADDR:
         r = sockopt_int(fd, SOL_SOCKET, SO_REUSEADDR, set, (int)v, value);
@@ -1431,7 +1535,7 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         status = net_send(vm, s, regs[2], regs[3], regs[4], regs[5], &value);
         break;
     case MIME_HC_NET_RECV:
-        status = net_recv(vm, s, regs[2], regs[3], regs[4], regs[5], &value);
+        status = net_recv(vm, s, regs[2], regs[3], regs[4], regs[5], regs[6], &value);
         break;
     case MIME_HC_NET_SHUTDOWN: {
         int how = regs[2] == 0 ? SHUT_RD : regs[2] == 1 ? SHUT_WR : SHUT_RDWR;
