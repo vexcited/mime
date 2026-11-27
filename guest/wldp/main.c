@@ -48,3 +48,17 @@ DECLSPEC_EXPORT HRESULT WINAPI WldpIsDynamicCodePolicyEnabled(BOOL *enabled)
     *enabled = FALSE;
     return S_OK;
 }
+
+/* the options of the code integrity policy: locked for a policy that is enforced, 1 for one on trial. */
+DECLSPEC_EXPORT HRESULT WINAPI WldpQueryWindowsLockdownMode(int *mode)
+{
+    ULONG64 policy[4] = {0};
+    NTSTATUS status = NtQuerySystemInformation(164, policy, sizeof(policy), nullptr);
+    if (!NT_SUCCESS(status))
+        return (HRESULT)(status | 0x10000000);
+    if (policy[0] & 0x24000000)
+        *mode = 2;
+    else
+        *mode = (LONG)policy[0] < 0;
+    return S_OK;
+}

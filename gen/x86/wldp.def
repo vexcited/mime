@@ -3,3 +3,4 @@ EXPORTS
     WldpGetLockdownPolicy=_WldpGetLockdownPolicy@12 @4
     WldpIsClassInApprovedList=_WldpIsClassInApprovedList@16 @5
     WldpIsDynamicCodePolicyEnabled=_WldpIsDynamicCodePolicyEnabled@4 @6
+    WldpQueryWindowsLockdownMode=_WldpQueryWindowsLockdownMode@4 @8
