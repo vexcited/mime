@@ -7,6 +7,7 @@
 
 #define MAX_ATOMS 0x4000
 #define MAX_NAME 255
+#define BUCKETS 1024
 #define FIRST_STRING_ATOM 0xC000
 #define ATOM_PINNED 0x01
 
@@ -16,12 +17,15 @@ typedef struct ATOM_ENTRY {
     USHORT Count; /* 0 for a free slot */
     USHORT Flags;
     USHORT Length;
+    USHORT Next; /* the slot after it in its bucket plus one, 0 at the end. */
     WCHAR Name[MAX_NAME];
 } ATOM_ENTRY;
 
 typedef struct ATOM_TABLE {
     ATOM_ENTRY *Atoms[MAX_ATOMS];
+    USHORT Buckets[BUCKETS]; /* the first slot of the names with one hash plus one, 0 for none. */
     ULONG Used;
+    ULONG Free; /* no slot below this one is free. */
 } ATOM_TABLE;
 
 /* the session table; jobs that restrict global atoms get a private one, made on first use. */
@@ -96,11 +100,19 @@ static BOOLEAN same(const ATOM_ENTRY *e, const WCHAR *name, ULONG chars)
     return TRUE;
 }
 
+static USHORT *bucket_of(ATOM_TABLE *t, const WCHAR *name, ULONG chars)
+{
+    ULONG hash = 0;
+    for (ULONG i = 0; i < chars; i++)
+        hash = hash * 31 + RtlUpcaseUnicodeChar(name[i]);
+    return &t->Buckets[hash % BUCKETS];
+}
+
 static int lookup(ATOM_TABLE *t, const WCHAR *name, ULONG chars)
 {
-    for (ULONG i = 0; i < MAX_ATOMS; i++)
-        if (t->Atoms[i] && t->Atoms[i]->Count && same(t->Atoms[i], name, chars))
-            return (int)i;
+    for (ULONG i = *bucket_of(t, name, chars); i; i = t->Atoms[i - 1]->Next)
+        if (same(t->Atoms[i - 1], name, chars))
+            return (int)i - 1;
     return -1;
 }
 
@@ -147,7 +159,7 @@ static USHORT add_named(const WCHAR *name, ULONG chars)
         if (!(e->Flags & ATOM_PINNED) && e->Count < 0xFFFF)
             e->Count++;
     } else {
-        for (ULONG i = 0; i < MAX_ATOMS && index < 0; i++)
+        for (ULONG i = t->Free; i < MAX_ATOMS && index < 0; i++)
             if (!t->Atoms[i] || !t->Atoms[i]->Count)
                 index = (int)i;
         if (index < 0) {
@@ -164,7 +176,11 @@ static USHORT add_named(const WCHAR *name, ULONG chars)
         e->Flags = 0;
         e->Length = (USHORT)chars;
         memcpy(e->Name, name, chars * sizeof(WCHAR));
+        USHORT *bucket = bucket_of(t, name, chars);
+        e->Next = *bucket;
+        *bucket = (USHORT)(index + 1);
         t->Used++;
+        t->Free = (ULONG)index + 1;
     }
     unlock();
     return (USHORT)(FIRST_STRING_ATOM + index);
@@ -251,8 +267,16 @@ NTSTATUS NTAPI NtDeleteAtom(USHORT atom)
     NTSTATUS status = STATUS_INVALID_HANDLE;
     if (e) {
         status = STATUS_SUCCESS;
-        if (!(e->Flags & ATOM_PINNED) && !--e->Count)
+        if (!(e->Flags & ATOM_PINNED) && !--e->Count) {
+            ULONG slot = atom - FIRST_STRING_ATOM;
+            USHORT *link = bucket_of(t, e->Name, e->Length);
+            while (*link != slot + 1)
+                link = &t->Atoms[*link - 1]->Next;
+            *link = e->Next;
             t->Used--;
+            if (slot < t->Free)
+                t->Free = slot;
+        }
     }
     unlock();
     return status;
