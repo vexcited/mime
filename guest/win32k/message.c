@@ -661,6 +661,9 @@ BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN rem
     if (!user && !system)
         return FALSE;
     ULONG64 now = now_ms();
+    LONG64 due = TimerNextDue(t);
+    if (due < 0 || (ULONG64)due > now)
+        return FALSE;
     for (PLIST_ENTRY e = g_timers.Flink; e != &g_timers; e = e->Flink) {
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
         if (tm->Thread != t || tm->Due > now)
