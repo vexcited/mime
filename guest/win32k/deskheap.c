@@ -608,8 +608,11 @@ void DeskSync(void)
     if (!p || !p->DeskBase)
         return;
     if (!g_dirty) {
-        /* the message a thread answers changes under this lock too, and only for the thread itself. */
-        sync_thread(W32GetThread());
+        /*
+         * the message a thread answers changes under this lock too, and only for the thread itself. not W32GetThread,
+         * which makes a thread of the window manager of one that is not.
+         */
+        sync_thread(PsGetCurrentThreadWin32Thread());
         return;
     }
     g_dirty = FALSE;
