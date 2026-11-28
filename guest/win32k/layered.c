@@ -33,7 +33,7 @@ static void redraw_all(WND *w)
     SURFACE *s = w->Surface;
     if (!s)
         return;
-    s->Dirty = (RECT){0, 0, s->Width, s->Height};
+    SurfaceSetDirty(s, &(RECT){0, 0, s->Width, s->Height});
     if (w->Thread == W32GetThread())
         PaintPresent(w);
     else

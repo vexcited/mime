@@ -495,7 +495,7 @@ void PaintPresent(WND *top)
     if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && !(top->LayerFlags & MIME_LAYER_UPDATE))
         return;
     RECT dirty = s->Dirty;
-    s->Dirty = (RECT){0, 0, 0, 0};
+    SurfaceSetDirty(s, &(RECT){0, 0, 0, 0});
     /* the border only changes when the program painted against the client edge. */
     RECT client = top->ClientRect;
     RectOffset(&client, -top->WindowRect.left, -top->WindowRect.top);
@@ -518,14 +518,34 @@ void PaintPresent(WND *top)
     }
 }
 
+/* a window surface with something to present waits in the list of its window's thread. */
+void SurfaceSetDirty(SURFACE *s, const RECT *dirty)
+{
+    *(RECT *)&s->Dirty = *dirty;
+    WND *w = s->Window;
+    BOOLEAN waits = w && w->Thread && !RectEmpty(dirty);
+    if (waits && !s->Waits.Flink) {
+        InsertTailList(&w->Thread->Presents, &s->Waits);
+    } else if (!waits && s->Waits.Flink) {
+        RemoveEntryList(&s->Waits);
+        s->Waits.Flink = nullptr;
+    }
+}
+
 void PaintFlushThread(W32THREAD *t)
 {
-    WND *desktop = WndDesktop();
-    if (!desktop)
+    if (IsListEmpty(&t->Presents))
         return;
-    for (WND *c = desktop->FirstChild; c; c = c->Next)
-        if (c->Thread == t && c->Surface)
-            PaintPresent(c);
+    /* each surface is tried once: one whose present is put off, or that the present dirtied, waits for the next flush. */
+    LIST_ENTRY now = t->Presents;
+    now.Flink->Blink = &now;
+    now.Blink->Flink = &now;
+    InitializeListHead(&t->Presents);
+    while (!IsListEmpty(&now)) {
+        SURFACE *s = CONTAINING_RECORD(RemoveHeadList(&now), SURFACE, Waits);
+        InsertTailList(&t->Presents, &s->Waits);
+        PaintPresent(s->Window);
+    }
 }
 
 /* a surface may still be selected by window DCs when its window is resized or destroyed. */
@@ -533,6 +553,7 @@ void PaintRetireSurface(SURFACE *s)
 {
     if (!s)
         return;
+    SurfaceSetDirty(s, &(RECT){0, 0, 0, 0});
     s->Window = nullptr;
     if (s->Header.SelectCount)
         s->Flags |= SURF_RETIRED;

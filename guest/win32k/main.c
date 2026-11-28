@@ -367,6 +367,7 @@ W32THREAD *W32GetThread(void)
     InitializeListHead(&t->Posted);
     InitializeListHead(&t->Input);
     InitializeListHead(&t->Sent);
+    InitializeListHead(&t->Presents);
     t->CursorShowCount = 0;
     t->LastRead = W32TickCount();
     InsertTailList(&g_threads, &t->Links);

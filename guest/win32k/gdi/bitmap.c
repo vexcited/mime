@@ -106,6 +106,8 @@ void SurfaceDestroy(SURFACE *s)
         return;
     if (s->Header.Handle)
         GdiFreeHandle(&s->Header);
+    if (s->Waits.Flink)
+        RemoveEntryList(&s->Waits);
     SurfaceForgetWindow(s);
     if (s->Flags & SURF_OWNS_BITS) {
         if (s->Flags & SURF_CONTIGUOUS)
@@ -170,7 +172,9 @@ static void mark(SURFACE *s, const RECT *r, const REGION *clip, BOOLEAN drawn)
         return;
     if (drawn)
         drawn_on_window(s, &clipped, clip);
-    RectUnion(&s->Dirty, &s->Dirty, &clipped);
+    RECT dirty;
+    RectUnion(&dirty, &s->Dirty, &clipped);
+    SurfaceSetDirty(s, &dirty);
     if (ScreenHeldCount && s->Window) {
         RECT part;
         if (!clip)

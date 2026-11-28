@@ -198,8 +198,9 @@ typedef struct SURFACE {
     HANDLE UserSection;
     DWORD UserSectionOffset;
     BITMAPINFOHEADER Info; /* as created, for GetObject. */
-    RECT Dirty;      /* device surfaces: area changed since the last present. */
+    const RECT Dirty; /* device surfaces: area changed since the last present, through SurfaceSetDirty. */
     struct WND *Window;
+    LIST_ENTRY Waits; /* among the surfaces its window's thread has to present. */
     /*
      * window surfaces. Unpainted: what was never drawn of a window made without a border, which shows what is under it,
      * null for a window that had one. Alpha: what windows' redirection surface keeps as alpha for each pixel while
@@ -212,6 +213,7 @@ typedef struct SURFACE {
 SURFACE *SurfaceCreate(LONG width, LONG height, UCHAR bpp, ULONG flags);
 SURFACE *SurfaceWrap(LONG width, LONG height, UCHAR bpp, PVOID bits, LONG stride, const BITMAPINFO *info);
 void SurfaceDestroy(SURFACE *s);
+void SurfaceSetDirty(SURFACE *s, const RECT *dirty);
 void SurfaceMarkDirty(SURFACE *s, const RECT *r);
 void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip);
 void SurfaceSetAlpha(SURFACE *s, LONG x, LONG y, LONG count, UCHAR alpha);
@@ -676,6 +678,7 @@ typedef struct W32THREAD {
     LIST_ENTRY Posted;
     LIST_ENTRY Input;
     LIST_ENTRY Sent;        /* messages sent to this thread by others. */
+    LIST_ENTRY Presents;    /* the surfaces of its windows that have something to present. */
     ULONG DeskInfo;         /* its CLIENTTHREADINFO in the desktop heap, see deskheap.c. */
     ULONG NoPaintSerial;    /* the state of DeskCleanSerial in which no window of the thread needed painting. */
     ULONG TimerSerial;      /* the state of DeskCleanSerial in which TimerDue was found. */

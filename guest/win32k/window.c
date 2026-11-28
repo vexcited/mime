@@ -769,7 +769,7 @@ static void start_surface(WND *w, SURFACE *s)
         if (unpainted(s))
             RgnSetRect(s->Unpainted, &all);
     }
-    s->Dirty = all;
+    SurfaceSetDirty(s, &all);
 }
 
 /* a window that takes a border shows all of itself, black where it was never drawn. */
@@ -835,7 +835,7 @@ void WndEnsureSurface(WND *w)
         start_surface(w, s);
     }
     w->Surface = s;
-    s->Dirty = all;
+    SurfaceSetDirty(s, &all);
     FrameSurfaceAlpha(w);
     if (!(w->Flags & WNDF_HOST_WINDOW)) {
         HostWindowCreate(w);
