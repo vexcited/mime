@@ -1241,8 +1241,8 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemapho
         if (!timeout)
             return VK_TIMEOUT;
         /* a short spin catches work about to finish without sleeping. */
-        for (int i = 0; i < 20000; i++) {
-            YieldProcessor();
+        for (unsigned i = 0; i < 20000; i++) {
+            mvk_spin(i);
             if (slots_reached(info, slots))
                 return VK_SUCCESS;
         }

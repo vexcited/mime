@@ -95,6 +95,24 @@ BOOL mvk_lost(void);
 /* the process allocated or freed device memory, so a budget read before is stale. */
 void mvk_memory_changed(void);
 BOOL mvk_wait_events(uint64_t seen, ULONG timeout_ms, BOOL spin);
+
+/*
+ * the pause of a spin that waits for the host, round by round. the host's processor counts the pauses that follow
+ * each other within 128 cycles and, at 3000, leaves the guest to look for the holder of a lock. such a wait has
+ * none, and rows of pauses with a gap between never get there.
+ */
+static inline void mvk_spin(unsigned round)
+{
+#if defined(__x86_64__) || defined(__i386__)
+    if (round % 64 == 63) {
+        for (uint64_t since = __builtin_ia32_rdtsc(); __builtin_ia32_rdtsc() - since < 512;)
+            ;
+        return;
+    }
+#endif
+    YieldProcessor();
+}
+
 void *mvk_block_alloc(SIZE_T size, ULONG64 *pa);
 void mvk_block_free(void *base);
 void mvk_block_free_after(void *base, uint64_t serial);

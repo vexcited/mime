@@ -230,12 +230,13 @@ static uint64_t submit(MvkEncoder *e, uint32_t reply, uint32_t reply_size)
     uint64_t needed = size;
     if (MVK_RING_SIZE - at < size)
         needed += MVK_RING_SIZE - at;
+    unsigned round = 0;
     while (put + needed - __atomic_load_n(&g_header->get, __ATOMIC_ACQUIRE) > MVK_RING_SIZE) {
         if (g_header->lost)
             break;
         if (__atomic_load_n(&g_header->host_idle, __ATOMIC_SEQ_CST))
             NtGdiMimeVkKick();
-        YieldProcessor();
+        mvk_spin(round++);
     }
     if (MVK_RING_SIZE - at < size) {
         /* pad the end of the ring with a nop when one fits. */
@@ -275,10 +276,10 @@ uint64_t mvk_last_serial(void)
 void mvk_wait_serial(uint64_t serial)
 {
     /* a short spin catches a quick reply without sleeping. */
-    for (int i = 0; i < 20000; i++) {
+    for (unsigned i = 0; i < 20000; i++) {
         if (__atomic_load_n(&g_header->done, __ATOMIC_ACQUIRE) >= serial)
             return;
-        YieldProcessor();
+        mvk_spin(i);
     }
     while (__atomic_load_n(&g_header->done, __ATOMIC_ACQUIRE) < serial && !g_header->lost)
         NtGdiMimeVkWait(serial, 0xFFFFFFFF);
@@ -294,12 +295,12 @@ uint64_t mvk_events(void)
 BOOL mvk_wait_events(uint64_t seen, ULONG timeout_ms, BOOL spin)
 {
     /* a short spin catches work about to finish without sleeping. */
-    for (int i = 0; i < (spin ? 20000 : 1); i++) {
+    for (unsigned i = 0; i < (spin ? 20000u : 1u); i++) {
         if (g_header->lost)
             return FALSE;
         if (__atomic_load_n(&g_header->events, __ATOMIC_ACQUIRE) != seen)
             return TRUE;
-        YieldProcessor();
+        mvk_spin(i);
     }
     return NtGdiMimeVkWait(MVK_WAIT_EVENTS | seen, timeout_ms) == STATUS_SUCCESS;
 }
