@@ -151,7 +151,7 @@ HPALETTE NTAPI NtGdiCreatePaletteInternal(const LOGPALETTE *user_palette, UINT c
     if (!count || !user_palette || !NT_SUCCESS(MimeCopyFromUser(&head, user_palette, FIELD_OFFSET(LOGPALETTE, palPalEntry))) ||
         head.palVersion != 0x300 || count > 0xFFFF)
         return nullptr;
-    UserEnterRead();
+    UserEnter();
     PALETTE *p = palette_create(count);
     HPALETTE h = nullptr;
     if (p) {
@@ -167,7 +167,7 @@ HPALETTE NTAPI NtGdiCreatePaletteInternal(const LOGPALETTE *user_palette, UINT c
 HPALETTE NTAPI NtGdiCreateHalftonePalette(HDC hdc)
 {
     (void)hdc;
-    UserEnterRead();
+    UserEnter();
     PALETTE *p = palette_create(256);
     HPALETTE h = nullptr;
     if (p) {
@@ -224,7 +224,7 @@ ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID user_en
     /* the system palette exists only on a palette device, and gdi32 asks for it only there. */
     if (function > 2)
         return 0;
-    UserEnterRead();
+    UserEnter();
     ULONG n = do_palette(object, start, count, user_entries, function);
     UserLeave();
     return n;
@@ -232,7 +232,7 @@ ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID user_en
 
 BOOL NTAPI NtGdiResizePalette(HPALETTE palette, UINT count)
 {
-    UserEnterRead();
+    UserEnter();
     PALETTE *p = PaletteLookup(palette);
     BOOL ok = FALSE;
     if (p && !(p->Header.Flags & GDI_FLAG_STOCK) && count && count <= PALETTE_MAX) {
@@ -251,7 +251,7 @@ BOOL NTAPI NtGdiResizePalette(HPALETTE palette, UINT count)
 
 UINT NTAPI NtGdiGetNearestPaletteIndex(HPALETTE palette, COLORREF color)
 {
-    UserEnterRead();
+    UserEnter();
     PALETTE *p = PaletteLookup(palette);
     UINT index = CLR_INVALID;
     if (!p)
@@ -267,7 +267,7 @@ UINT NTAPI NtGdiGetNearestPaletteIndex(HPALETTE palette, COLORREF color)
 /* the color a dc would draw: through its palette, then the nearest the surface holds. */
 COLORREF NTAPI NtGdiGetNearestColor(HDC hdc, COLORREF color)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     COLORREF result = CLR_INVALID;
     if (dc) {
@@ -296,7 +296,7 @@ COLORREF NTAPI NtGdiGetNearestColor(HDC hdc, COLORREF color)
 HPALETTE NTAPI NtUserSelectPalette(HDC hdc, HPALETTE palette, BOOL background)
 {
     (void)background;
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     PALETTE *p = PaletteLookup(palette);
     HPALETTE old = nullptr;
@@ -312,7 +312,7 @@ HPALETTE NTAPI NtUserSelectPalette(HDC hdc, HPALETTE palette, BOOL background)
 /* a true color display maps no entry. */
 UINT NTAPI NtUserRealizePalette(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     UINT n = DcLookup(hdc) ? 0 : GDI_ERROR;
     UserLeave();
     return n;
@@ -334,7 +334,7 @@ UINT NTAPI NtGdiSetSystemPaletteUse(HDC hdc, UINT use)
 /* a palette is realized again on its next selection: nothing to forget on a true color display. */
 BOOL NTAPI NtGdiUnrealizeObject(HGDIOBJ object)
 {
-    UserEnterRead();
+    UserEnter();
     BOOL ok = GdiLookup(object, 0) != nullptr;
     UserLeave();
     return ok;

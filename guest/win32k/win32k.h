@@ -41,8 +41,6 @@ static inline LONG W32MulDiv(LONG a, LONG b, LONG c)
  * user callbacks and while sleeping in a message loop.
  */
 void UserEnter(void);
-void UserEnterRead(void);
-void UserReenterRead(ULONG depth);
 void UserLeave(void);
 ULONG UserLeaveAll(void);
 void UserReenter(ULONG depth);
@@ -567,6 +565,7 @@ typedef struct USER_OBJECT {
     ULONG DeskOffset; /* where the desktop heap mirrors it, 0 while it does not, deskheap.c. */
     ULONG DeskScroll; /* the scroll bars of a window there. */
     LIST_ENTRY Live;  /* the objects of its type that have a handle. */
+    LIST_ENTRY DeskMarked; /* among the objects the next sync of the desktop heap writes, deskheap.c. */
 } USER_OBJECT;
 
 HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type);
@@ -694,8 +693,8 @@ typedef struct W32THREAD {
     ULONG_PTR ExtraInfo;
     /* IMDT_* and IMO_* of the input message the thread retrieved last, for GetCurrentInputMessageSource. */
     UCHAR InputDevice, InputOrigin;
-    HWND Focus;
-    HWND Active;
+    const HWND Focus;  /* these two through ThreadEdit. */
+    const HWND Active;
     BOOLEAN AppActive;       /* WM_ACTIVATEAPP told the thread's windows that the thread is the active one. */
     HWND Capture;
     ULONG CaptureNc;  /* nc hit code of a capture held by the frame. */
@@ -771,8 +770,22 @@ void UserSharedMonitors(void);
 /* deskheap.c: the heap of the desktop user32 reads. */
 struct WND_CLASS;
 void DeskSync(void);
-void DeskTouch(void);
 ULONG DeskCleanSerial(void);
+/*
+ * the heap is written when the lock of the window manager is let go, for what was marked since: a window or a menu,
+ * a class, the focus and the active window of the threads, or all of it after a change that is not of one object.
+ */
+void DeskTouchObject(USER_OBJECT *object);
+void DeskTouchClass(struct WND_CLASS *c);
+void DeskTouchThreads(void);
+void DeskTouchAll(void);
+/*
+ * what the heap shows of an object is read only in its structure, so that no code changes it unseen: these give the
+ * field to write and mark the object.
+ */
+#define WndEdit(w, field) (DeskTouchObject(&(w)->Header), (typeof_unqual((w)->field) *)&(w)->field)
+#define ClassEdit(c, field) (DeskTouchClass(c), (typeof_unqual((c)->field) *)&(c)->field)
+#define ThreadEdit(t, field) (DeskTouchThreads(), (typeof_unqual((t)->field) *)&(t)->field)
 void DeskObjectFreed(USER_OBJECT *object);
 NTSTATUS DeskAttachThread(struct W32PROCESS *p);
 void DeskProcessExited(struct W32PROCESS *p);
@@ -867,30 +880,33 @@ ULONG WndCountProcessObjects(W32PROCESS *p);
 
 typedef struct WND_CLASS {
     LIST_ENTRY Links;
-    ATOM Atom;        /* of the name of its version, which windows find it by. */
-    PWSTR Name;
-    ATOM PlainAtom;   /* of the name the program gave, which GetClassName answers. */
-    PWSTR PlainName;  /* NULL when it is Name. */
-    UINT Style;
-    WNDPROC Proc;
-    BOOLEAN Ansi;
+    /* the fields that are const are the ones the desktop heap shows: they are written through ClassEdit. */
+    const ATOM Atom;  /* of the name of its version, which windows find it by. */
+    const WCHAR *const Name;
+    const ATOM PlainAtom; /* of the name the program gave, which GetClassName answers. */
+    const WCHAR *const PlainName; /* NULL when it is Name. */
+    const UINT Style;
+    const WNDPROC Proc;
+    const BOOLEAN Ansi;
     BOOLEAN System;
-    int ClassExtra;
-    int WindowExtra;
-    HINSTANCE Instance;
+    const int ClassExtra;
+    const int WindowExtra;
+    const HINSTANCE Instance;
     HICON Icon;
-    HICON IconSmall;
+    const HICON IconSmall;
     HCURSOR Cursor;
-    HBRUSH Background;
-    PWSTR MenuName;
-    ULONG Fnid;          /* FNID_*, the number windows gives the procedures of user32 and win32k. */
-    USHORT CsfFlags;     /* the flags of NtUserRegisterClassExWOW. */
+    const HBRUSH Background;
+    const WCHAR *const MenuName;
+    const ULONG Fnid;    /* FNID_*, the number windows gives the procedures of user32 and win32k. */
+    const USHORT CsfFlags; /* the flags of NtUserRegisterClassExWOW. */
     W32PROCESS *Process; /* NULL for global and system classes. */
     LONG Windows;
-    PUCHAR Extra;
+    const UCHAR *const Extra;
     ULONG DeskOffset, DeskSize;     /* its block in the heap of the desktop, deskheap.c. */
     ULONG DeskName, DeskNameSize;   /* its ansi name there. */
-    ULONG DeskWritten;              /* the sync that last wrote it. */
+    ULONG DeskWritten;              /* the full sync that last wrote it. */
+    BOOLEAN DeskStale;              /* changed since it was written there. */
+    LIST_ENTRY DeskLink;            /* among the classes to write again. */
 } WND_CLASS;
 
 #define WNDF_DESTROYING 0x0001
@@ -955,23 +971,25 @@ typedef struct SCROLL_INFO {
 
 typedef struct WND {
     USER_OBJECT Header;
-    struct WND *Parent;
-    struct WND *Owner;
+    /* the fields that are const are the ones the desktop heap shows or the search for a window to paint reads: they are
+       written through WndEdit. */
+    struct WND *const Parent;
+    struct WND *const Owner;
     struct WND *HostOwner; /* the top level window a child of the desktop was taken from, which its host window hangs from. */
-    struct WND *FirstChild; /* top of the z order. */
+    struct WND *const FirstChild; /* top of the z order. */
     struct WND *LastChild;
-    struct WND *Next;       /* below this window. */
-    struct WND *Prev;       /* above this window. */
-    W32THREAD *Thread;
-    WND_CLASS *Class;
-    DWORD Style;
-    DWORD ExStyle;
-    ULONG Flags;
+    struct WND *const Next;       /* below this window. */
+    struct WND *const Prev;       /* above this window. */
+    W32THREAD *const Thread;
+    WND_CLASS *const Class;
+    const DWORD Style;
+    const DWORD ExStyle;
+    const ULONG Flags;
     DWORD CreateStyle; /* the style CreateWindowEx was asked for. */
     BOOLEAN ShownInactive; /* shown without activation: the focus the host gives it next is not the program's. */
-    USHORT Fnid;       /* FNID_* of the procedure user32 runs it with, from its class or NtUserSetWindowFNID. */
-    RECT WindowRect;  /* screen coordinates of the window's DPI awareness. */
-    RECT ClientRect;  /* screen coordinates of the window's DPI awareness. */
+    const USHORT Fnid; /* FNID_* of the procedure user32 runs it with, from its class or NtUserSetWindowFNID. */
+    const RECT WindowRect; /* screen coordinates of the window's DPI awareness. */
+    const RECT ClientRect; /* screen coordinates of the window's DPI awareness. */
     RECT NormalRect;
     POINT MinPosition;
     POINT MaxPosition;
@@ -980,22 +998,22 @@ typedef struct WND {
     DWORD FullscreenStyle;
     DWORD FullscreenExStyle;
     ULONG FullscreenRestoreFlags;
-    WNDPROC Proc;
-    BOOLEAN Ansi;
-    HINSTANCE Instance;
-    UINT_PTR Id;      /* control id or menu. */
-    LONG_PTR UserData;
+    const WNDPROC Proc;
+    const BOOLEAN Ansi;
+    const HINSTANCE Instance;
+    const UINT_PTR Id; /* control id or menu. */
+    const LONG_PTR UserData;
     PUCHAR Extra;
-    ULONG ExtraSize;
-    PUCHAR UserExtra; /* the copy of the extra bytes user32 reads, in the memory of the process of the window. */
-    SCROLL_INFO *Scroll; /* the scroll bars of the frame, control.c, NULL until one is set. */
-    PWSTR Text;
-    ULONG TextLength;
-    REGION Update;    /* client relative update region, screen coordinates. */
+    const ULONG ExtraSize;
+    const PUCHAR UserExtra; /* the copy of the extra bytes user32 reads, in the memory of the process of the window. */
+    const SCROLL_INFO *const Scroll; /* the scroll bars of the frame, control.c, NULL until one is set. */
+    const WCHAR *const Text;
+    const ULONG TextLength;
+    const REGION Update; /* client relative update region, screen coordinates. */
     HICON Icon;
     HICON IconSmall;
-    UINT Dpi;
-    UCHAR Awareness;  /* the DPI awareness it was created with, its rectangles are in that awareness' coordinates. */
+    const UINT Dpi;
+    const UCHAR Awareness; /* the DPI awareness it was created with, its rectangles are in that awareness' coordinates. */
     UINT MonitorDpi;  /* the dpi of the monitor the window was last on, which is the one it follows when it moves. */
     HWND InheritMonitor; /* the window whose monitor this one follows instead of its own, NtUserInheritWindowMonitor. */
     USHORT DeferredDpi; /* the dpi the program was last told of while its changes are deferred, else 0. */
@@ -1018,7 +1036,7 @@ typedef struct WND {
     BOOLEAN MenuCues;        /* Alt is down, so the bar shows its mnemonics whatever the keyboard cues say. */
     BOOLEAN MenuIcon;        /* the menu loop has the system menu icon selected. */
     REGION *Shape;     /* SetWindowRgn, window relative, NULL for none. */
-    ULONG LayerFlags;  /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow. */
+    const ULONG LayerFlags; /* LWA_* for SetLayeredWindowAttributes, MIME_LAYER_UPDATE for UpdateLayeredWindow. */
     COLORREF LayerKey;
     BYTE LayerAlpha;
     SURFACE *Present;  /* composed copy shown to the host when the surface needs alpha or a shape. */

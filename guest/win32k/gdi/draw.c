@@ -568,7 +568,7 @@ BOOL NTAPI NtGdiPolyPatBlt(HDC hdc, DWORD rop, const void *user_list, ULONG coun
         return FALSE;
     BOOL ok = FALSE;
     if (NT_SUCCESS(MimeCopyFromUser(list, user_list, (SIZE_T)count * 24))) {
-        UserEnterRead();
+        UserEnter();
         DC *dc = DcLookup(hdc);
         if (dc)
             ok = GdiPolyPatBltDc(dc, rop, list, count);
@@ -580,7 +580,7 @@ BOOL NTAPI NtGdiPolyPatBlt(HDC hdc, DWORD rop, const void *user_list, ULONG coun
 
 BOOL NTAPI NtGdiPatBlt(HDC hdc, int x, int y, int width, int height, DWORD rop)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     BOOL ok = dc && GdiPatBltDc(dc, x, y, width, height, rop, nullptr);
     UserLeave();
@@ -593,7 +593,7 @@ static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc,
 /* a scaling transform on either dc stretches. */
 static BOOLEAN blt_scales(HDC hdst, HDC hsrc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *d = DcLookup(hdst), *s = hsrc ? DcLookup(hsrc) : nullptr;
     BOOLEAN scaled = (d && DcIsScaled(d)) || (s && DcIsScaled(s));
     UserLeave();
@@ -607,7 +607,7 @@ BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, 
     BOOLEAN uses_src = ((code >> 2) & 0x33) != (code & 0x33);
     if (uses_src && blt_scales(hdst, hsrc))
         return stretch_blt(hdst, x, y, width, height, hsrc, src_x, src_y, width, height, rop);
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT r = {0, 0, 0, 0};
@@ -670,7 +670,7 @@ BOOL NTAPI NtGdiStretchBlt(HDC hdst, int x, int y, int width, int height, HDC hs
 static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
                         int src_width, int src_height, DWORD rop)
 {
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT dirty = {0, 0, 0, 0};
@@ -698,7 +698,7 @@ static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc,
 BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
                            int src_width, int src_height, BLENDFUNCTION blend, HANDLE transform)
 {
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT dirty = {0, 0, 0, 0};
@@ -736,7 +736,7 @@ BOOL NTAPI NtGdiTransparentBlt(HDC hdst, int x, int y, int width, int height, HD
 {
     if (width <= 0 || height <= 0 || src_width <= 0 || src_height <= 0)
         return FALSE;
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT dirty = {0, 0, 0, 0};
@@ -786,7 +786,7 @@ BOOL NTAPI NtGdiMaskBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc,
     DWORD fore = rop4 & 0xFFFFFF;
     if (!mask)
         return NtGdiBitBlt(hdst, x, y, width, height, hsrc, src_x, src_y, fore, bk_color, 0);
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT dirty = {0, 0, 0, 0};
@@ -855,7 +855,7 @@ BOOL NTAPI NtGdiGradientFill(HDC hdc, PVOID user_vertices, ULONG vertices, PVOID
               NT_SUCCESS(MimeCopyFromUser(mesh, user_mesh, (SIZE_T)meshes * each * sizeof(ULONG)));
     for (ULONG i = 0; ok && i < meshes * each; i++)
         ok = mesh[i] < vertices;
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     RECT dirty = {0, 0, 0, 0};
     if (ok && begin_draw(hdc, &ctx)) {
@@ -965,7 +965,7 @@ static DC *path_dc(HDC hdc)
 
 BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
 {
-    UserEnterRead();
+    UserEnter();
     DC *pdc = path_dc(hdc);
     if (pdc) {
         BOOL recorded = PathLineTo(pdc, x, y);
@@ -1022,7 +1022,7 @@ static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirt
 
 BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
 {
-    UserEnterRead();
+    UserEnter();
     DC *pdc = path_dc(hdc);
     if (pdc) {
         BOOL recorded = PathRectangle(pdc, left, top, right, bottom);
@@ -1064,7 +1064,7 @@ static BOOL draw_round_rect(HDC hdc, int left, int top, int right, int bottom, i
     DRAW_CONTEXT ctx;
     RECT dirty = {0, 0, 0, 0};
     BOOL ok = FALSE;
-    UserEnterRead();
+    UserEnter();
     if (begin_draw(hdc, &ctx)) {
         DC *dc = ctx.Dc;
         RECT r = shape_rect(dc, left, top, right, bottom);
@@ -1110,7 +1110,7 @@ static BOOL draw_round_rect(HDC hdc, int left, int top, int right, int bottom, i
 
 BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int width, int height)
 {
-    UserEnterRead();
+    UserEnter();
     DC *pdc = path_dc(hdc);
     if (pdc) {
         /* a path keeps the rounded rectangle as a plain rectangle. */
@@ -1124,7 +1124,7 @@ BOOL NTAPI NtGdiRoundRect(HDC hdc, int left, int top, int right, int bottom, int
 
 BOOL NTAPI NtGdiEllipse(HDC hdc, int left, int top, int right, int bottom)
 {
-    UserEnterRead();
+    UserEnter();
     DC *pdc = path_dc(hdc);
     if (pdc) {
         BOOL recorded = PathEllipse(pdc, left, top, right, bottom);
@@ -1198,7 +1198,7 @@ static ULONG poly_draw(HDC hdc, POINT *pts, const ULONG *counts, ULONG count, in
     ULONG total = 0;
     for (ULONG i = 0; i < count; i++)
         total += counts[i];
-    UserEnterRead();
+    UserEnter();
     DC *pdc = path_dc(hdc);
     if (pdc) {
         record_path(pdc, pts, counts, count, function);
@@ -1308,7 +1308,7 @@ ULONG_PTR NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_count
     ULONG_PTR result = 0;
     if (pts && NT_SUCCESS(MimeCopyFromUser(pts, user_points, (SIZE_T)total * sizeof(POINT)))) {
         if (function == MIME_POLY_REGION) {
-            UserEnterRead();
+            UserEnter();
             GDI_REGION *r = GdiCreateRegion();
             if (r && !RgnFromPolygons(&r->Region, pts, counts, count, (int)(ULONG_PTR)hdc == WINDING ? WINDING : ALTERNATE)) {
                 GdiDeleteObject(&r->Header);
@@ -1395,7 +1395,7 @@ static ULONG arc_curves(const ARC *a, POINT *out)
 
 static int arc_direction(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     int direction = dc ? dc->State.ArcDirection : 0;
     UserLeave();
@@ -1492,7 +1492,7 @@ BOOL NTAPI NtGdiPolyDraw(HDC hdc, POINT *user_points, BYTE *user_types, ULONG co
             ok = t == PT_MOVETO || t == PT_LINETO;
         }
     }
-    UserEnterRead();
+    UserEnter();
     DC *dc = ok ? DcLookup(hdc) : nullptr;
     POINT start = dc ? dc->State.CurrentPos : (POINT){0, 0};
     BOOLEAN path = dc && DcIsPathOpen(dc);
@@ -1527,7 +1527,7 @@ BOOL NTAPI NtGdiPolyDraw(HDC hdc, POINT *user_points, BYTE *user_types, ULONG co
 
 COLORREF NTAPI NtGdiSetPixel(HDC hdc, int x, int y, COLORREF color)
 {
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     COLORREF result = CLR_INVALID;
     RECT dirty = {0, 0, 0, 0};
@@ -1547,7 +1547,7 @@ COLORREF NTAPI NtGdiSetPixel(HDC hdc, int x, int y, COLORREF color)
 
 COLORREF NTAPI NtGdiGetPixel(HDC hdc, int x, int y)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     COLORREF result = CLR_INVALID;
     if (dc && dc->Surface) {
@@ -1568,7 +1568,7 @@ COLORREF NTAPI NtGdiGetPixel(HDC hdc, int x, int y)
 
 static BOOL fill_region(HDC hdc, HRGN region, HBRUSH hbrush, int frame_w, int frame_h, BOOLEAN invert)
 {
-    UserEnterRead();
+    UserEnter();
     DRAW_CONTEXT ctx;
     BOOL ok = FALSE;
     RECT dirty = {0, 0, 0, 0};

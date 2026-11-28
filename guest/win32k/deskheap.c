@@ -252,14 +252,20 @@ static ULONG offset_of(const WND *w)
     return w && !w->Header.Destroyed ? w->Header.DeskOffset : 0;
 }
 
-/* the number of the full sync, which writes each class once however many windows it has. */
+/* the classes changed since they were written, and the number of the full sync, which writes each class once. */
+static LIST_ENTRY g_stale_classes = {&g_stale_classes, &g_stale_classes};
 static ULONG g_sync;
+static BOOLEAN g_full;
 
 static void write_class(WND_CLASS *c)
 {
-    if (c->DeskOffset && c->DeskWritten == g_sync)
+    if (c->DeskOffset && !c->DeskStale && !(g_full && c->DeskWritten != g_sync))
         return;
     c->DeskWritten = g_sync;
+    if (c->DeskStale) {
+        RemoveEntryList(&c->DeskLink);
+        c->DeskStale = FALSE;
+    }
     ULONG size = CLS_EXTRA + (ULONG)(c->ClassExtra > 0 ? c->ClassExtra : 0);
     if (c->DeskOffset && c->DeskSize != size) {
         heap_free(c->DeskOffset, c->DeskSize);
@@ -322,6 +328,10 @@ static void write_class(WND_CLASS *c)
 /* a class goes away: its blocks in the heap with it. */
 void DeskClassFreed(WND_CLASS *c)
 {
+    if (c->DeskStale) {
+        RemoveEntryList(&c->DeskLink);
+        c->DeskStale = FALSE;
+    }
     if (!g_heap)
         return;
     if (c->DeskOffset)
@@ -564,39 +574,132 @@ static void write_window(WND *w)
         *(PULONG64)(g_heap + DESK_INFO + 8) = self;
 }
 
-static BOOLEAN g_dirty = TRUE;
+/*
+ * what the next sync writes: everything, as the first one does, or the windows and menus marked since the last one,
+ * the classes of g_stale_classes and the focus and active window of the threads.
+ */
+static BOOLEAN g_all = TRUE, g_threads;
+static LIST_ENTRY g_marked = {&g_marked, &g_marked};
+static BOOLEAN g_changed = TRUE;
 static ULONG g_serial = 1;
 
-/* something the heap shows may have changed under the lock: the next sync rewrites the objects. */
-void DeskTouch(void)
+static void changed(void)
 {
-    if (!g_dirty) {
-        g_dirty = TRUE;
+    if (!g_changed) {
+        g_changed = TRUE;
         g_serial++;
     }
 }
 
-/* the number of the state of the window manager while nothing changed it since the last sync, 0 otherwise. */
+/*
+ * the number of the state of the windows while none was marked since the last sync, 0 otherwise. what a thread finds
+ * to paint depends on fields that are all marked when they change, so a thread that found nothing looks again only
+ * when the number moved.
+ */
 ULONG DeskCleanSerial(void)
 {
-    return g_dirty ? 0 : g_serial;
+    return g_changed ? 0 : g_serial;
+}
+
+void DeskTouchObject(USER_OBJECT *object)
+{
+    changed();
+    /* an object without a handle has no entry to write, and gets its mark with the handle. */
+    if (!object->DeskMarked.Flink && object->Live.Flink &&
+        (object->Type == USER_TYPE_WINDOW || object->Type == USER_TYPE_MENU))
+        InsertTailList(&g_marked, &object->DeskMarked);
+}
+
+/* a class that has no block yet is written with the first window of it. */
+void DeskTouchClass(WND_CLASS *c)
+{
+    if (c->DeskOffset && !c->DeskStale) {
+        c->DeskStale = TRUE;
+        InsertTailList(&g_stale_classes, &c->DeskLink);
+    }
+}
+
+void DeskTouchThreads(void)
+{
+    g_threads = TRUE;
+}
+
+/*
+ * a window or a menu that goes leaves the others that name it by its offset to write again, and so does anything
+ * else that is not the change of one object.
+ */
+void DeskTouchAll(void)
+{
+    changed();
+    g_all = TRUE;
+}
+
+static void unmark(USER_OBJECT *object)
+{
+    if (object->DeskMarked.Flink) {
+        RemoveEntryList(&object->DeskMarked);
+        object->DeskMarked.Flink = object->DeskMarked.Blink = nullptr;
+    }
 }
 
 static void sync_thread(W32THREAD *t)
 {
     if (!t || !t->DeskInfo)
         return;
-    /* bit 1 of the flags is what InSendMessage answers with no call. */
-    *(PULONG)(g_heap + t->DeskInfo) = MsgInSendFlags(t) ? 2 : 0;
+    /* bit 1 of the flags is what InSendMessage answers with no call. written when it differs: the programs read this. */
+    ULONG flags = MsgInSendFlags(t) ? 2 : 0;
+    PULONG shown = (PULONG)(g_heap + t->DeskInfo);
     PULONG64 windows = (PULONG64)(g_heap + t->DeskInfo + 0x20);
-    windows[0] = (ULONG64)(ULONG_PTR)t->Focus;
-    windows[1] = (ULONG64)(ULONG_PTR)t->Active;
+    if (*shown != flags)
+        *shown = flags;
+    if (windows[0] != (ULONG64)(ULONG_PTR)t->Focus)
+        windows[0] = (ULONG64)(ULONG_PTR)t->Focus;
+    if (windows[1] != (ULONG64)(ULONG_PTR)t->Active)
+        windows[1] = (ULONG64)(ULONG_PTR)t->Active;
 }
 
-static void sync_threads(void)
+static void write_all(void)
 {
-    for (W32THREAD *t = W32NextThread(nullptr); t; t = W32NextThread(t))
-        sync_thread(t);
+    g_sync++;
+    g_full = TRUE;
+    /* windows and menus name their neighbours and submenus by offsets, so each has its block before any is written. */
+    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_MENU)) != nullptr;)
+        if (!o->Destroyed && !o->DeskOffset)
+            o->DeskOffset = heap_alloc(MENU_SIZE);
+    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_MENU)) != nullptr;)
+        write_menu((MENU *)o);
+    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_WINDOW)) != nullptr;)
+        if (!o->Destroyed && !o->DeskOffset)
+            o->DeskOffset = heap_alloc(WND_SIZE);
+    while (!IsListEmpty(&g_stale_classes))
+        write_class(CONTAINING_RECORD(g_stale_classes.Flink, WND_CLASS, DeskLink));
+    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_WINDOW)) != nullptr;)
+        write_window((WND *)o);
+    while (!IsListEmpty(&g_marked))
+        unmark(CONTAINING_RECORD(g_marked.Flink, USER_OBJECT, DeskMarked));
+    g_full = FALSE;
+}
+
+static void write_marked(void)
+{
+    for (PLIST_ENTRY e = g_marked.Flink; e != &g_marked; e = e->Flink) {
+        USER_OBJECT *o = CONTAINING_RECORD(e, USER_OBJECT, DeskMarked);
+        if (!o->Destroyed && !o->DeskOffset)
+            o->DeskOffset = heap_alloc(o->Type == USER_TYPE_MENU ? MENU_SIZE : WND_SIZE);
+    }
+    for (PLIST_ENTRY e = g_marked.Flink; e != &g_marked; e = e->Flink) {
+        USER_OBJECT *o = CONTAINING_RECORD(e, USER_OBJECT, DeskMarked);
+        if (o->Type == USER_TYPE_MENU)
+            write_menu((MENU *)o);
+    }
+    while (!IsListEmpty(&g_stale_classes))
+        write_class(CONTAINING_RECORD(g_stale_classes.Flink, WND_CLASS, DeskLink));
+    while (!IsListEmpty(&g_marked)) {
+        USER_OBJECT *o = CONTAINING_RECORD(g_marked.Flink, USER_OBJECT, DeskMarked);
+        unmark(o);
+        if (o->Type == USER_TYPE_WINDOW)
+            write_window((WND *)o);
+    }
 }
 
 /* called with the lock held, as its last owner lets go of it. */
@@ -607,31 +710,26 @@ void DeskSync(void)
     W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
     if (!p || !p->DeskBase)
         return;
-    if (!g_dirty) {
-        /*
-         * the message a thread answers changes under this lock too, and only for the thread itself. not W32GetThread,
-         * which makes a thread of the window manager of one that is not.
-         */
-        sync_thread(PsGetCurrentThreadWin32Thread());
-        return;
+    g_changed = FALSE;
+    if (g_all) {
+        g_all = FALSE;
+        WndDesktop();
+        write_all();
+    } else if (!IsListEmpty(&g_marked) || !IsListEmpty(&g_stale_classes)) {
+        write_marked();
     }
-    g_dirty = FALSE;
-    WndDesktop();
-    g_sync++;
-    /* windows and menus name their neighbours and submenus by offsets, so each has its block before any is written. */
-    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_MENU)) != nullptr;)
-        if (!o->Destroyed && !o->DeskOffset)
-            o->DeskOffset = heap_alloc(MENU_SIZE);
-    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_MENU)) != nullptr;)
-        write_menu((MENU *)o);
-    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_WINDOW)) != nullptr;)
-        if (!o->Destroyed && !o->DeskOffset)
-            o->DeskOffset = heap_alloc(WND_SIZE);
-    for (USER_OBJECT *o = nullptr; (o = UserNextLive(o, USER_TYPE_WINDOW)) != nullptr;)
-        write_window((WND *)o);
     /* spwndShell, which GetShellWindow reads. */
-    *(PULONG64)(g_heap + DESK_INFO + 0x18) = offset_of(WndShell);
-    sync_threads();
+    if (*(PULONG64)(g_heap + DESK_INFO + 0x18) != offset_of(WndShell))
+        *(PULONG64)(g_heap + DESK_INFO + 0x18) = offset_of(WndShell);
+    /* the message a thread answers changes under this lock too, and only for the thread itself. */
+    if (g_threads) {
+        g_threads = FALSE;
+        for (W32THREAD *t = W32NextThread(nullptr); t; t = W32NextThread(t))
+            sync_thread(t);
+    } else {
+        /* not W32GetThread, which makes a thread of the window manager of one that is not. */
+        sync_thread(PsGetCurrentThreadWin32Thread());
+    }
 }
 
 void DeskThreadFreed(W32THREAD *t)
@@ -646,6 +744,9 @@ void DeskThreadFreed(W32THREAD *t)
 /* the handle of an object is freed: its entry keeps the high word the next handle there gets. */
 void DeskObjectFreed(USER_OBJECT *object)
 {
+    unmark(object);
+    if (object->DeskOffset)
+        DeskTouchAll();
     PUCHAR entry = g_heap ? entry_of(object) : nullptr;
     if (entry) {
         USHORT next = (USHORT)((((ULONG_PTR)object->Handle >> 16) + 1) & 0x7FFF);
@@ -685,6 +786,8 @@ NTSTATUS DeskAttachThread(W32PROCESS *p)
         if (!NT_SUCCESS(status))
             return status;
         g_users++;
+        /* a program that begins to read the heap finds all of it written anew. */
+        DeskTouchAll();
     }
     PUCHAR teb = PsGetCurrentThreadTeb();
     if (!teb || PsGetCurrentProcess() != p->Process)
@@ -725,8 +828,10 @@ ULONG64 DeskUserWindow(WND *w)
     W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
     if (!w || w->Header.Destroyed || !p || !p->DeskBase || !g_heap)
         return 0;
-    if (!w->Header.DeskOffset)
+    if (!w->Header.DeskOffset) {
         w->Header.DeskOffset = heap_alloc(WND_SIZE);
+        DeskTouchObject(&w->Header);
+    }
     return w->Header.DeskOffset ? (ULONG64)(ULONG_PTR)p->DeskBase + w->Header.DeskOffset : 0;
 }
 
@@ -737,14 +842,12 @@ ULONG64 DeskUserWindow(WND *w)
  */
 ULONG64 NTAPI NtUserMapDesktopObject(HANDLE handle)
 {
-    UserEnterRead();
+    UserEnter();
     ULONG64 address = 0;
     USER_OBJECT *o = UserLookup(handle, 0);
     W32PROCESS *p = PsGetProcessWin32Process(PsGetCurrentProcess());
     if (o && p && p->DeskBase && g_heap && (o->Type == USER_TYPE_WINDOW || o->Type == USER_TYPE_MENU)) {
         if (o->Type == USER_TYPE_WINDOW) {
-            if (!o->DeskOffset)
-                DeskTouch();
             address = DeskUserWindow((WND *)o);
         }
         else if (o->DeskOffset)

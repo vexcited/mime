@@ -186,12 +186,15 @@ static SCROLL_DATA *scroll_bar(WND *w, int bar)
     if (bar != SB_HORZ && bar != SB_VERT)
         return nullptr;
     if (!w->Scroll) {
-        w->Scroll = W32Alloc(sizeof(*w->Scroll));
-        if (!w->Scroll)
+        SCROLL_INFO *fresh = W32Alloc(sizeof(*fresh));
+        if (!fresh)
             return nullptr;
-        w->Scroll->Bar[0].Max = w->Scroll->Bar[1].Max = 100;
+        fresh->Bar[0].Max = fresh->Bar[1].Max = 100;
+        *WndEdit(w, Scroll) = fresh;
     }
-    return &w->Scroll->Bar[bar == SB_VERT];
+    /* for the caller to change: the heap shows the bars. */
+    DeskTouchObject(&w->Header);
+    return &((SCROLL_INFO *)w->Scroll)->Bar[bar == SB_VERT];
 }
 
 /* the position the scroll bar can reach: from its minimum to its maximum less one page. */
@@ -251,7 +254,7 @@ int NTAPI NtUserSetScrollInfo(HWND hwnd, int bar, const SCROLLINFO *user_info, B
             BOOLEAN shown = (w->Style & style) != 0;
             BOOLEAN needed = scroll_needed(d) || (si.fMask & SIF_DISABLENOSCROLL);
             if ((si.fMask & (SIF_RANGE | SIF_PAGE)) && shown != needed) {
-                w->Style = needed ? w->Style | style : w->Style & ~style;
+                *WndEdit(w, Style) = needed ? w->Style | style : w->Style & ~style;
                 WndSetPos(w, nullptr, 0, 0, 0, 0,
                           SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             } else if (redraw && shown) {
@@ -272,7 +275,7 @@ BOOL NTAPI NtUserSBGetParms(HWND hwnd, int bar, PVOID data, SCROLLINFO *user_inf
     (void)data;
     UserEnter();
     WND *w = WndLookup(hwnd);
-    SCROLL_DATA *d = w && w->Scroll && (bar == SB_HORZ || bar == SB_VERT) ? &w->Scroll->Bar[bar == SB_VERT] : nullptr;
+    const SCROLL_DATA *d = w && w->Scroll && (bar == SB_HORZ || bar == SB_VERT) ? &w->Scroll->Bar[bar == SB_VERT] : nullptr;
     BOOL ok = d != nullptr;
     if (d) {
         if (si.fMask & SIF_RANGE) {
@@ -303,7 +306,7 @@ BOOL NTAPI NtUserShowScrollBar(HWND hwnd, int bar, BOOL show)
         if (bar == SB_CTL) {
             WndShow(w, show ? SW_SHOW : SW_HIDE);
         } else if (wanted != w->Style) {
-            w->Style = wanted;
+            *WndEdit(w, Style) = wanted;
             WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
     } else {
@@ -321,14 +324,16 @@ BOOL NTAPI NtUserEnableScrollBar(HWND hwnd, UINT bar, UINT arrows)
     if (w && bar == SB_CTL) {
         ok = (BOOL)MsgSend(w, SBM_ENABLE_ARROWS, arrows, 0);
     } else if (w && (bar == SB_HORZ || bar == SB_VERT || bar == SB_BOTH) && scroll_bar(w, SB_VERT)) {
-        ULONG old = w->Scroll->Disable;
+        /* scroll_bar marked the window for the heap. */
+        SCROLL_INFO *scroll = (SCROLL_INFO *)w->Scroll;
+        ULONG old = scroll->Disable;
         if (bar != SB_VERT)
-            w->Scroll->Disable = (w->Scroll->Disable & ~0x3u) | (arrows & 0x3);
+            scroll->Disable = (scroll->Disable & ~0x3u) | (arrows & 0x3);
         if (bar != SB_HORZ)
-            w->Scroll->Disable = (w->Scroll->Disable & ~0xCu) | ((arrows & 0x3) << 2);
-        ok = old != w->Scroll->Disable;
+            scroll->Disable = (scroll->Disable & ~0xCu) | ((arrows & 0x3) << 2);
+        ok = old != scroll->Disable;
         if (ok) {
-            w->Flags |= WNDF_FRAME_DIRTY;
+            *WndEdit(w, Flags) |= WNDF_FRAME_DIRTY;
             WndInvalidateRegion(w, nullptr, RDW_FRAME | RDW_INVALIDATE);
         }
     }
@@ -684,7 +689,7 @@ BOOL NTAPI NtUserSetMsgBox(HWND hwnd)
     UserEnter();
     WND *w = WndLookup(hwnd);
     if (w)
-        w->Flags |= WNDF_MSGBOX;
+        *WndEdit(w, Flags) |= WNDF_MSGBOX;
     UserLeave();
     return w != nullptr;
 }

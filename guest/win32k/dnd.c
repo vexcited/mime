@@ -240,7 +240,7 @@ ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out)
     case MIME_DND_REGISTER: {
         WND *w = WndLookup((HWND)a);
         if (w && t && w->Thread && w->Thread->Process == t->Process) {
-            w->Flags |= WNDF_DROPTARGET;
+            *WndEdit(w, Flags) |= WNDF_DROPTARGET;
             t->Process->DndHandler = b;
             result = 1;
         }
@@ -249,7 +249,7 @@ ULONG_PTR NTAPI NtUserMimeDnd(ULONG op, ULONG_PTR a, ULONG_PTR b, PULONG out)
     case MIME_DND_REVOKE: {
         WND *w = WndLookup((HWND)a);
         if (w && (w->Flags & WNDF_DROPTARGET)) {
-            w->Flags &= ~WNDF_DROPTARGET;
+            *WndEdit(w, Flags) &= ~WNDF_DROPTARGET;
             result = 1;
         }
         break;

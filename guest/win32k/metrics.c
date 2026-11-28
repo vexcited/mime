@@ -750,10 +750,7 @@ BOOL NTAPI NtUserSystemParametersInfo(UINT action, UINT param, PVOID data, UINT 
         W32SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
-    if (sets_parameter(action))
-        UserEnter();
-    else
-        UserEnterRead();
+    UserEnter();
     BOOL ok = MetricsParametersInfo(action, param, data, ini, 0);
     UserLeave();
     return ok;

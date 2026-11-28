@@ -202,7 +202,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     if (!(w->Flags & WNDF_HOST_WINDOW) || !host_buffers())
         return;
     if (activate)
-        w->Flags |= WNDF_ACTIVATE_PENDING;
+        *WndEdit(w, Flags) |= WNDF_ACTIVATE_PENDING;
     if (w->Flags & WNDF_HOST_MOVING)
         return;
     /* a layered window shows up once it has attributes or contents from UpdateLayeredWindow. */
@@ -240,7 +240,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->flags |= MIME_WIN_FULLSCREEN;
     if (visible && (w->Flags & WNDF_ACTIVATE_PENDING)) {
         c->flags |= MIME_WIN_ACTIVATE;
-        w->Flags &= ~WNDF_ACTIVATE_PENDING;
+        *WndEdit(w, Flags) &= ~WNDF_ACTIVATE_PENDING;
     }
     if (FrameHasCaption(w->Style, w->ExStyle) || (w->Class && (w->Class->Style & CS_DROPSHADOW)) ||
         (w->Style & (WS_THICKFRAME | WS_DLGFRAME | WS_BORDER)))
@@ -494,7 +494,6 @@ void PaintPresent(WND *top)
     /* draw a pending frame before the first present. */
     if (!(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && !(top->LayerFlags & MIME_LAYER_UPDATE))
         return;
-    DeskTouch();
     RECT dirty = s->Dirty;
     s->Dirty = (RECT){0, 0, 0, 0};
     /* the border only changes when the program painted against the client edge. */
@@ -514,7 +513,7 @@ void PaintPresent(WND *top)
         ScreenHeldFlush(top);
     HostPresent(top, &dirty);
     if (!(top->Flags & WNDF_PRESENTED)) {
-        top->Flags |= WNDF_PRESENTED;
+        *WndEdit(top, Flags) |= WNDF_PRESENTED;
         HostConfigure(top, FALSE);
     }
 }
@@ -660,7 +659,7 @@ void PaintReleaseDC(DC *dc)
 
 HDC NTAPI NtUserGetDCEx(HWND hwnd, HRGN clip, ULONG flags)
 {
-    UserEnterRead();
+    UserEnter();
     WND *w = hwnd ? WndLookup(hwnd) : WndDesktop();
     HDC dc = w ? PaintGetDC(w, clip, flags) : nullptr;
     UserLeave();
@@ -690,7 +689,7 @@ HWND NTAPI NtUserWindowFromDC(HDC hdc)
 /* user32 26300.9457 gives the device context alone. */
 int NTAPI NtUserReleaseDC(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     int ok = 0;
     if (dc && (dc->Flags & DC_WINDOW) && !(dc->Flags & DC_PAINT)) {
@@ -702,8 +701,7 @@ int NTAPI NtUserReleaseDC(HDC hdc)
          */
         if (top && !(top->Flags & WNDF_PRESENTED) && (top->Flags & WNDF_FRAME_DIRTY) && top->Thread == W32GetThread()) {
             UserReference(&top->Header);
-            DeskTouch();
-            top->Flags &= ~WNDF_FRAME_DIRTY;
+            *WndEdit(top, Flags) &= ~WNDF_FRAME_DIRTY;
             MsgSend(top, WM_NCPAINT, 1, 0);
             BOOLEAN gone = top->Header.Destroyed;
             UserDereference(&top->Header);
@@ -725,7 +723,7 @@ HDC PaintBegin(WND *w, PAINTSTRUCT *ps)
     memset(ps, 0, sizeof(*ps));
     UserReference(&w->Header);
     if (w->Flags & WNDF_FRAME_DIRTY) {
-        w->Flags &= ~WNDF_FRAME_DIRTY;
+        *WndEdit(w, Flags) &= ~WNDF_FRAME_DIRTY;
         MsgSend(w, WM_NCPAINT, 1, 0);
     }
     if (w->Header.Destroyed) {
@@ -816,10 +814,10 @@ static void update_now(WND *w, BOOLEAN children)
         UserReference(&p->Header);
         if (RgnIsEmpty(&p->Update) && !(p->Flags & WNDF_INTERNAL_PAINT)) {
             /* only the frame is dirty. */
-            p->Flags &= ~WNDF_FRAME_DIRTY;
+            *WndEdit(p, Flags) &= ~WNDF_FRAME_DIRTY;
             MsgSend(p, WM_NCPAINT, 1, 0);
         } else {
-            p->Flags &= ~WNDF_INTERNAL_PAINT;
+            *WndEdit(p, Flags) &= ~WNDF_INTERNAL_PAINT;
             MsgSend(p, WM_PAINT, 0, 0);
             /* force validation to prevent an endless paint loop. */
             if (!p->Header.Destroyed && !RgnIsEmpty(&p->Update))
@@ -912,7 +910,7 @@ static void erase_update(WND *w)
     if (!(w->Flags & WNDF_ERASE_PENDING) || w->Thread != W32GetThread())
         return;
     HDC hdc = PaintGetDC(w, nullptr, DCX_INTERSECTUPDATE | DCX_USESTYLE);
-    w->Flags &= ~WNDF_ERASE_PENDING;
+    *WndEdit(w, Flags) &= ~WNDF_ERASE_PENDING;
     if (hdc) {
         MsgSend(w, WM_ERASEBKGND, (WPARAM)hdc, 0);
         DC *dc = DcLookup(hdc);
@@ -969,7 +967,7 @@ void PaintSync(WND *w)
         return;
     UserReference(&w->Header);
     if (w->Flags & WNDF_FRAME_DIRTY) {
-        w->Flags &= ~WNDF_FRAME_DIRTY;
+        *WndEdit(w, Flags) &= ~WNDF_FRAME_DIRTY;
         MsgSend(w, WM_NCPAINT, 1, 0);
     }
     if (!w->Header.Destroyed)
@@ -999,9 +997,9 @@ BOOL NTAPI NtUserUpdateWindow(HWND hwnd)
                 WND *p = c->Parent;
                 if ((p->Style & WS_CLIPCHILDREN) || RgnIsEmpty(&p->Update))
                     continue;
-                RgnCombine(&p->Update, &p->Update, &w->Update, RGN_DIFF);
+                RgnCombine(WndEdit(p, Update), &p->Update, &w->Update, RGN_DIFF);
                 if (RgnIsEmpty(&p->Update))
-                    p->Flags &= ~(WNDF_NEEDS_ERASE | WNDF_ERASE_PENDING);
+                    *WndEdit(p, Flags) &= ~(WNDF_NEEDS_ERASE | WNDF_ERASE_PENDING);
             }
         update_now(w, TRUE);
     }

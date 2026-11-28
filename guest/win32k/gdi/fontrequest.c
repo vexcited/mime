@@ -109,7 +109,7 @@ static BOOLEAN is_the_service(void)
 
 static BOOLEAN installed(PCWSTR family)
 {
-    UserEnterRead();
+    UserEnter();
     BOOLEAN there = FontFamilyInstalled(family);
     UserLeave();
     return there;

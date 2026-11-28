@@ -393,7 +393,7 @@ DWORD NTAPI NtUserGetKeyNameText(LONG lparam, LPWSTR user_buffer, int size)
 
 HKL KeyboardCurrentLayout(void)
 {
-    UserEnterRead();
+    UserEnter();
     HKL r = current_layout();
     UserLeave();
     return r;

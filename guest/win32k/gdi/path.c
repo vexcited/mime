@@ -798,7 +798,7 @@ static DC *closed_path_dc(HDC hdc)
 
 BOOL NTAPI NtGdiBeginPath(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     if (dc) {
         PathFree(&dc->Path);
@@ -813,7 +813,7 @@ BOOL NTAPI NtGdiBeginPath(HDC hdc)
 
 BOOL NTAPI NtGdiEndPath(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     BOOL ok = dc && dc->PathState == PATH_OPEN;
     if (ok)
@@ -826,7 +826,7 @@ BOOL NTAPI NtGdiEndPath(HDC hdc)
 
 BOOL NTAPI NtGdiAbortPath(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     if (dc)
         discard_path(dc);
@@ -838,7 +838,7 @@ BOOL NTAPI NtGdiAbortPath(HDC hdc)
 
 BOOL NTAPI NtGdiCloseFigure(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     BOOL ok = dc && dc->PathState == PATH_OPEN && dc->Path.Count;
     if (ok) {
@@ -857,7 +857,7 @@ BOOL NTAPI NtGdiCloseFigure(HDC hdc)
 
 BOOL NTAPI NtGdiFlattenPath(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = closed_path_dc(hdc);
     BOOL ok = FALSE;
     POLYGONS pg;
@@ -887,7 +887,7 @@ BOOL NTAPI NtGdiFlattenPath(HDC hdc)
 
 static BOOL paint_path(HDC hdc, BOOLEAN fill, BOOLEAN stroke)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = closed_path_dc(hdc);
     BOOL ok = dc != nullptr;
     if (dc) {
@@ -929,7 +929,7 @@ BOOL NTAPI NtGdiSelectClipPath(HDC hdc, int mode)
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    UserEnterRead();
+    UserEnter();
     DC *dc = closed_path_dc(hdc);
     BOOL ok = FALSE;
     if (dc) {
@@ -965,7 +965,7 @@ GDI_REGION *GdiCreateRegion(void);
 
 BOOL NTAPI NtGdiWidenPath(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = closed_path_dc(hdc);
     BOOL ok = FALSE;
     if (dc) {
@@ -982,7 +982,7 @@ BOOL NTAPI NtGdiWidenPath(HDC hdc)
 
 HRGN NTAPI NtGdiPathToRegion(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = closed_path_dc(hdc);
     HRGN h = nullptr;
     if (dc) {
@@ -999,7 +999,7 @@ HRGN NTAPI NtGdiPathToRegion(HDC hdc)
 
 int NTAPI NtGdiGetPath(HDC hdc, POINT *user_points, BYTE *user_types, int count)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = closed_path_dc(hdc);
     int result = -1;
     POINT *pts = nullptr;

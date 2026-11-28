@@ -290,7 +290,7 @@ BOOL NTAPI NtGdiExtTextOutW(HDC hdc, int x, int y, UINT options, const RECT *use
             for (int i = 0; i < count; i++)
                 dx[i] = dx[2 * i];
         }
-        UserEnterRead();
+        UserEnter();
         DC *dc = DcLookup(hdc);
         if (dc) {
             if (dc->Surface)
@@ -313,7 +313,7 @@ static BOOL text_extent(HDC hdc, LPCWSTR user_text, ULONG count, BOOLEAN indices
         W32Free(text);
         return FALSE;
     }
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     *size = (SIZE){0, 0};
@@ -376,7 +376,7 @@ BOOL NTAPI NtGdiGetTextMetricsW(HDC hdc, TEXTMETRICW *metrics, ULONG size)
     if (size < sizeof(TMW_INTERNAL))
         return FALSE;
     TMW_INTERNAL tmi = {};
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     if (fi) {
@@ -392,7 +392,7 @@ BOOL NTAPI NtGdiGetTextMetricsW(HDC hdc, TEXTMETRICW *metrics, ULONG size)
 /* the count copied, its terminating nul included, or the count a buffer needs. */
 int NTAPI NtGdiGetTextFaceW(HDC hdc, int count, LPWSTR name, BOOL alias)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     WCHAR face[LF_FACESIZE] = {};
@@ -424,7 +424,7 @@ BOOL NTAPI NtGdiGetCharWidthW(HDC hdc, UINT first, UINT count, PWCHAR user_chars
     PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR)) : nullptr;
     BOOL ok = FALSE;
     if (widths && (!user_chars || (chars && NT_SUCCESS(MimeCopyFromUser(chars, user_chars, count * sizeof(WCHAR)))))) {
-        UserEnterRead();
+        UserEnter();
         DC *dc = DcLookup(hdc);
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
@@ -465,7 +465,7 @@ BOOL NTAPI NtGdiGetCharABCWidthsW(HDC hdc, UINT first, ULONG count, PWCHAR user_
     PWCHAR chars = user_chars ? W32Alloc((SIZE_T)count * sizeof(WCHAR)) : nullptr;
     BOOL ok = FALSE;
     if (abc && (!user_chars || (chars && NT_SUCCESS(MimeCopyFromUser(chars, user_chars, count * sizeof(WCHAR)))))) {
-        UserEnterRead();
+        UserEnter();
         DC *dc = DcLookup(hdc);
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
@@ -510,7 +510,7 @@ BOOL NTAPI NtGdiGetRealizationInfo(HDC hdc, PVOID user_info)
     UCHAR *info = W32Alloc(812);
     if (!info)
         return FALSE;
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     if (fi) {
@@ -545,7 +545,7 @@ BOOL NTAPI NtGdiAnyLinkedFonts(void)
 
 BOOL NTAPI NtGdiFontIsLinked(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     BOOL linked = fi && FontHasSystemLink(fi->Face);
@@ -559,7 +559,7 @@ BOOL NTAPI NtGdiFontIsLinked(HDC hdc)
  */
 DWORD NTAPI NtGdiGetCharSet(HDC hdc)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     DWORD value = DEFAULT_CHARSET << 16;
@@ -573,7 +573,7 @@ DWORD NTAPI NtGdiGetCharSet(HDC hdc)
 
 int NTAPI NtGdiGetTextCharsetInfo(HDC hdc, FONTSIGNATURE *user_signature, DWORD flags)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     int charset = DEFAULT_CHARSET;

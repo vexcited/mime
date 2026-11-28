@@ -386,7 +386,7 @@ NTSTATUS GdiSharedMap(W32PROCESS *p)
 /* the cookie of the attributes, one for the session, never 0. gdi32 calls it once as it loads. */
 ULONG64 NTAPI NtGdiInit2(void)
 {
-    UserEnterRead();
+    UserEnter();
     W32PROCESS *p = W32GetProcess();
     if (p)
         GdiSharedMap(p);

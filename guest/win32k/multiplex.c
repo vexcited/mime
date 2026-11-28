@@ -36,7 +36,7 @@ DWORD NTAPI NtUserGetQueueStatus(UINT flags)
         W32SetLastError(ERROR_INVALID_FLAGS);
         return 0;
     }
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     DWORD r = t ? queue_status(t, flags, TRUE) : 0;
     UserLeave();
@@ -49,7 +49,7 @@ DWORD NTAPI NtUserGetQueueStatusReadonly(UINT flags)
         W32SetLastError(ERROR_INVALID_FLAGS);
         return 0;
     }
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     DWORD r = t ? queue_status(t, flags, FALSE) : 0;
     UserLeave();
@@ -63,7 +63,7 @@ DWORD NTAPI NtUserGetQueueStatusReadonly(UINT flags)
  */
 ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
 {
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     ULONG_PTR v = 0;
     if (t) {

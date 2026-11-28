@@ -353,8 +353,8 @@ RECT DpiWorkArea(ULONG awareness)
 /* the awareness changes for every window of the process and its coordinates follow. */
 static void convert_tree(WND *w, ULONG from, ULONG to, UINT dpi)
 {
-    DpiRectConvert(&w->WindowRect, from, to);
-    DpiRectConvert(&w->ClientRect, from, to);
+    DpiRectConvert(WndEdit(w, WindowRect), from, to);
+    DpiRectConvert(WndEdit(w, ClientRect), from, to);
     DpiRectConvert(&w->NormalRect, from, to);
     DpiRectConvert(&w->FullscreenRect, from, to);
     DpiRectConvert(&w->FullscreenNormalRect, from, to);
@@ -362,9 +362,9 @@ static void convert_tree(WND *w, ULONG from, ULONG to, UINT dpi)
                           DpiScale(w->MinTrack.y, DpiScaleOf(from), DpiScaleOf(to))};
     w->MaxTrack = (POINT){DpiScale(w->MaxTrack.x, DpiScaleOf(from), DpiScaleOf(to)),
                           DpiScale(w->MaxTrack.y, DpiScaleOf(from), DpiScaleOf(to))};
-    RgnClear(&w->Update);
-    w->Awareness = (UCHAR)to;
-    w->Dpi = w->MonitorDpi = dpi;
+    RgnClear(WndEdit(w, Update));
+    *WndEdit(w, Awareness) = (UCHAR)to;
+    *WndEdit(w, Dpi) = w->MonitorDpi = dpi;
     for (WND *c = w->FirstChild; c; c = c->Next)
         convert_tree(c, from, to, dpi);
 }

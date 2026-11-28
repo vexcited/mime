@@ -397,7 +397,7 @@ NTSTATUS NTAPI NtGdiEnsureDpiDepDefaultGuiFontForPlateau(UINT dpi)
     if (dpi == 96 || dpi % 24 || dpi < 120 || dpi > 480)
         return STATUS_SUCCESS;
     ULONG slot = (dpi - 120) / 24;
-    UserEnterRead();
+    UserEnter();
     if (!g_gui_fonts[slot])
         g_gui_fonts[slot] = publish(gui_font(gui_height(dpi)), 44 + (int)slot);
     UserLeave();
@@ -464,7 +464,7 @@ HANDLE NTAPI NtGdiGetStockObject(int index)
     /* GreGetStockObject has none for DEFAULT_GUI_FONT, which gdi32full takes from the shared memory by dpi. */
     if (index == DEFAULT_GUI_FONT)
         return nullptr;
-    UserEnterRead();
+    UserEnter();
     GDI_OBJECT *o = GdiStockObject(index);
     UserLeave();
     return o ? o->Handle : nullptr;
@@ -472,7 +472,7 @@ HANDLE NTAPI NtGdiGetStockObject(int index)
 
 BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_OBJECT *o = GdiLookup(handle, 0);
     BOOL ok = FALSE;
     if (o && o->Type == GDI_TYPE_PALETTE && o->SelectCount && !(o->Flags & GDI_FLAG_STOCK)) {
@@ -490,7 +490,7 @@ BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
 
 HBRUSH NTAPI NtGdiCreateSolidBrush(COLORREF color, HBRUSH reuse)
 {
-    UserEnterRead();
+    UserEnter();
     BRUSH *b = new_brush(BS_SOLID, color, 0);
     if (b)
         GdiBrushAttrAttach(&b->Header);
@@ -503,7 +503,7 @@ HBRUSH NTAPI NtGdiCreateHatchBrushInternal(ULONG style, COLORREF color, BOOL pen
 {
     if (style > 5)
         return nullptr;
-    UserEnterRead();
+    UserEnter();
     BRUSH *b = new_brush(BS_HATCHED, color, style);
     UserLeave();
     return b ? (HBRUSH)b->Header.Handle : nullptr;
@@ -511,7 +511,7 @@ HBRUSH NTAPI NtGdiCreateHatchBrushInternal(ULONG style, COLORREF color, BOOL pen
 
 HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH reuse)
 {
-    UserEnterRead();
+    UserEnter();
     PEN *p = new_pen((UINT)style & PS_STYLE_MASK, width < 0 ? 0 : width, color, GDI_TYPE_PEN);
     UserLeave();
     return p ? (HPEN)p->Header.Handle : nullptr;
@@ -531,7 +531,7 @@ HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG 
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    UserEnterRead();
+    UserEnter();
     PEN *p = new_pen(style, (LONG)width, brush_style == BS_NULL ? 0 : color, GDI_TYPE_EXTPEN);
     if (p) {
         p->BrushStyle = brush_style;
@@ -550,7 +550,7 @@ HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG
         return nullptr;
     lf.lfFaceName[LF_FACESIZE - 1] = 0;
     FontAskFor(lf.lfFaceName);
-    UserEnterRead();
+    UserEnter();
     FONT *f = new_font(&lf);
     UserLeave();
     return f ? (HFONT)f->Header.Handle : nullptr;
@@ -558,7 +558,7 @@ HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG
 
 int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_OBJECT *o = GdiLookup(handle, 0);
     union {
         LOGBRUSH brush;
@@ -652,7 +652,7 @@ static GDI_REGION *region_of(HRGN h)
 
 HRGN NTAPI NtGdiCreateRectRgn(int left, int top, int right, int bottom)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = GdiCreateRegion();
     if (r) {
         RECT rc = {W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
@@ -666,7 +666,7 @@ HRGN NTAPI NtGdiCreateRectRgn(int left, int top, int right, int bottom)
 /* an ellipse in the rectangle, which windows gives no attributes. */
 HRGN NTAPI NtGdiCreateEllipticRgn(int left, int top, int right, int bottom)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = GdiCreateRegion();
     if (r)
         RgnRoundRect(&r->Region, left, top, right, bottom, right > left ? right - left : left - right,
@@ -677,7 +677,7 @@ HRGN NTAPI NtGdiCreateEllipticRgn(int left, int top, int right, int bottom)
 
 HRGN NTAPI NtGdiCreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = GdiCreateRegion();
     if (r)
         RgnRoundRect(&r->Region, left, top, right, bottom, width, height);
@@ -701,7 +701,7 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
         return nullptr;
     HRGN result = nullptr;
     if (NT_SUCCESS(MimeCopyFromUser(rects, (const UCHAR *)data + header.dwSize, header.nCount * sizeof(RECT)))) {
-        UserEnterRead();
+        UserEnter();
         GDI_REGION *r = GdiCreateRegion();
         if (r) {
             if (have_xform)
@@ -718,7 +718,7 @@ HRGN NTAPI NtGdiExtCreateRegion(const XFORM *xform, DWORD size, const RGNDATA *d
 
 int NTAPI NtGdiCombineRgn(HRGN dst, HRGN a, HRGN b, int mode)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *d = region_of(dst), *ra = region_of(a), *rb = mode == RGN_COPY ? nullptr : region_of(b);
     int result = ERROR;
     if (d && ra && (mode == RGN_COPY || rb) && mode >= RGN_AND && mode <= RGN_COPY) {
@@ -733,7 +733,7 @@ int NTAPI NtGdiCombineRgn(HRGN dst, HRGN a, HRGN b, int mode)
 
 BOOL NTAPI NtGdiSetRectRgn(HRGN region, int left, int top, int right, int bottom)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = region_of(region);
     RECT rc = {W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
     BOOL ok = r && RgnSetRect(&r->Region, &rc);
@@ -743,7 +743,7 @@ BOOL NTAPI NtGdiSetRectRgn(HRGN region, int left, int top, int right, int bottom
 
 int NTAPI NtGdiOffsetRgn(HRGN region, int x, int y)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = region_of(region);
     int result = ERROR;
     if (r) {
@@ -756,7 +756,7 @@ int NTAPI NtGdiOffsetRgn(HRGN region, int x, int y)
 
 int NTAPI NtGdiGetRgnBox(HRGN region, LPRECT rect)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = region_of(region);
     RECT box = {0, 0, 0, 0};
     int result = ERROR;
@@ -772,7 +772,7 @@ int NTAPI NtGdiGetRgnBox(HRGN region, LPRECT rect)
 
 BOOL NTAPI NtGdiPtInRegion(HRGN region, int x, int y)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = region_of(region);
     BOOL in = r && RgnPtIn(&r->Region, x, y);
     UserLeave();
@@ -784,7 +784,7 @@ BOOL NTAPI NtGdiRectInRegion(HRGN region, LPRECT rect)
     RECT rc;
     if (!NT_SUCCESS(MimeCopyFromUser(&rc, rect, sizeof(rc))))
         return FALSE;
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = region_of(region);
     BOOL in = r && RgnRectIn(&r->Region, &rc);
     UserLeave();
@@ -793,7 +793,7 @@ BOOL NTAPI NtGdiRectInRegion(HRGN region, LPRECT rect)
 
 BOOL NTAPI NtGdiEqualRgn(HRGN a, HRGN b)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *ra = region_of(a), *rb = region_of(b);
     BOOL eq = ra && rb && RgnEqual(&ra->Region, &rb->Region);
     UserLeave();
@@ -802,7 +802,7 @@ BOOL NTAPI NtGdiEqualRgn(HRGN a, HRGN b)
 
 DWORD NTAPI NtGdiGetRegionData(HRGN region, DWORD size, LPRGNDATA data)
 {
-    UserEnterRead();
+    UserEnter();
     GDI_REGION *r = region_of(region);
     DWORD needed = 0;
     if (r) {

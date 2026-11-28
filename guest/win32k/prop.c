@@ -42,17 +42,14 @@ static void prop_changed(WND *w, ATOM atom)
     if (atom == PropAtom(L"DwmCorner") || atom == PropAtom(L"DwmDarkMode") ||
         atom == PropAtom(L"DwmBorderColor") || atom == PropAtom(L"DwmCaptionColor") ||
         atom == PropAtom(L"DwmTextColor")) {
-        /* the properties of the frame are the ones that change what the desktop heap shows of the window. */
-        DeskTouch();
         if (atom != PropAtom(L"DwmCorner"))
-            w->Flags |= WNDF_FRAME_DIRTY;
+            *WndEdit(w, Flags) |= WNDF_FRAME_DIRTY;
         WndUpdateHostConfig(w, FALSE);
         if (w->Thread)
             QueueWake(w->Thread, QS_PAINT);
     }
     /* dwmapi hands over the region of blur behind, which the program may delete as soon as the call returns. */
     if (atom == PropAtom(L"DwmBlurRegion")) {
-        DeskTouch();
         HANDLE handle = PropGetData(w, atom);
         GDI_REGION *r = handle ? (GDI_REGION *)GdiLookup(handle, GDI_TYPE_REGION) : nullptr;
         FrameSetBlurRegion(w, r ? &r->Region : nullptr);
@@ -61,7 +58,6 @@ static void prop_changed(WND *w, ATOM atom)
     if ((atom == PropAtom(L"DwmMarginsLR") || atom == PropAtom(L"DwmMarginsTB") ||
          atom == PropAtom(L"DwmBlurBehind") || atom == PropAtom(L"DwmBlurRegion")) &&
         w->Surface) {
-        DeskTouch();
         FrameSurfaceAlpha(w);
         RECT all = {0, 0, w->Surface->Width, w->Surface->Height};
         SurfaceMarkDirty(w->Surface, &all);
@@ -74,7 +70,7 @@ static void prop_changed(WND *w, ATOM atom)
 
 BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
 {
-    UserEnterRead();
+    UserEnter();
     WND *w = WndLookup(hwnd);
     BOOL ok = FALSE;
     ULONG error = w ? (atom ? 0 : ERROR_INVALID_PARAMETER) : ERROR_INVALID_WINDOW_HANDLE;
@@ -111,7 +107,7 @@ BOOL NTAPI NtUserSetProp(HWND hwnd, ATOM atom, HANDLE data)
 
 HANDLE NTAPI NtUserGetProp(HWND hwnd, ATOM atom)
 {
-    UserEnterRead();
+    UserEnter();
     WND *w = WndLookup(hwnd);
     WND_PROP *p = w ? find_prop(w, atom) : nullptr;
     HANDLE data = p ? p->Data : nullptr;
@@ -151,7 +147,7 @@ HANDLE NTAPI NtUserGetProp2(HWND hwnd, PUNICODE_STRING user_name)
 
 HANDLE NTAPI NtUserRemoveProp(HWND hwnd, ATOM atom)
 {
-    UserEnterRead();
+    UserEnter();
     WND *w = WndLookup(hwnd);
     WND_PROP *p = w ? find_prop(w, atom) : nullptr;
     HANDLE data = nullptr;

@@ -51,6 +51,7 @@ HANDLE UserCreateHandle(USER_OBJECT *object, UCHAR type)
                 InsertTailList(list, &object->Live);
             else
                 object->Live.Flink = object->Live.Blink = nullptr;
+            DeskTouchObject(object);
             return object->Handle;
         }
     }
@@ -157,14 +158,14 @@ void ClassInitialize(void)
         WND_CLASS *c = W32Alloc(sizeof(WND_CLASS));
         if (!c)
             continue;
-        c->Name = W32StrDup(sc->Name, wcslen(sc->Name));
-        c->Atom = sc->Atom ? sc->Atom : AtomAdd(sc->Name);
-        c->PlainAtom = c->Atom;
-        c->Style = sc->Style | CS_GLOBALCLASS;
-        c->WindowExtra = sc->WindowExtra;
+        *ClassEdit(c, Name) = W32StrDup(sc->Name, wcslen(sc->Name));
+        *ClassEdit(c, Atom) = sc->Atom ? sc->Atom : AtomAdd(sc->Name);
+        *ClassEdit(c, PlainAtom) = c->Atom;
+        *ClassEdit(c, Style) = sc->Style | CS_GLOBALCLASS;
+        *ClassEdit(c, WindowExtra) = sc->WindowExtra;
         c->System = TRUE;
-        c->Fnid = sc->Fnid;
-        c->Background = sc->Brush ? MetricsSysColorBrush(sc->Brush - 1) : nullptr;
+        *ClassEdit(c, Fnid) = sc->Fnid;
+        *ClassEdit(c, Background) = sc->Brush ? MetricsSysColorBrush(sc->Brush - 1) : nullptr;
         c->Cursor = sc->Cursor ? CursorSystem((ULONG)(ULONG_PTR)sc->Cursor) : nullptr;
         InsertTailList(&g_system_classes, &c->Links);
         g_builtin_classes[i] = c;
@@ -242,8 +243,8 @@ static BOOLEAN destroy_small_icon(WND_CLASS *c)
     if (!(c->CsfFlags & CSF_CACHEDSMICON))
         return FALSE;
     HICON icon = c->IconSmall;
-    c->IconSmall = nullptr;
-    c->CsfFlags &= ~CSF_CACHEDSMICON;
+    *ClassEdit(c, IconSmall) = nullptr;
+    *ClassEdit(c, CsfFlags) &= ~CSF_CACHEDSMICON;
     CursorDestroySmallCopy(icon);
     return TRUE;
 }
@@ -260,8 +261,8 @@ void ClassMakeSmallIcon(WND_CLASS *c)
         CursorDestroySmallCopy(icon);
         return;
     }
-    c->IconSmall = icon;
-    c->CsfFlags |= CSF_CACHEDSMICON;
+    *ClassEdit(c, IconSmall) = icon;
+    *ClassEdit(c, CsfFlags) |= CSF_CACHEDSMICON;
 }
 
 /* xxxRecreateSmallIcons: the copy is made again at the small size of now. */
@@ -276,11 +277,11 @@ static void free_class(WND_CLASS *c)
     destroy_small_icon(c);
     DeskClassFreed(c);
     RemoveEntryList(&c->Links);
-    W32Free(c->Name);
-    W32Free(c->PlainName);
+    W32Free((PVOID)c->Name);
+    W32Free((PVOID)c->PlainName);
     if (!IS_INTRESOURCE(c->MenuName))
-        W32Free(c->MenuName);
-    W32Free(c->Extra);
+        W32Free((PVOID)c->MenuName);
+    W32Free((PVOID)c->Extra);
     W32Free(c);
 }
 
@@ -393,30 +394,30 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
             goto out;
         }
         BOOLEAN ansi = (flags & CSF_ANSIPROC) != 0;
-        c->Name = name;
+        *ClassEdit(c, Name) = name;
         name = nullptr;
-        c->Atom = atom ? atom : AtomAdd(c->Name);
-        c->PlainName = plain;
+        *ClassEdit(c, Atom) = atom ? atom : AtomAdd(c->Name);
+        *ClassEdit(c, PlainName) = plain;
         plain = nullptr;
-        c->PlainAtom = plain_atom ? plain_atom : c->PlainName ? AtomAdd(c->PlainName) : c->Atom;
-        c->Style = wc.style;
-        c->Proc = wc.lpfnWndProc;
+        *ClassEdit(c, PlainAtom) = plain_atom ? plain_atom : c->PlainName ? AtomAdd(c->PlainName) : c->Atom;
+        *ClassEdit(c, Style) = wc.style;
+        *ClassEdit(c, Proc) = wc.lpfnWndProc;
         if (fnid && !c->Proc)
-            c->Proc = (WNDPROC)(ULONG_PTR)ClientPfn((ansi ? 0 : 24) + fnid - FNID_FIRST);
-        c->Ansi = ansi;
-        c->ClassExtra = wc.cbClsExtra;
-        c->WindowExtra = wc.cbWndExtra;
-        c->Instance = wc.hInstance;
+            *ClassEdit(c, Proc) = (WNDPROC)(ULONG_PTR)ClientPfn((ansi ? 0 : 24) + fnid - FNID_FIRST);
+        *ClassEdit(c, Ansi) = ansi;
+        *ClassEdit(c, ClassExtra) = wc.cbClsExtra;
+        *ClassEdit(c, WindowExtra) = wc.cbWndExtra;
+        *ClassEdit(c, Instance) = wc.hInstance;
         c->Icon = wc.hIcon;
-        c->IconSmall = wc.hIconSm;
+        *ClassEdit(c, IconSmall) = wc.hIconSm;
         c->Cursor = wc.hCursor;
-        c->Background = wc.hbrBackground;
-        c->MenuName = menu;
+        *ClassEdit(c, Background) = wc.hbrBackground;
+        *ClassEdit(c, MenuName) = menu;
         menu = nullptr;
-        c->Fnid = fnid;
-        c->CsfFlags = (USHORT)flags;
+        *ClassEdit(c, Fnid) = fnid;
+        *ClassEdit(c, CsfFlags) = (USHORT)flags;
         c->Process = p;
-        c->Extra = wc.cbClsExtra ? W32Alloc((SIZE_T)wc.cbClsExtra) : nullptr;
+        *ClassEdit(c, Extra) = wc.cbClsExtra ? W32Alloc((SIZE_T)wc.cbClsExtra) : nullptr;
         if (wc.style & CS_GLOBALCLASS)
             InsertTailList(&g_global_classes, &c->Links);
         else
@@ -516,7 +517,7 @@ int NTAPI NtUserGetClassName(HWND hwnd, BOOL real, PUNICODE_STRING user_name)
     UNICODE_STRING s;
     if (!NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s))))
         return 0;
-    UserEnterRead();
+    UserEnter();
     WND *w = WndLookup(hwnd);
     WCHAR name[256];
     ULONG n = 0;
@@ -559,7 +560,7 @@ static void move_windows(WND *w, WND_CLASS *from, WND_CLASS *to, W32PROCESS *p)
 {
     for (; w; w = w->Next) {
         if (w->Class == from && w->Thread && w->Thread->Process == p) {
-            w->Class = to;
+            *WndEdit(w, Class) = to;
             from->Windows--;
             to->Windows++;
         }
@@ -582,17 +583,20 @@ static WND_CLASS *private_class(WND *w, W32PROCESS *p)
     WND_CLASS *copy = W32Alloc(sizeof(WND_CLASS));
     if (!copy)
         return nullptr;
-    *copy = *c;
-    copy->Name = c->Name ? W32StrDup(c->Name, wcslen(c->Name)) : nullptr;
-    copy->PlainName = c->PlainName ? W32StrDup(c->PlainName, wcslen(c->PlainName)) : nullptr;
-    copy->MenuName = c->MenuName && !IS_INTRESOURCE(c->MenuName) ? W32StrDup(c->MenuName, wcslen(c->MenuName)) : c->MenuName;
-    copy->Extra = c->ClassExtra ? W32Alloc((SIZE_T)c->ClassExtra) : nullptr;
+    memcpy(copy, c, sizeof(*copy));
+    copy->DeskOffset = copy->DeskSize = copy->DeskName = copy->DeskNameSize = 0;
+    copy->DeskWritten = 0;
+    copy->DeskStale = FALSE;
+    copy->DeskLink.Flink = copy->DeskLink.Blink = nullptr;
+    *ClassEdit(copy, Name) = c->Name ? W32StrDup(c->Name, wcslen(c->Name)) : nullptr;
+    *ClassEdit(copy, PlainName) = c->PlainName ? W32StrDup(c->PlainName, wcslen(c->PlainName)) : nullptr;
+    *ClassEdit(copy, MenuName) = c->MenuName && !IS_INTRESOURCE(c->MenuName) ? W32StrDup(c->MenuName, wcslen(c->MenuName)) : c->MenuName;
+    *ClassEdit(copy, Extra) = c->ClassExtra ? W32Alloc((SIZE_T)c->ClassExtra) : nullptr;
     if (copy->Extra && c->Extra)
-        memcpy(copy->Extra, c->Extra, (SIZE_T)c->ClassExtra);
-    copy->Proc = ClassProc(c, p);
+        memcpy((PVOID)copy->Extra, c->Extra, (SIZE_T)c->ClassExtra);
+    *ClassEdit(copy, Proc) = ClassProc(c, p);
     copy->Process = p;
     copy->Windows = 0;
-    copy->DeskOffset = copy->DeskSize = copy->DeskName = copy->DeskNameSize = 0;
     InsertTailList(&p->Classes, &copy->Links);
     move_windows(WndDesktop(), c, copy, p);
     return copy;
@@ -664,12 +668,12 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
     switch (index) {
     case GCLP_WNDPROC:
         old = (ULONG_PTR)c->Proc;
-        c->Proc = (WNDPROC)value;
-        c->Ansi = ansi != 0;
+        *ClassEdit(c, Proc) = (WNDPROC)value;
+        *ClassEdit(c, Ansi) = ansi != 0;
         break;
     case GCLP_HBRBACKGROUND:
         old = (ULONG_PTR)c->Background;
-        c->Background = (HBRUSH)value;
+        *ClassEdit(c, Background) = (HBRUSH)value;
         break;
     case GCLP_HCURSOR:
         old = (ULONG_PTR)c->Cursor;
@@ -687,7 +691,7 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
         } else {
             if (destroy_small_icon(c))
                 old = 0;
-            c->IconSmall = (HICON)value;
+            *ClassEdit(c, IconSmall) = (HICON)value;
         }
         UserReference(&w->Header);
         ClassMakeSmallIcon(c);
@@ -695,15 +699,15 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
         break;
     case GCLP_HMODULE:
         old = (ULONG_PTR)c->Instance;
-        c->Instance = (HINSTANCE)value;
+        *ClassEdit(c, Instance) = (HINSTANCE)value;
         break;
     case GCL_STYLE:
         old = c->Style;
-        c->Style = (UINT)value;
+        *ClassEdit(c, Style) = (UINT)value;
         break;
     case GCL_CBWNDEXTRA:
         old = (ULONG_PTR)c->WindowExtra;
-        c->WindowExtra = (int)value;
+        *ClassEdit(c, WindowExtra) = (int)value;
         break;
     case GCL_MENUNAME: {
         /* a name or a resource number; a name is copied from the caller's memory. */
@@ -718,12 +722,14 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
             text[n] = 0;
             menu = W32StrDup(text, n);
         }
-        c->MenuName = menu;
+        *ClassEdit(c, MenuName) = menu;
         break;
     }
     default:
         memcpy(&old, c->Extra + index, width);
-        memcpy(c->Extra + index, &value, width);
+        /* the heap shows the extra bytes of a class. */
+        DeskTouchClass(c);
+        memcpy((PUCHAR)c->Extra + index, &value, width);
         if (width == sizeof(WORD))
             old &= 0xFFFF;
         break;
@@ -732,7 +738,7 @@ static ULONG_PTR set_class_value(HWND hwnd, int index, ULONG_PTR value, BOOL ans
         WND *desktop = WndDesktop();
         for (WND *top = desktop ? desktop->FirstChild : nullptr; top; top = top->Next)
             if (top->Class == c)
-                top->Flags |= WNDF_FRAME_DIRTY;
+                *WndEdit(top, Flags) |= WNDF_FRAME_DIRTY;
     }
     UserLeave();
     return old;

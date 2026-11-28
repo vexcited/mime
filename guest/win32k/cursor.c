@@ -2265,7 +2265,7 @@ HCURSOR NTAPI NtUserGetCursor(void)
 
 HCURSOR NTAPI NtUserSetCursor(HCURSOR cursor)
 {
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     HCURSOR old = nullptr;
     if (cursor && !lookup(cursor)) {

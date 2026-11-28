@@ -79,7 +79,7 @@ BOOL NTAPI NtUserGetGUIThreadInfo(DWORD thread_id, GUITHREADINFO *user_info)
     }
     memset(&info, 0, sizeof(info));
     info.cbSize = sizeof(info);
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = nullptr;
     if (thread_id) {
         for (W32THREAD *c = W32NextThread(nullptr); c && !t; c = W32NextThread(c))
@@ -161,7 +161,7 @@ static void sync_with_async(W32THREAD *t)
 
 SHORT NTAPI NtUserGetKeyState(int key)
 {
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     SHORT r = 0;
     /* read first: a change that comes while the answer is made leaves it out of date at once. */
@@ -256,7 +256,7 @@ BOOL NTAPI NtUserTrackMouseEvent(TRACKMOUSEEVENT *user_track)
     TRACKMOUSEEVENT tme;
     if (!NT_SUCCESS(MimeCopyFromUser(&tme, user_track, sizeof(tme))) || tme.cbSize != sizeof(tme))
         return FALSE;
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     BOOL ok = FALSE;
     if (t) {
@@ -1590,12 +1590,12 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         break;
     }
     case MIME_INPUT_WINDOW_MOVED:
-        w->Flags |= WNDF_HOST_MOVING | WNDF_HOST_PLACED;
+        *WndEdit(w, Flags) |= WNDF_HOST_MOVING | WNDF_HOST_PLACED;
         POINT moved = {ev->x, ev->y};
         DpiPointConvert(&moved, DPI_PHYSICAL, w->Awareness);
         WndSetPos(w, nullptr, moved.x, moved.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (!w->Header.Destroyed)
-            w->Flags &= ~WNDF_HOST_MOVING;
+            *WndEdit(w, Flags) &= ~WNDF_HOST_MOVING;
         break;
     case MIME_INPUT_WINDOW_DISPLAY:
         WndHostDisplay(w, (ULONG)ev->x);
@@ -1650,7 +1650,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         if (!ev->x && InputForeground == w && !refused_gain_queued(t, qm)) {
             UserReference(&w->Header);
             InputSetForeground(nullptr);
-            t->Active = nullptr;
+            *ThreadEdit(t, Active) = nullptr;
             ImeFocusChanged();
             MsgSendEvent(w, WM_NCACTIVATE, FALSE, 0);
             if (!w->Header.Destroyed)

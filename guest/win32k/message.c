@@ -233,8 +233,6 @@ static LRESULT call_sent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG k
 
 void MsgProcessSent(W32THREAD *t)
 {
-    if (!IsListEmpty(&t->Sent))
-        DeskTouch();
     while (!IsListEmpty(&t->Sent)) {
         SENT_MESSAGE *sm = CONTAINING_RECORD(RemoveHeadList(&t->Sent), SENT_MESSAGE, Links);
         if (sm->ResultCall) {
@@ -560,7 +558,7 @@ BOOLEAN TimerKill(W32THREAD *t, HWND hwnd, UINT_PTR id, BOOLEAN system)
 
 UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC proc, ULONG tolerance)
 {
-    UserEnterRead();
+    UserEnter();
     UINT_PTR result = TimerSet(W32GetThread(), hwnd, id, elapse, proc, FALSE);
     UserLeave();
     (void)tolerance;
@@ -570,7 +568,7 @@ UINT_PTR NTAPI NtUserSetTimer(HWND hwnd, UINT_PTR id, UINT elapse, TIMERPROC pro
 /* user32 runs the procedure of a WM_TIMER only when a timer of the process was set with it, as ValidateTimerCallback. */
 BOOL NTAPI NtUserValidateTimerCallback(LPARAM proc)
 {
-    UserEnterRead();
+    UserEnter();
     W32THREAD *self = W32GetThread();
     BOOL valid = FALSE;
     for (PLIST_ENTRY e = g_timers.Flink; self && e != &g_timers && !valid; e = e->Flink) {
@@ -583,7 +581,7 @@ BOOL NTAPI NtUserValidateTimerCallback(LPARAM proc)
 
 BOOL NTAPI NtUserKillTimer(HWND hwnd, UINT_PTR id)
 {
-    UserEnterRead();
+    UserEnter();
     BOOLEAN killed = TimerKill(W32GetThread(), hwnd, id, FALSE);
     UserLeave();
     return killed;
@@ -787,9 +785,6 @@ static BOOLEAN peek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT 
     }
     for (;;) {
         t->LastRead = W32TickCount();
-        /* a posted message changes nothing the desktop heap shows, the input and window commands may. */
-        if (!IsListEmpty(&t->Input))
-            DeskTouch();
         MsgProcessSent(t);
         t->WakeBits = 0;
 
@@ -797,7 +792,6 @@ scan_posted:
         for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink) {
             QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
             if (qm->Kind == QM_WINDOW_SHOW || qm->Kind == QM_WINDOW_PLACEMENT) {
-                DeskTouch();
                 RemoveEntryList(e);
                 WND *w = WndLookup(qm->Msg.hwnd);
                 if (w && w->Thread == t) {
@@ -891,10 +885,8 @@ scan_posted:
                 out->lParam = 0;
                 out->time = W32TickCount();
                 out->pt = InputCursorPos;
-                if (remove && (w->Flags & WNDF_INTERNAL_PAINT)) {
-                    DeskTouch();
-                    w->Flags &= ~WNDF_INTERNAL_PAINT;
-                }
+                if (remove && (w->Flags & WNDF_INTERNAL_PAINT))
+                    *WndEdit(w, Flags) &= ~WNDF_INTERNAL_PAINT;
                 return TRUE;
             }
         }
@@ -920,7 +912,7 @@ scan_posted:
         t->InWait = TRUE;
         ULONG depth = UserLeaveAll();
         NTSTATUS status = KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
-        UserReenterRead(depth);
+        UserReenter(depth);
         t->InWait = FALSE;
         t->LastRead = W32TickCount();
         if (status == STATUS_THREAD_IS_TERMINATING) {
@@ -933,13 +925,9 @@ scan_posted:
     }
 }
 
-/* the modal loops of the window manager change windows after a message, which a wait in peek let the heap sync. */
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait)
 {
-    BOOLEAN got = peek(t, out, hwnd, min, max, flags, wait);
-    if (got)
-        DeskTouch();
-    return got;
+    return peek(t, out, hwnd, min, max, flags, wait);
 }
 
 ULONG MsgInSendFlags(W32THREAD *t)
@@ -1003,7 +991,7 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
         return FALSE;
     }
     CursorStartReading();
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
@@ -1033,7 +1021,7 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
         return FALSE;
     }
     CursorStartReading();
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     MSG m;
     memset(&m, 0, sizeof(m));
@@ -1057,7 +1045,7 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
 BOOL NTAPI NtUserWaitMessage(void)
 {
     CursorStartReading();
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     if (t) {
         t->LastRead = W32TickCount();
@@ -1074,7 +1062,7 @@ BOOL NTAPI NtUserWaitMessage(void)
             t->InWait = TRUE;
             ULONG depth = UserLeaveAll();
             KeWaitForSingleObject(&t->Event, UserRequest, UserMode, FALSE, pt);
-            UserReenterRead(depth);
+            UserReenter(depth);
             t->InWait = FALSE;
             t->LastRead = W32TickCount();
             MsgProcessSent(t);
@@ -1167,7 +1155,7 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
     }
     resolve_standard_handles(handles, count);
     CursorStartReading();
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     LONG64 deadline = timeout == WAIT_FOREVER ? -1 : (LONG64)now_ms() + timeout;
     DWORD result = WAIT_FAILED_VALUE;
@@ -1203,7 +1191,7 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         ULONG depth = UserLeaveAll();
         NTSTATUS status = ExWaitHandlesAndObject(count, handles, WaitAny, (flags & MWMO_ALERTABLE) != 0, pw, UserMode,
                                                  &t->Event);
-        UserReenterRead(depth);
+        UserReenter(depth);
         t->InWait = FALSE;
         t->LastRead = W32TickCount();
         if (status == STATUS_USER_APC || status == STATUS_ALERTED) {
@@ -1255,7 +1243,7 @@ void MsgPaintDispatched(WND *w)
 {
     if (!w->Header.Destroyed && (w->Flags & WNDF_FRAME_DIRTY) && RgnIsEmpty(&w->Update)) {
         /* the application painted without BeginPaint; draw the frame ourselves so it does not spin. */
-        w->Flags &= ~WNDF_FRAME_DIRTY;
+        *WndEdit(w, Flags) &= ~WNDF_FRAME_DIRTY;
         FramePaint(w);
     }
 }
@@ -1336,7 +1324,7 @@ BOOL NTAPI NtUserTranslateMessage(const MSG *user_msg, UINT flags)
 
 BOOL NTAPI NtUserGetMessagePos(void)
 {
-    UserEnterRead();
+    UserEnter();
     W32THREAD *t = W32GetThread();
     POINT at = t ? t->MessagePos : (POINT){0, 0};
     DpiPixelConvert(&at, DPI_PHYSICAL, DpiThreadAwareness(t));
@@ -1817,7 +1805,7 @@ BOOL NTAPI NtUserPostMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         W32SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
-    UserEnterRead();
+    UserEnter();
     BOOL ok = FALSE;
     if (is_broadcast(hwnd)) {
         ok = post_to_all(msg, wparam, lparam);
@@ -1851,7 +1839,7 @@ BOOL NTAPI NtUserPostThreadMessage(DWORD thread, UINT msg, WPARAM wparam, LPARAM
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    UserEnterRead();
+    UserEnter();
     BOOL ok = FALSE;
     if (post_allowed(msg, wparam)) {
         W32THREAD *t = W32LookupThread((HANDLE)(ULONG_PTR)thread);
@@ -2058,9 +2046,9 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
 
     case WM_NCACTIVATE:
         if (wparam)
-            w->Flags |= WNDF_ACTIVE_FRAME;
+            *WndEdit(w, Flags) |= WNDF_ACTIVE_FRAME;
         else
-            w->Flags &= ~WNDF_ACTIVE_FRAME;
+            *WndEdit(w, Flags) &= ~WNDF_ACTIVE_FRAME;
         /* the caption about to be drawn asks for its icon, the small ones first, as windows does when it shows. */
         if (wparam && (w->Style & WS_CAPTION) == WS_CAPTION && (w->Style & WS_SYSMENU) && !w->IconSmall && !w->Icon) {
             static const WPARAM order[] = {2 /* ICON_SMALL2 */, ICON_SMALL, ICON_BIG};
@@ -2287,7 +2275,7 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         if (w->Header.Destroyed)
             return (LRESULT)old;
         if (redraw && FrameHasCaption(w->Style, w->ExStyle)) {
-            w->Flags |= WNDF_FRAME_DIRTY;
+            *WndEdit(w, Flags) |= WNDF_FRAME_DIRTY;
             if (w->Thread)
                 QueueWake(w->Thread, QS_PAINT);
         }
@@ -2317,9 +2305,9 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         if (wparam ? (w->Style & WS_VISIBLE) || !(w->Flags & WNDF_HIDDENPOPUP) : !(w->Style & WS_VISIBLE))
             return 0;
         if (wparam)
-            w->Flags &= ~WNDF_HIDDENPOPUP;
+            *WndEdit(w, Flags) &= ~WNDF_HIDDENPOPUP;
         else
-            w->Flags |= WNDF_HIDDENPOPUP;
+            *WndEdit(w, Flags) |= WNDF_HIDDENPOPUP;
         WndShow(w, wparam ? SW_SHOWNOACTIVATE : SW_HIDE);
         return 0;
 

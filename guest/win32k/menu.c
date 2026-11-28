@@ -17,11 +17,13 @@ static MENU *menu_lookup(HMENU h)
     return MenuLookup(h);
 }
 
-/* a bar of any window shown with the menu is stale after an edit. */
+/* a bar of any window shown with the menu is stale after an edit, and so is what the desktop heap shows of it. */
 static void touch(MENU *m)
 {
-    if (m)
+    if (m) {
         m->Serial++;
+        DeskTouchObject(&m->Header);
+    }
 }
 
 BOOLEAN MenuCommandEnabled(WND *w, UINT command)
@@ -46,7 +48,7 @@ static MENU *menu_create(BOOLEAN popup)
         W32Free(m);
         return nullptr;
     }
-    m->Popup = popup;
+    *MenuEdit(m, Popup) = popup;
     m->OwnerPid = PsGetCurrentProcessId();
     InsertTailList(&g_menus, &m->Links);
     return m;
@@ -64,6 +66,7 @@ static void menu_destroy(MENU *m)
     if (!m || m->Header.Destroyed)
         return;
     m->Header.Destroyed = TRUE;
+    DeskTouchAll();
     RemoveEntryList(&m->Links);
     for (ULONG i = 0; i < m->Count; i++) {
         MENU_ITEM *it = &m->Items[i];
@@ -72,8 +75,8 @@ static void menu_destroy(MENU *m)
         free_item(it);
     }
     W32Free(m->Items);
-    m->Items = nullptr;
-    m->Count = 0;
+    *MenuEdit(m, Items) = nullptr;
+    *MenuEdit(m, Count) = 0;
     if (m->SystemOf && m->SystemOf->SystemMenu == (HMENU)m->Header.Handle)
         m->SystemOf->SystemMenu = nullptr;
     UserDereference(&m->Header);
@@ -91,11 +94,11 @@ static void sync_close_button(MENU *m)
             enabled = !(m->Items[i].State & MFS_GRAYED);
     ULONG old = w->Flags;
     if (enabled)
-        w->Flags &= ~WNDF_NOCLOSE;
+        *WndEdit(w, Flags) &= ~WNDF_NOCLOSE;
     else
-        w->Flags |= WNDF_NOCLOSE;
+        *WndEdit(w, Flags) |= WNDF_NOCLOSE;
     if (old != w->Flags && FrameHasCaption(w->Style, w->ExStyle)) {
-        w->Flags |= WNDF_FRAME_DIRTY;
+        *WndEdit(w, Flags) |= WNDF_FRAME_DIRTY;
         WndInvalidateRegion(w, nullptr, RDW_FRAME | RDW_INVALIDATE);
     }
 }
@@ -144,14 +147,14 @@ static BOOLEAN insert_slot(MENU *m, ULONG pos)
         if (m->Count)
             memcpy(items, m->Items, m->Count * sizeof(MENU_ITEM));
         W32Free(m->Items);
-        m->Items = items;
+        *MenuEdit(m, Items) = items;
         m->Capacity = cap;
     }
     if (pos > m->Count)
         pos = m->Count;
     memmove(&m->Items[pos + 1], &m->Items[pos], (m->Count - pos) * sizeof(MENU_ITEM));
     memset(&m->Items[pos], 0, sizeof(MENU_ITEM));
-    m->Count++;
+    (*MenuEdit(m, Count))++;
     return TRUE;
 }
 
@@ -163,7 +166,7 @@ static void remove_slot(MENU *m, ULONG pos, BOOLEAN destroy_submenu)
         menu_destroy(menu_lookup(it->SubMenu));
     free_item(it);
     memmove(&m->Items[pos], &m->Items[pos + 1], (m->Count - pos - 1) * sizeof(MENU_ITEM));
-    m->Count--;
+    (*MenuEdit(m, Count))--;
 }
 
 static void set_text(MENU_ITEM *it, PWSTR text, SIZE_T chars)
@@ -218,7 +221,7 @@ static BOOLEAN apply_info(MENU *m, MENU_ITEM *it, const MENUITEMINFOW *mii, PWST
         }
         it->SubMenu = mii->hSubMenu;
         if (sub)
-            sub->Popup = TRUE;
+            *MenuEdit(sub, Popup) = TRUE;
     }
     if (mii->fMask & MIIM_CHECKMARKS) {
         it->Checked = mii->hbmpChecked;
@@ -259,7 +262,7 @@ void MenuWindowDestroyed(WND *w)
     if (!(w->Style & WS_CHILD) && w->Id) {
         /* the menu goes with the last window that has it. */
         MENU *m = menu_lookup((HMENU)w->Id);
-        w->Id = 0;
+        *WndEdit(w, Id) = 0;
         if (m && m->Users > 0 && --m->Users == 0)
             menu_destroy(m);
     }
@@ -276,7 +279,7 @@ void MenuWindowSetMenu(WND *w, HMENU menu)
         old->Users--;
     if (m)
         m->Users++;
-    w->Id = (UINT_PTR)menu;
+    *WndEdit(w, Id) = (UINT_PTR)menu;
     w->MenuHot = w->MenuPushed = 0;
 }
 
@@ -337,7 +340,11 @@ void MenuRefreshWindowState(WND *w)
             grey = (w->Flags & WNDF_NOCLOSE) != 0;
             break;
         }
-        it->State = (it->State & ~MFS_GRAYED) | (grey ? MFS_GRAYED : 0);
+        UINT state = (it->State & ~MFS_GRAYED) | (grey ? MFS_GRAYED : 0);
+        if (state != it->State) {
+            it->State = state;
+            touch(m);
+        }
     }
 }
 
@@ -615,15 +622,15 @@ static void apply_menu_info(MENU *m, const MENUINFO *mi, int depth)
 {
     touch(m);
     if (mi->fMask & MIM_STYLE)
-        m->Style = mi->dwStyle;
+        *MenuEdit(m, Style) = mi->dwStyle;
     if (mi->fMask & MIM_MAXHEIGHT)
-        m->MaxHeight = mi->cyMax;
+        *MenuEdit(m, MaxHeight) = mi->cyMax;
     if (mi->fMask & MIM_BACKGROUND)
-        m->Background = mi->hbrBack;
+        *MenuEdit(m, Background) = mi->hbrBack;
     if (mi->fMask & MIM_HELPID)
-        m->HelpId = mi->dwContextHelpID;
+        *MenuEdit(m, HelpId) = mi->dwContextHelpID;
     if (mi->fMask & MIM_MENUDATA)
-        m->MenuData = mi->dwMenuData;
+        *MenuEdit(m, MenuData) = mi->dwMenuData;
     if ((mi->fMask & MIM_APPLYTOSUBMENUS) && depth < 16)
         for (ULONG i = 0; i < m->Count; i++) {
             MENU *sub = m->Items[i].SubMenu ? menu_lookup(m->Items[i].SubMenu) : nullptr;
@@ -783,7 +790,7 @@ HMENU NTAPI NtUserGetSystemMenu(HWND hwnd, BOOL revert)
                 menu_destroy(m);
             }
             if (w->Flags & WNDF_NOCLOSE) {
-                w->Flags &= ~WNDF_NOCLOSE;
+                *WndEdit(w, Flags) &= ~WNDF_NOCLOSE;
                 if (FrameHasCaption(w->Style, w->ExStyle))
                     WndInvalidateRegion(w, nullptr, RDW_FRAME | RDW_INVALIDATE);
             }

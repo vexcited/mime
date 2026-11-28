@@ -673,7 +673,7 @@ NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD index, DE
         return STATUS_BUFFER_TOO_SMALL;
     ULONG number = device_number(device);
     video_read();
-    UserEnterRead();
+    UserEnter();
     LONG display = numbered_display(number);
     struct {
         DEVMODEW m;
@@ -762,7 +762,7 @@ LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, DEVMODEW *user_mo
     }
     ULONG number = device_number(device);
     video_read();
-    UserEnterRead();
+    UserEnter();
     LONG display = numbered_display(number);
     DISPLAY_MODE current, want;
     if (display < 0 || !display_current((ULONG)display, FALSE, &current)) {
@@ -959,7 +959,7 @@ NTSTATUS NTAPI NtUserGetDisplayConfigBufferSizes(ULONG flags, PUINT user_paths)
     NTSTATUS status = STATUS_INVALID_PARAMETER;
     if (config_kind(flags)) {
         video_read();
-        UserEnterRead();
+        UserEnter();
         count = config_paths();
         UserLeave();
         status = STATUS_SUCCESS;
@@ -986,7 +986,7 @@ NTSTATUS NTAPI NtUserQueryDisplayConfig(ULONG flags, PUINT user_paths, PVOID use
         return STATUS_INVALID_PARAMETER;
     UCHAR records[MIME_MAX_MONITORS][QDC_RECORD];
     video_read();
-    UserEnterRead();
+    UserEnter();
     ULONG count = config_paths();
     for (ULONG i = 0; i < count && i < room; i++)
         config_record(i, records[i]);
@@ -1114,7 +1114,7 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
         return STATUS_INVALID_PARAMETER;
     BOOLEAN ours = h.AdapterLow == QDC_ADAPTER_LUID && !h.AdapterHigh;
     video_read();
-    UserEnterRead();
+    UserEnter();
     ULONG count = config_paths();
     DISPLAY_MODE native;
     MIME_MONITOR_INFO info;
@@ -1153,7 +1153,7 @@ NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID user_packet)
         }
         if (monitor_device(h.Id, TRUE, &d))
             memcpy(body + 16 + 128, d.DeviceID, sizeof(d.DeviceID));
-        UserEnterRead();
+        UserEnter();
         memcpy(g_target_names[h.Id].Body, body, sizeof(g_target_names[h.Id].Body));
         g_target_names[h.Id].Generation = generation;
         g_target_names[h.Id].Valid = TRUE;

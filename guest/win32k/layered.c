@@ -115,7 +115,7 @@ void LayerWindowDestroyed(WND *w)
         W32Free(w->Shape);
         w->Shape = nullptr;
     }
-    w->LayerFlags = 0;
+    *WndEdit(w, LayerFlags) = 0;
 }
 
 BOOLEAN LayerHitTest(WND *w, POINT pt)
@@ -142,7 +142,7 @@ void LayerStyleChanged(WND *w)
         return;
     if (!w->LayerFlags)
         return;
-    w->LayerFlags = 0;
+    *WndEdit(w, LayerFlags) = 0;
     if (w->Present) {
         PaintRetireSurface(w->Present);
         w->Present = nullptr;
@@ -164,7 +164,7 @@ BOOL NTAPI NtUserSetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha,
     if (!error) {
         BOOLEAN was_update = (w->LayerFlags & MIME_LAYER_UPDATE) != 0;
         BOOLEAN first = !w->LayerFlags;
-        w->LayerFlags = flags ? flags : LWA_ALPHA;
+        *WndEdit(w, LayerFlags) = flags ? flags : LWA_ALPHA;
         w->LayerAlpha = flags & LWA_ALPHA ? alpha : 255;
         w->LayerKey = key & 0xFFFFFF;
         ScreenSerial++;
@@ -276,11 +276,11 @@ BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC hdst, POINT *user_dst_pos, S
     }
     if (!error) {
         BOOLEAN first = !(w->LayerFlags & MIME_LAYER_UPDATE);
-        w->LayerFlags = MIME_LAYER_UPDATE;
+        *WndEdit(w, LayerFlags) = MIME_LAYER_UPDATE;
         BOOLEAN changed = WndLayerRects(w, user_dst_pos ? &dst_pos : nullptr, user_size ? &size : nullptr);
         /* the window no longer paints: its pixels come from the caller. */
         WndValidate(w, nullptr);
-        w->Flags &= ~(WNDF_FRAME_DIRTY | WNDF_INTERNAL_PAINT);
+        *WndEdit(w, Flags) &= ~(WNDF_FRAME_DIRTY | WNDF_INTERNAL_PAINT);
         if (WndIsTopLevel(w))
             WndEnsureSurface(w);
         /* what the program painted before its first update is not part of the layer, which comes whole from it. */

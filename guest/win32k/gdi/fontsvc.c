@@ -66,7 +66,7 @@ ULONG FontLanguageInfo(FONT_INSTANCE *fi)
 
 ULONG NTAPI NtGdiGetFontData(HDC hdc, DWORD table, DWORD offset, PVOID buffer, ULONG size)
 {
-    UserEnterRead();
+    UserEnter();
     FONT_FACE *face = dc_face(hdc);
     ULONG length = 0;
     BOOLEAN ok = face && FontReadTable(face, swap32(table), 0, nullptr, 0, &length);
@@ -82,7 +82,7 @@ ULONG NTAPI NtGdiGetFontData(HDC hdc, DWORD table, DWORD offset, PVOID buffer, U
     PUCHAR copy = W32Alloc(n);
     if (!copy)
         return GDI_ERROR;
-    UserEnterRead();
+    UserEnter();
     ok = FontReadTable(face, swap32(table), offset, copy, n, nullptr);
     UserLeave();
     if (ok)
@@ -135,7 +135,7 @@ ULONG NTAPI NtGdiGetOutlineTextMetricsInternalW(HDC hdc, ULONG size, OUTLINETEXT
     }
     if (!size)
         user_otm = nullptr;
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     /* a raster font has no outline metrics. */
@@ -283,7 +283,7 @@ static BOOLEAN build_ranges(FONT_FACE *f)
 
 DWORD NTAPI NtGdiGetFontUnicodeRanges(HDC hdc, LPGLYPHSET user_set)
 {
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     FONT_FACE *f = fi ? fi->Face : nullptr;
@@ -320,7 +320,7 @@ DWORD NTAPI NtGdiGetGlyphIndicesW(HDC hdc, LPCWSTR user_text, int count, LPWORD 
     WORD *indices = W32Alloc((SIZE_T)count * sizeof(WORD) + 2);
     DWORD result = GDI_ERROR;
     if (text && indices && NT_SUCCESS(MimeCopyFromUser(text, user_text, (SIZE_T)count * sizeof(WCHAR)))) {
-        UserEnterRead();
+        UserEnter();
         DC *dc = DcLookup(hdc);
         FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
         if (fi) {
@@ -809,7 +809,7 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
         return GDI_ERROR;
     float m11 = fixed_to_float(mat.eM11), m12 = fixed_to_float(mat.eM12), m21 = fixed_to_float(mat.eM21),
           m22 = fixed_to_float(mat.eM22);
-    UserEnterRead();
+    UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
     /* GetGlyphOutline is for outline fonts. */
@@ -1331,7 +1331,7 @@ ULONG NTAPI NtGdiEnumFonts(HDC hdc, ULONG type, ULONG flags, ULONG face_chars, L
     if (face_chars && (!user_face || !NT_SUCCESS(MimeCopyFromUser(face, user_face, face_chars * sizeof(WCHAR)))))
         return 0;
     face[face_chars] = 0;
-    UserEnterRead();
+    UserEnter();
     ENUM_LIST list = {};
     ULONG total = FontFaceCount();
     for (ULONG i = 0; i < total; i++) {
@@ -1397,7 +1397,7 @@ int NTAPI NtGdiAddFontResourceW(LPCWSTR files, ULONG chars, ULONG files_count, U
     PWSTR path = capture_path(files, chars);
     if (!path)
         return 0;
-    UserEnterRead();
+    UserEnter();
     HANDLE owner = (flags & FR_PRIVATE_FLAG) ? PsGetCurrentProcessId() : nullptr;
     int added = 0;
     /* a file added twice by the same owner is counted again without a second registration; it takes as many removes. */
@@ -1430,7 +1430,7 @@ BOOL NTAPI NtGdiRemoveFontResourceW(LPCWSTR files, ULONG chars, ULONG files_coun
     PWSTR path = capture_path(files, chars);
     if (!path)
         return FALSE;
-    UserEnterRead();
+    UserEnter();
     HANDLE owner = (flags & FR_PRIVATE_FLAG) ? PsGetCurrentProcessId() : nullptr;
     BOOL found = FALSE, unlinked = FALSE;
     for (ULONG i = 0; i < FontFaceCount() && !found; i++) {
@@ -1476,7 +1476,7 @@ HANDLE NTAPI NtGdiAddFontMemResourceEx(PVOID data, DWORD size, PVOID dv, ULONG d
         W32SetLastError(ERROR_NOACCESS);
         return nullptr;
     }
-    UserEnterRead();
+    UserEnter();
     HANDLE handle = nullptr;
     FONT_FILE *file = nullptr;
     DWORD count = 0;
@@ -1509,7 +1509,7 @@ BOOL NTAPI NtGdiRemoveFontMemResourceEx(HANDLE handle)
     ULONG slot = (ULONG)(v & 0xFFFF) - 1;
     if ((v & 0xFF000000u) != 0x4D000000u || slot >= MAX_MEM_FONTS)
         return FALSE;
-    UserEnterRead();
+    UserEnter();
     FONT_FILE *file = g_mem_fonts[slot];
     BOOL ok = file && file->OwnerPid == PsGetCurrentProcessId() && !file->Removed;
     if (ok) {

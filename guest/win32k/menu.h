@@ -22,22 +22,24 @@ typedef struct MENU {
     USER_OBJECT Header;
     LIST_ENTRY Links;
     HANDLE OwnerPid;
-    BOOLEAN Popup;
+    /* the fields that are const are the ones the desktop heap shows: they are written through MenuEdit. */
+    const BOOLEAN Popup;
     WND *SystemOf; /* window that owns this system menu. */
-    ULONG Count;
+    const ULONG Count;
     ULONG Capacity;
-    MENU_ITEM *Items;
-    DWORD Style;
-    UINT MaxHeight;
-    HBRUSH Background;
-    DWORD HelpId;
-    ULONG_PTR MenuData;
+    MENU_ITEM *const Items; /* what changes an item marks the menu too, see touch of menu.c. */
+    const DWORD Style;
+    const UINT MaxHeight;
+    const HBRUSH Background;
+    const DWORD HelpId;
+    const ULONG_PTR MenuData;
     ULONG Serial; /* changes with every edit, so a menu bar layout knows it is stale. */
     LONG Users;   /* windows that have it as their menu bar. */
     ULONG DeskItems, DeskItemsSize; /* its items and their text in the desktop heap, deskheap.c. */
 } MENU;
 
 MENU *MenuLookup(HMENU handle);
+#define MenuEdit(m, field) (DeskTouchObject(&(m)->Header), (typeof_unqual((m)->field) *)&(m)->field)
 
 /* menubar.c. */
 

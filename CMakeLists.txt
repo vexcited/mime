@@ -402,8 +402,10 @@ mime_link(${MIME_SYSTEM32}/ntoskrnl.exe ${MIME_GUEST_ARCH}
     ROM ${MIME_ROM}/ntoskrnl.exe GROUPS guest)
 
 mime_glob(win32k_sources guest/win32k/*.c guest/win32k/*/*.c guest/lib/ttf/*.c guest/lib/png/*.c guest/lib/msstyles/*.c)
+# what the desktop heap shows is const in win32k's structures: no pointer to it loses that on the way to a function.
 mime_objects(kernel-win32k kernel SOURCES ${win32k_sources} ${MIME_GEN}/win32k_services.c
-    INCLUDES guest/win32k guest/lib third_party/khronos)
+    INCLUDES guest/win32k guest/lib third_party/khronos
+    OPTIONS -Werror=incompatible-pointer-types-discards-qualifiers)
 mime_link(${MIME_SYSTEM32}/win32k.sys ${MIME_GUEST_ARCH} OBJECTS kernel-win32k LIBS ${MIME_NTOSKRNL_LIB}
     FLAGS /subsystem:native,10.0 /driver /entry:DriverEntry /base:0xFFFFF80040000000 /stack:0x40000,0x1000
         /map:${CMAKE_BINARY_DIR}/guest/win32k.map
