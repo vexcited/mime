@@ -510,7 +510,10 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         process->SectionBaseAddress = base;
         PVOID ntdll = nullptr;
         SIZE_T ntdll_view = 0;
-        status = MiMapViewOfSection(system_dll->Section, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0);
+        /* the 64-bit system dll of a 32-bit program lies above the address space the program has. */
+        MI_EXTENDED above = {.Highest = 0x7FFFFFFEFFFFull};
+        status = MiMapViewOfSectionEx(system_dll->Section, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0, 0,
+                                      &above);
         if (status == STATUS_IMAGE_NOT_AT_BASE) {
             /* the system dll must sit at the base of its section, since the kernel caches its exports. */
             status = STATUS_CONFLICTING_ADDRESSES;

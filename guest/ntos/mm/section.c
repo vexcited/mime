@@ -1521,7 +1521,12 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         }
         if (!va)
             va = s->BasedAddress;
-        if (!MiRangeIsFree(as, va, va + bytes)) {
+        /*
+         * like windows, a view ends inside the address space of a 32-bit program unless the caller names a higher end,
+         * as the loader does for the 64-bit libraries of such a program. an image based above it goes elsewhere.
+         */
+        ULONG_PTR highest = ext->Highest ? ext->Highest : as->AllocationLimit ? as->AllocationLimit - 1 : ~0ull;
+        if (va + bytes - 1 > highest || !MiRangeIsFree(as, va, va + bytes)) {
             if (*base || !s->Image.Relocatable) {
                 MiUnlockAddressSpace(as);
                 return STATUS_CONFLICTING_ADDRESSES;
